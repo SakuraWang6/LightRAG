@@ -1,46 +1,8 @@
-# Proposed full replacement text — Part I (issue #3516)
+# RFC: Document Artifact Downloads
 
-> **Superseded.** The RFC author split Part I out into its own issue,
-> https://github.com/HKUDS/LightRAG/issues/3585 ("RFC: Document Artifact
-> Downloads"), and revised it further there — most notably: the download
-> lifecycle is no longer tracked by `ArtifactExportJobStore` at all (it
-> only owns transient `queued`/`running` build ownership); the terminal
-> cache-file suffix (`.zip` / `.failed` / `.cancelled`) is the durable
-> source of truth for `ready`/`failed`/`cancelled`, so a published ZIP
-> survives a full service restart with no tombstone needed; `delete_file=true`
-> no longer touches previously published ZIPs; a deletion fence closes
-> the cancel-then-relock race window; ZIP traversal/compression moved to
-> a dedicated executor instead of the event loop; the cache directory is
-> sharded by track-ID entropy; and `425`/`410` are gone in favor of `409`
-> (queued/running, with `Retry-After`) and `404` (reclaimed, no
-> tombstone) respectively. **#3585 is the normative source for Part I
-> going forward — this file is kept only as a historical record of how
-> the design got there and is no longer maintained.**
+> **Proposed full replacement text — Part I (issue #3516)**
 >
-> The scheduling redesign discussion this file and its sibling
-> (`issue-3516-artifact-export-scheduling.md`) captured — decoupling
-> export builds from the ingestion pipeline, the per-artifact keyed
-> lock, the `get_namespace_data`-backed job store — carried forward into
-> #3585 largely intact; the delta above is what #3585 additionally
-> changed on top of it.
-
-This is the complete proposed text for "Part I: document artifact and
-export model" in https://github.com/HKUDS/LightRAG/issues/3516,
-incorporating the export-scheduling redesign discussed in this session.
-Sections untouched by that redesign are carried over unchanged from the
-current RFC body; the two changed sections ("Export jobs, mailbox, and
-pipeline scheduling" and "Event-driven cache expiration, eviction, and
-active-download leases") are rewritten, and small cross-reference notes
-are added to the sections that now interact with the per-artifact lock.
-Rationale for the changes is in the sibling file
-`issue-3516-artifact-export-scheduling.md`; this file is the clean draft
-meant to be pasted into the issue body.
-
-Parts II–V are unaffected and are not repeated here.
-
----
-
-# Part I: document artifact and export model
+> This is the complete proposed text for "Part I: document artifact and export model" in https://github.com/HKUDS/LightRAG/issues/3516, incorporating the export-scheduling redesign discussed in this session. Sections untouched by that redesign are carried over unchanged from the current RFC body; the export job, publication, crash-recovery, and cache-lifecycle sections are rewritten, and small cross-reference notes are added to the sections that now interact with the per-artifact lock. Parts II–V are unaffected and are not repeated here.
 
 ## Why basename lookup is invalid
 
@@ -63,7 +25,7 @@ The model uses four fields:
 
 | Field | Storage | Normative meaning |
 | --- | --- | --- |
-| `file_path` | `doc_status` and `full_docs` | Stable canonical logical filename with parser hints removed. Used for scheduling, deduplication, display, citations, ZIP entry names, and public download filenames. Never interpreted as a physical path. |
+| `file_path` | `doc_status` and `full_docs` | Stable canonical logical filename with parser hints removed. Used for scheduling, deduplication, display, citations, and ZIP entry names. Never interpreted as a physical path. |
 | `metadata.source_location` | `doc_status.metadata` | Exact current location of the managed source file, stored as a POSIX path relative to the current workspace input root. |
 | `metadata.source_archive_location` | `doc_status.metadata` | Exact canonical archive target determined and persisted before the managed move. It is a recovery anchor, not a directory-search hint. |
 | `sidecar_location` | `full_docs` | Existing exact locator of the parser-produced `*.parsed/` directory and the only authority for the parsed artifact. |
@@ -95,7 +57,7 @@ Once `source_location` exists from enqueue time and `source_archive_location` is
 - parser resolution uses the exact current `source_location`;
 - parser choice/options come from persisted `parse_engine`, `process_options`, and `chunk_options`;
 - scan identity compares the incoming workspace-relative location with `source_location`;
-- source ZIP entries and `Content-Disposition` use canonical `file_path`;
+- source ZIP entries use canonical `file_path`; the ZIP response `Content-Disposition` uses the restart-stable `{track_id}.{artifact_kind}.zip` export filename;
 - exact deletion uses persisted locators and a deletion journal.
 
 New documents stop writing document-level `source_file`. Fields with the same name in multimodal image payloads or parser-local variables are unrelated and remain unchanged.
@@ -138,9 +100,11 @@ When `DELETE /documents/{doc_id}` is invoked with `delete_file=true`, its filesy
 5. delete `doc_status` / `full_docs` and associated data;
 6. clear the deletion journal only after completion.
 
-Steps 3–4 run per artifact kind (`source`, `parsed`) under the corresponding per-`(doc_id, artifact_kind)` artifact-export lock (§Per-artifact keyed lock): the lock for a kind is acquired before removing that kind's files and released once its targets are confirmed absent. This keeps a concurrent export build for the *same* document from reading a file this deletion is about to remove, while never blocking an export for any other document, or a different kind of the same document once its own removal has completed. Before acquiring a contended lock, deletion first requests cancellation of any `inflight` export job on that key (§Per-artifact keyed lock) instead of waiting for it to run to completion, so a slow export cannot silently extend how long this deletion — and the `destructive_busy` state it already holds — takes to finish.
+Steps 3–4 run per artifact kind (`source`, `parsed`) under the corresponding per-`(doc_id, artifact_kind)` artifact-export lock (§Per-artifact keyed lock): the lock for a kind is acquired before removing that kind's files and released once its targets are confirmed absent. This keeps a concurrent export build for the *same* document from reading a file this deletion is about to remove, while never blocking an export for any other document, or a different kind of the same document once its own removal has completed. Before contending for that lock, deletion atomically installs a per-key deletion fence in the export JobStore and requests cancellation of any `inflight` build on that key (§Per-artifact keyed lock). The fence rejects new export admission until the journaled deletion completes or yields to its retry path, closing the cancellation-to-lock-acquisition window in which a new builder could otherwise repeatedly get ahead of deletion.
 
 A partial failure preserves enough journal state for an idempotent retry. The `delete_file=true` branch must not call a basename variant sweep. The default `DELETE /documents` record-clear operation does not clear the workspace artifact root; any future filesystem-clear option must be separately explicit and run under the destructive reservation.
+
+Successfully published export ZIPs are immutable snapshots created while their authoritative inputs existed. Neither `delete_file=true` nor the default record-only deletion removes or revokes those snapshots: a previously issued `track_id` remains downloadable until the independent export-cache retention or capacity policy reclaims its ZIP, subject to authorization being checked again on every download. The deletion journal therefore contains authoritative source, sidecar, and parser raw-cache locators only; it never needs a persisted `doc_id`-to-`track_id` index.
 
 ### Retention of the archived source is deliberate, not incomplete cleanup
 
@@ -190,8 +154,8 @@ Initial kinds:
 
 | Kind | Authoritative input | Permission | ZIP result |
 | --- | --- | --- | --- |
-| `source` | `doc_status.metadata.source_location` | `documents.artifacts.source.download` | `.source.zip` containing one entry named after the document's canonical `file_path` |
-| `parsed` | `full_docs.sidecar_location` | `documents.artifacts.parsed.download` | `.parsed.zip` containing a top-level `.parsed/` directory |
+| `source` | `doc_status.metadata.source_location` | `documents.artifacts.source.download` | `{track_id}.source.zip` containing one entry named after the document's canonical `file_path` |
+| `parsed` | `full_docs.sidecar_location` | `documents.artifacts.parsed.download` | `{track_id}.parsed.zip` containing a top-level `.parsed/` directory |
 
 The endpoint validates authorization before document lookup, then either joins an in-flight export job for the same `(doc_id, artifact_kind)` or creates a new bounded export job (§Export jobs and independent build scheduling), and returns `202 Accepted` with that job's `track_id`:
 
@@ -219,9 +183,12 @@ queued
 running
 ready
 failed
-expired
 cancelled
 ```
+
+`queued` and `running` come from the transient build JobStore. Terminal state comes from the kind-specific download directory: `{track_id}.zip`, `{track_id}.failed`, or `{track_id}.cancelled`. A successfully published ZIP is therefore still `ready` after an API worker or the whole service restarts. Once a terminal file is reclaimed, no tombstone remains and the track ID becomes indistinguishable from one that never existed.
+
+Every status read first performs bounded reconciliation for that exact track ID. A terminal file outranks a stale active record: the handler owner-safely clears leftover `jobs`/`inflight`/counter/reservation bookkeeping and then returns the file state. With no terminal file, a valid leased job returns `queued` or `running`; an orphaned `.pending` or expired owner is recovered to `.failed` before the response. Multiple mutually exclusive terminal files return `409`. Only the absence of an active job, `.pending`, and every terminal file returns `404`.
 
 Public status fields may include `track_id`, kind, public filename, timestamps, compressed/uncompressed sizes, file count, status, and sanitized error code/message. Internal locators, cache paths, owner tokens, PIDs, and credentials are never returned.
 
@@ -234,63 +201,76 @@ GET /documents/artifact-exports/{artifact_kind}/{track_id}/download
 | State/condition | HTTP |
 | --- | --- |
 | `ready` and cached ZIP present | `200` |
-| `queued` or `running` | `425` |
+| `queued` or `running` | `409` with current state and `Retry-After` |
 | `failed` | `409` |
-| previously ready but expired/evicted | `410` |
-| track ID never existed | `404` |
+| `cancelled` | `409` |
+| no current build or terminal file | `404` |
 | serving concurrency full | `429` with `Retry-After` |
-| job/cache provider unavailable | `503` |
+| cache/download-lease provider unavailable | `503` |
 
-The explicit `artifact_kind` path segment lets the route declare and enforce the kind-specific permission before track/document existence lookup. After authorization, the handler verifies that the stored job kind matches the path. A track ID is not a credential.
+The explicit `artifact_kind` path segment lets the route declare and enforce the kind-specific permission before track/document existence lookup. After authorization, an active record must match the path kind; terminal lookup is confined to that kind's cache directory, and a marker whose embedded kind disagrees is a `409` inconsistency. A track ID is not a credential.
 
 ## Export jobs and independent build scheduling
 
-*(Renamed from "Export jobs, mailbox, and pipeline scheduling": building is no longer owned by, or scheduled through, the document-ingestion pipeline. Concurrent downloads of the same or different artifacts need no pipeline coordination at all.)*
+> Renamed from "Export jobs, mailbox, and pipeline scheduling": building is no longer owned by, or scheduled through, the document-ingestion pipeline. Concurrent downloads of the same or different artifacts need no pipeline coordination at all.
 
-The export design separates three responsibilities:
+The export design separates four responsibilities:
 
 ```text
-ArtifactExportJobStore  = source of truth for job records
-Per-artifact keyed lock = get_storage_keyed_lock([f"{doc_id}:{artifact_kind}"], namespace="artifact_export")
-Local ZIP cache         = immutable result bytes
+ArtifactExportJobStore  = transient queued/running build ownership and reservations
+Per-artifact keyed lock = source/sidecar read-versus-mutate exclusion
+Terminal cache files    = durable ready/failed/cancelled status
+Download lease gate     = transient cross-worker serving admission and cache-reclamation fence
 ```
 
-There is no mailbox and no pipeline-owned build step. A request either joins an in-flight build or starts a new one in its own bounded task, independent of `pipeline_status` and `pipeline_ingress`; the document-ingestion pipeline never learns that an export happened, and an export never sets `pipeline_status.busy`.
+There is no mailbox and no pipeline-owned build step. A request either joins an in-flight build or starts a new one in its own bounded task, independent of `pipeline_status` and `pipeline_ingress`; the document-ingestion pipeline never learns that an export happened, and an export never sets `pipeline_status.busy`. Only the build is ephemeral. A published terminal cache file survives API-worker and whole-service restarts and is sufficient for status and download without a document or JobStore lookup.
 
 ### Job store
 
-`ArtifactExportJobStore` is not a new subsystem with its own lock and multiprocess plumbing. It is a shared, workspace-scoped dict obtained via `get_namespace_data("artifact_export_jobs", workspace=...)` and mutated only under `get_namespace_lock("artifact_export_jobs", workspace=...)` — the exact mechanism `pipeline_status` already uses (`initialize_pipeline_status()` / `get_namespace_data("pipeline_status", ...)` in `lightrag/kg/shared_storage.py`), pointed at a new namespace name instead of a new class hierarchy. This gets single-process vs. Manager-backed multi-worker support and per-workspace isolation for free from existing infrastructure; no Hub, no explicit `BaseProxy`, no second parallel shared-state mechanism.
+`ArtifactExportJobStore` is not a new subsystem with its own lock and multiprocess plumbing. It is a shared, workspace-scoped dict obtained via `get_namespace_data("artifact_export_jobs", workspace=...)` and mutated only under `get_namespace_lock("artifact_export_jobs", workspace=...)` — the exact mechanism `pipeline_status` already uses, pointed at a new namespace name instead of a new class hierarchy. This gets single-process vs. Manager-backed multi-worker support and per-workspace isolation from existing infrastructure; no Hub, explicit `BaseProxy`, or second parallel shared-state mechanism is required.
 
-An `initialize_artifact_export_status(workspace=None)` bootstrap, called at the same lifespan point as `initialize_pipeline_status()`, seeds the namespace once per process with three top-level keys — `jobs`, `inflight`, `running_builds` — exactly as `initialize_pipeline_status()` seeds `busy`, `scanning`, `pending_enqueues`, and the rest into one namespace dict. `jobs` and `inflight` are seeded as `manager.dict()` under multiprocess mode (a plain `{}` otherwise) — the same trick `pipeline_status.history_messages` already uses as a `manager.list()` — specifically so `namespace["jobs"][track_id] = record` is a live mutation through a real proxy and propagates across workers, rather than a copy-on-read no-op: a value read out of a `manager.dict()` is a plain, disconnected copy, so mutating it in place would silently not persist. Every job update therefore replaces a record wholesale — `namespace["jobs"][track_id] = new_record`, never a mutation of an existing record's individual keys — which is also exactly the shape CAS-by-version-check-then-write needs anyway.
+An `initialize_artifact_export_status(workspace=None)` bootstrap, called at the same lifespan point as `initialize_pipeline_status()`, seeds one namespace with:
 
-One record per `track_id`, with the CAS/owner-lease/terminal-transition shape already proven for `/scan` job tracking (`lightrag/kg/scan_job_store.py`): create is idempotent on an existing `track_id`, an update is refused on owner or version mismatch, and a lease-expired `running` job is reaped to `failed` on any later read — only the storage/locking underneath differs, from that module's own `threading.Lock` + Manager-hub, to the `get_namespace_data`/`get_namespace_lock` pair above:
+```text
+jobs: {track_id -> queued/running build record}
+inflight: {(doc_id, artifact_kind) -> track_id}
+deletion_fences: {(doc_id, artifact_kind) -> deletion_operation_id}
+running_builds: int
+reserved_cache_count: int
+reserved_cache_bytes: int
+```
+
+`jobs`, `inflight`, and `deletion_fences` are `manager.dict()` objects in multiprocess mode and plain dicts otherwise. A value read from a `manager.dict()` is a disconnected copy, so every mutation replaces the whole value; nested record keys are never changed in place. Admission, owner/version checks, cancellation intent, deletion fencing, `inflight`, concurrency, and cache-reservation accounting are updated together under the namespace lock.
+
+One active record exists per `track_id`:
 
 ```text
 track_id, doc_id, artifact_kind, owner_token
-status: queued | running | ready | failed | expired | cancelled
-version, created_at, updated_at, lease_expires_at
-compressed_size, uncompressed_size, file_count      (set on ready)
-error_code, error_message                            (sanitized, set on failed)
+status: queued | running
+version, created_at, updated_at
+lease_expires_at, cancellation_requested
+reserved_cache_count, reserved_cache_bytes
 ```
 
-A builder whose lease expires is CAS-transitioned straight to `failed` with a sanitized `builder_lease_expired` error code (see §Crash recovery below) — the public state machine stays exactly the six states in §Query export status; there is no separate public "abandoned" state.
+Both `queued` and `running` carry an owner and a renewable lease. Creation uses the repository's committed-background-child handshake: the request returns only after the child has taken ownership, while a failure or cancellation between record creation and child takeover runs owner-checked compensation that clears the job, matching `inflight`, counters, reservation, and `.pending` file. This prevents a worker death before the first builder instruction from leaving an immortal queued job.
 
-The namespace additionally holds, in the same dict and guarded by the same lock:
+The JobStore never stores `ready`, `failed`, or `cancelled`. Those states are terminal cache files. On success, failure, or cancellation the owner publishes the corresponding terminal file first and then, in one JobStore critical section, removes the matching job and `inflight`, decrements `running_builds`, and releases or converts the cache reservation. If the process dies after terminal publication but before bookkeeping cleanup, a later read or maintenance pass treats the terminal file as authoritative and performs the same idempotent cleanup rather than overwriting success with a lease-expired failure.
 
-```text
-inflight: {(doc_id, artifact_kind) -> track_id}   # queued/running jobs only
-running_builds: int                                 # <= MAX_DOWNLOAD_BUILD_CONCURRENCY
-```
+### Per-artifact keyed lock and deletion fence
 
-Keeping `jobs`, `inflight`, and `running_builds` together under one lock is what lets admission (§Request handling) check and update all three atomically in one critical section — the same reason `pipeline_status` keeps `busy`, `scanning`, and `pending_enqueues` under one lock instead of three independent ones.
+A separate lock protects the one thing shared with ingestion: the source/sidecar file for one `doc_id`. It is `get_storage_keyed_lock(keys=[f"{doc_id}:{artifact_kind}"], namespace="artifact_export")`, reusing the existing storage keyed-lock primitive with a dedicated namespace. A builder holds it from strict locator resolution through reading the last input byte. Source archival and exact deletion take the same source key; the parser takes the parsed key before its first sidecar mutation and holds it until the directory has reached a complete persisted outcome or the parse has failed. Lock acquisition is part of `DEFAULT_MAX_DOWNLOAD_PREPARE_SECONDS`, so contention cannot wait forever.
 
-### Per-artifact keyed lock
+The parser must acquire the `(doc_id, "parsed")` key before clearing an existing sidecar directory, not merely when it begins writing. Supported parsers can clear `*.parsed/` before an external call and repopulate it later, so this whole attempt is one mutation interval. During a first parse no export can pass availability admission because `sidecar_location` is not published yet.
 
-A second, unrelated lock protects the one thing genuinely shared with the ingestion pipeline: the source/sidecar file for one `doc_id`. It is `get_storage_keyed_lock(keys=[f"{doc_id}:{artifact_kind}"], namespace="artifact_export")` — the exact same primitive already used to serialize entity/edge mutation (`aedit_entity`, `amerge_entities`, `adelete_by_entity`, `ainsert_custom_kg`; see `tests/pipeline/test_graph_keyed_locks.py`), reused here with a different namespace and a composite string key rather than a new locking mechanism. `get_storage_keyed_lock` takes `keys: str | list[str]`, not a tuple, which is why the key is the joined string `f"{doc_id}:{artifact_kind}"` rather than `(doc_id, artifact_kind)`. A build task holds it only from resolving the input locator through reading the last input byte; §Source-location lifecycle and orphan rotation and §Exact artifact deletion acquire the same key before moving or removing that document's files. Neither side ever holds a pipeline-wide busy state on the other's behalf, and neither side blocks an operation on a *different* `doc_id`.
+Deletion resolves a conflict without allowing a new builder to slip between cancellation and lock acquisition:
 
-The parser takes the same `(doc_id, "parsed")` key at the very start of every parse attempt — before it touches an existing sidecar directory at all — and holds it until that attempt reaches a terminal outcome for the directory: either the new output is fully written and `full_docs.sidecar_location` is (re-)synced, or the attempt fails. The lock must be acquired before the first mutation, not "while writing": at least one supported external parser (mineru) clears an existing `*.parsed/` directory as its first step and only populates it afterward, so a lock taken at "start of write" would still leave a window — for the parser's entire running time, not just an instant — where the directory is empty or partial and unlocked. Acquiring the lock before that clear closes the window entirely, for the whole duration of the call to an external parser service. This guarantee does not depend on whether the parser writes files into the directory incrementally or stages-then-publishes; the lock alone is sufficient regardless of the parser's internal write strategy. During a document's first-ever parse this lock is never contended, because no `sidecar_location` is published (and so no export can pass admission) until that parse succeeds — see §Availability and half-processed content.
+1. under the JobStore lock, install `deletion_fences[(doc_id, artifact_kind)] = deletion_operation_id` and set `cancellation_requested=True` on a matching active build;
+2. reject every new export admission on a fenced key;
+3. let the builder observe cancellation at directory-entry and input-chunk boundaries, publish `.cancelled`, and owner-finalize its JobStore reservation;
+4. acquire the artifact keyed lock and perform the exact journaled filesystem deletion;
+5. clear the fence only after the deletion completes, or after its durable journal has handed responsibility to the retry path.
 
-Deletion resolves a lock conflict actively rather than waiting it out: before `adelete_by_doc_id`'s filesystem-cleanup branch or `clear_documents` (§Exact artifact deletion) acquires a `(doc_id, artifact_kind)` lock, it first checks the job store for an `inflight` job on that key and, if one exists, requests its cancellation (an owner-checked transition to `cancelled`, the same shape as `ScanJobStore.cancel`). The build task checks for a pending cancellation between input entries — a cheap, already-existing iteration boundary — and aborts promptly, releasing the lock instead of running to completion first. Deletion then acquires the now-uncontended lock. This keeps a slow export from silently prolonging `destructive_busy` (which already blocks new enqueues for unrelated documents per the existing pipeline contract) for the export's full `MAX_DOWNLOAD_PREPARE_SECONDS` budget.
+The deletion caller never impersonates the builder or uses its private owner token. A slow single-file source export remains promptly cancellable because cancellation is checked between byte chunks, not only between ZIP entries. Successfully published `.zip` snapshots are outside this protocol and remain untouched.
 
 ### Availability and half-processed content
 
@@ -308,7 +288,7 @@ The advisory check above only decides whether it is worth creating a build at al
 1. the build's lock acquisition (§Build task, step 2) happens first, and it reads the complete pre-retry output; or
 2. the retry's lock acquisition happens first, and the build blocks until the rewrite finishes, then reads the complete post-retry output.
 
-There is no interleaving between these two outcomes — never a torn, half-written read, regardless of what the advisory check observed a moment earlier. A build that cannot acquire the lock within its own `MAX_DOWNLOAD_PREPARE_SECONDS` budget fails the job with a sanitized `artifact_busy` error rather than blocking indefinitely; the client may simply retry the export request.
+There is no interleaving between these two outcomes — never a torn, half-written read, regardless of what the advisory check observed a moment earlier. A build that cannot acquire the lock within its own `DEFAULT_MAX_DOWNLOAD_PREPARE_SECONDS` budget fails the job with a sanitized `artifact_busy` error rather than blocking indefinitely; the client may simply retry the export request.
 
 A concurrent delete racing an export request the other way is likewise self-healing without extra mechanism: if `adelete_by_doc_id` has already removed a document's files and its records by the time a build re-resolves the locator (§Build task, step 3), that read fails cleanly (locator or record not found) and the job transitions to `failed` — the same handled-failure path as any other storage error, not a special case.
 
@@ -317,49 +297,56 @@ A concurrent delete racing an export request the other way is likewise self-heal
 `POST /documents/{doc_id}/artifacts/{artifact_kind}/exports`:
 
 1. authorize, then confirm the artifact is available per §Availability and half-processed content (read-only; no lock needed);
-2. under the job store's own lock: if `(doc_id, artifact_kind)` is already `inflight`, return `202` with the existing `track_id` — every concurrent requester for the same artifact converges on one build and one `track_id`, which is also the ZIP's filename, so dedup and "same file for everyone" are one mechanism, not two;
-3. otherwise, if `running_builds < MAX_DOWNLOAD_BUILD_CONCURRENCY` and cache capacity can be reserved, mint a `track_id`, create the job (`queued`), record it in `inflight`, and increment `running_builds`; if either budget is exhausted, refuse immediately (`429`, or `503` if the store itself is unavailable) — a refused request is never queued behind anything;
-4. spawn the build as an ordinary bounded task (not a pipeline job) and return `202`.
+2. under the JobStore lock, reject a deletion-fenced key with `409`; if `(doc_id, artifact_kind)` is already `inflight`, return `202` with its existing `track_id`;
+3. otherwise perform one bounded cache-reclamation pass; if build concurrency, cache count, or cache bytes still cannot be reserved, return `429` immediately (`503` if the shared store or cache provider is unavailable) and create no job;
+4. mint a high-entropy `track_id`, derive its kind-specific shard, atomically create the queued leased job, matching `inflight`, concurrency count, and one-count/`MAX_DOWNLOAD_SIZE` reservation;
+5. start the committed builder child and return `202` only after takeover succeeds.
+
+Single-flight lasts only while a build is queued or running. A later export request after publication creates a new snapshot and track ID; no persistent `doc_id`-to-completed-export index exists.
 
 ### Build task
 
-1. CAS-transition to `running`; start the lease heartbeat (`lease_expires_at`, renewed periodically; default lease duration `ARTIFACT_EXPORT_BUILD_LEASE_SECONDS`);
-2. acquire `get_storage_keyed_lock([f"{doc_id}:{artifact_kind}"], namespace="artifact_export")` (§Per-artifact keyed lock);
-3. strictly re-resolve the input locator from storage — never from anything cached at request time;
-4. stream input bytes into `{track_id}.partial` under the local cache, enforcing every bound in §Resource limits and §ZIP construction and cache publication while reading, not only from an initial stat;
-5. release the per-artifact lock as soon as the last input byte has been read — nothing from here on reads the source, only the ZIP file itself, so the source is free the instant its bytes are captured;
-6. fsync, atomically rename `.partial` to `.zip`, CAS-transition to `ready` with final sizes;
-7. under the job store's own lock, remove `(doc_id, artifact_kind)` from `inflight` and decrement `running_builds`.
+1. CAS-transition the leased record to `running` and renew its build lease from an event-loop heartbeat;
+2. create the exclusive `{track_id}.pending` output and acquire the per-artifact keyed lock within the overall preparation deadline;
+3. strictly re-resolve and open the locator from storage — never from request-time state — using root containment, `lstat`/no-follow, and descriptor-level type validation;
+4. run recursive enumeration, reads, and ZIP compression in a dedicated executor, enforcing every limit and checking a thread-safe cancellation/deadline signal at every directory entry and input chunk;
+5. release the artifact lock as soon as the last source byte has been consumed;
+6. finish the ZIP, refresh its controlled mtime to the publication time, fsync it, atomically rename `.pending` to `.zip`, and then fsync the containing directory as required;
+7. owner-finalize all transient JobStore bookkeeping in one critical section.
 
-A handled failure (a bound exceeded, a storage error) removes the partial file, transitions the job to `failed` with a sanitized code, and performs the same step-7 cleanup.
+On handled failure or cancellation, remove the partial ZIP instead of renaming its potentially large bytes. Write a bounded, sanitized JSON record to a separate temporary file, fsync it, and atomically rename it to `.failed` or `.cancelled`, then perform the same owner-finalization. The marker includes only `track_id`, `artifact_kind`, terminal status/time, and a bounded public error code/message; it contains no `doc_id`, principal, locator, cache path, credential, or owner token.
 
 ### Crash recovery
 
-An unhandled crash (the worker process is killed) skips straight past that cleanup: heartbeats stop, and the build lease — not a watchdog process — is what notices. Any later read of the record (a status query, a new export request for the same key, or one of the maintenance triggers in §Event-driven cache expiration, eviction, and active-download leases) opportunistically reaps an expired-lease `running` job to `failed`, lazily, consistent with the non-goal of no periodic per-worker cleanup task; this also frees the stale `inflight`/`running_builds` bookkeeping.
+An unhandled worker crash stops the build heartbeat. Any later status read, export request, startup reconciliation, or maintenance trigger checks the filesystem and JobStore together:
 
-The `.partial`/`.zip` filename suffix is what makes cleanup of a crash-orphaned file *safe*, not merely informative. A `.zip` exists only via the atomic rename in build-task step 6, so its presence on disk already proves completion; no record lookup is needed to trust one. A `.partial` file proves nothing by itself and must be checked against the job store before it is touched: a maintenance sweep parses `track_id` from each `{track_id}.partial` it finds and looks it up —
+| Files | Job/lease | Meaning and action |
+| --- | --- | --- |
+| `.zip` | present or absent | Publication succeeded; return `ready` and idempotently clear stale transient bookkeeping. |
+| `.failed` / `.cancelled` | present or absent | Terminal marker is authoritative; return it and clear stale transient bookkeeping. |
+| `.pending` | valid queued/running owner | Build is live; leave it. |
+| `.pending` | no job or expired owner | Remove partial bytes, publish a sanitized `builder_lease_expired` `.failed` marker, and release stale bookkeeping. |
+| no file | expired queued/running owner | Publish a sanitized failure marker and release stale bookkeeping. |
+| multiple mutually exclusive terminal files | any | Return `409`, audit the inconsistency, and run bounded repair; never guess a downloadable object. |
 
-- record present, status `running`, lease still valid → a build is genuinely in progress; leave it;
-- record missing, or present but terminal → crash debris; delete it immediately.
-
-There is no third case, because a `.partial` file is never downloadable either way — only "is it safe to delete yet" depends on the record. Startup is the trivial instance of this rule: the job store is reconstructed empty on process start (ephemeral across restarts, per the existing non-goal), so every `.partial` and every `.zip` found at that point is unconditionally orphaned and removed.
-
-A client polling `GET /documents/artifact-exports/{artifact_kind}/{track_id}` therefore sees `running` while the lease is alive and `failed` within one lease interval of an actual crash, with no client-side timeout logic and no need to reason about files on disk — the job record is the only contract.
+A single API worker restart does not imply that the shared JobStore is empty and must not reclaim another worker's live `.pending`. When the whole shared control plane restarts, all old build owners are gone: startup reconciliation converts orphaned `.pending` files into `.failed` markers but preserves every `.zip`, `.failed`, and `.cancelled`. There is no periodic per-worker watchdog; reconciliation stays event-driven and lease-based.
 
 ## Resource limits
 
 All values are byte counts or positive integers. Invalid/non-positive configured values fail startup; normal authorized mode does not silently become unlimited.
-
-An environment variable is a permanent compatibility surface the moment it ships, so only two of these values are exposed that way; the rest are plain constants in `lightrag/constants.py`, following the same reasoning that module already applies to other unauthenticated-request ceilings: a resource-exhaustion bound is worth nothing if an operator who doesn't understand its purpose can misconfigure it away, and a concurrency knob whose right value depends on server hardware and this subsystem's own implementation is not something an `.env` file should be guessing at.
 
 ### Environment variables
 
 | Environment variable | Default | Meaning |
 | --- | ---: | --- |
 | `MAX_DOWNLOAD_SIZE` | `3 * MAX_UPLOAD_SIZE`, or 300 MiB when upload is unlimited | Maximum completed ZIP bytes |
-| `DOWNLOAD_CACHE_TTL_SECONDS` | `86400` | Age at which a ready ZIP becomes logically expired and eligible for lazy reclamation |
+| `DOWNLOAD_CACHE_TTL_SECONDS` | `43200` (12 hours) | Retention age for `.zip`, `.failed`, and `.cancelled` terminal files |
+| `MAX_DOWNLOAD_CACHE_COUNT` | `10000` | Maximum active reservations plus terminal cache entries |
+| `MAX_DOWNLOAD_CACHE_BYTES` | `20 * MAX_DOWNLOAD_SIZE` | Maximum reserved or physical cache bytes |
+| `MAX_DOWNLOAD_BUILD_CONCURRENCY` | `5` | Concurrent ZIP builders across all workers |
+| `MAX_DOWNLOAD_SERVE_CONCURRENCY` | `5` | Concurrent ZIP responses across all workers |
 
-`MAX_DOWNLOAD_SIZE` is operator-facing for the same reason `MAX_UPLOAD_SIZE` already is: it trades directly against a deployment's disk and network budget, and raising the upload ceiling is an immediate, obvious reason to raise this one too. `DOWNLOAD_CACHE_TTL_SECONDS` is operator-facing because it is a retention/disk-usage policy, not a safety bound — how long a finished export stays around before reclamation is a legitimate per-deployment choice with no single correct value.
+These are deployment policy or capacity values. Disk size, inode budget, CPU count, and network capacity vary by deployment, so the cache and concurrency bounds are configurable but never accept zero, negative, malformed, or unlimited values. `MAX_DOWNLOAD_SIZE` remains tied by default to the upload ceiling; raising it also raises the derived cache-byte default unless the operator sets `MAX_DOWNLOAD_CACHE_BYTES` explicitly.
 
 ### Internal constants (`lightrag/constants.py`)
 
@@ -369,55 +356,56 @@ An environment variable is a permanent compatibility surface the moment it ships
 | `DEFAULT_MAX_DOWNLOAD_FILE_COUNT` | `10000` | Maximum regular files in one export |
 | `DEFAULT_MAX_DOWNLOAD_DIRECTORY_DEPTH` | `16` | Maximum parsed directory depth |
 | `DEFAULT_MAX_DOWNLOAD_PREPARE_SECONDS` | `600` | Maximum validation/compression time |
-| `DEFAULT_MAX_DOWNLOAD_BUILD_CONCURRENCY` | `5` | Concurrent ZIP builders across the whole server (a shared counter, not scoped to any one worker or the pipeline) |
-| `DEFAULT_ARTIFACT_EXPORT_BUILD_LEASE_SECONDS` | `60` | Build-lease duration; a `running` job whose lease is not renewed within this window is reaped to `failed` |
-| `DEFAULT_MAX_DOWNLOAD_SERVE_CONCURRENCY` | `5` | Cross-worker concurrent ZIP responses |
-| `DEFAULT_MAX_DOWNLOAD_CACHE_COUNT` | `20` | Maximum cache entries across running reservations and ready/expired objects awaiting reclamation |
-| `DEFAULT_MAX_DOWNLOAD_CACHE_BYTES` | `5 * MAX_DOWNLOAD_SIZE` | Maximum reserved or physical bytes across running, partial, ready, and expired-not-yet-reclaimed results |
-| `DEFAULT_MAX_DOWNLOAD_JOB_RECORDS` | `1000` | Maximum compact job/tombstone records |
-| `DEFAULT_DOWNLOAD_JOB_RECORD_TTL_SECONDS` | `86400` | Age at which a terminal job record becomes eligible for lazy reclamation |
+| `DEFAULT_ARTIFACT_EXPORT_BUILD_LEASE_SECONDS` | `60` | Queued/running owner-lease duration |
+| `DEFAULT_ARTIFACT_EXPORT_STATUS_MAX_BYTES` | `4096` | Maximum serialized `.failed` or `.cancelled` marker size |
+| `DEFAULT_ARTIFACT_EXPORT_SHARD_HEX_CHARS` | `2` | Number of high-entropy track-ID hex characters used for cache sharding |
+| `DEFAULT_ARTIFACT_CACHE_MAINTENANCE_BATCH` | `256` | Maximum filesystem entries examined by one event-triggered maintenance pass |
 
-None of these has a legitimate range of "correct" per-deployment values the way `MAX_DOWNLOAD_SIZE` or the cache TTL do: each is either a hard-coded abuse/resource-exhaustion ceiling (file count, depth, prepare time), a concurrency knob tied to this subsystem's own implementation rather than deployment policy, or derived arithmetic (`DEFAULT_MAX_DOWNLOAD_CACHE_BYTES` as a multiple of `MAX_DOWNLOAD_SIZE`, the same relationship `MULTIPART_OVERHEAD_BYTES` already has to `MAX_UPLOAD_SIZE` elsewhere in `constants.py`). `DEFAULT_ARTIFACT_EXPORT_BUILD_LEASE_SECONDS` in particular is an internal crash-detection timer (§Crash recovery), never deployment policy, and belongs here even though it was listed as an environment variable earlier in this redesign — that was an oversight, corrected here. `MAX_DOWNLOAD_JOB_RECORD_TTL_SECONDS` is deliberately not the one TTL kept operator-facing either: it governs how long *bookkeeping records* linger, which has no operator-visible effect, unlike `DOWNLOAD_CACHE_TTL_SECONDS`, which governs how long the actual downloadable ZIP stays available.
+These constants are protocol safety bounds or internal implementation geometry, not storage-capacity policy. The build lease is renewed by a heartbeat that remains responsive because synchronous traversal and compression run in the dedicated executor. The preparation deadline covers lock acquisition, validation, traversal, reads, compression, fsync, and terminal publication.
 
 (`MAX_DOWNLOAD_JOBS_PER_CYCLE` is removed outright, not merely relocated: there is no pipeline export cycle left to bound.)
 
 A 2 GiB uncompressed limit is a safety ceiling, not a promise that a 2 GiB image artifact is downloadable. Image-heavy inputs compress poorly and will normally hit `MAX_DOWNLOAD_SIZE` first.
 
-Before claiming/building a job, reserve one cache entry and `MAX_DOWNLOAD_SIZE` bytes. Capacity accounting includes running reservations, partial files, ready ZIPs, and expired objects awaiting physical reclamation. The builder first performs a bounded lazy-reclamation pass, then evicts the oldest eligible `ready` result by job `ready_at`. Filename ordering, filesystem iteration order, and mtime do not define age.
+One active reservation counts as one entry and `MAX_DOWNLOAD_SIZE` bytes; its `.pending` file is covered by that reservation rather than counted a second time. Terminal publication converts the reservation to the terminal file's actual byte size. Published `.zip`, `.failed`, and `.cancelled` files, plus internal reclaim-pending files that have not yet been physically removed, count by their actual size. Shared counters may accelerate admission, but the filesystem is authoritative and startup/maintenance reconciliation repairs conservative counter drift.
 
-TTL is an eligibility boundary, not an exact wall-clock deletion guarantee. A logically expired ZIP may remain physically present until the next cache event, but it is no longer downloadable and still counts toward the hard cache bounds until reclaimed.
+After a whole-control-plane restart, one cache-bootstrap owner performs a complete kind/shard census in bounded batches before new build reservations are accepted. Existing terminal files remain queryable and downloadable during that census; only new export admission returns `503` with `Retry-After` while authoritative count/byte totals are unknown. A single worker restart reuses the already-verified shared accounting state and does not start a competing census.
 
-If capacity cannot be reserved because all candidates are actively downloading, do not delete them and do not exceed the hard bound. Leave the export queued for a bounded retry or fail it with a sanitized `cache_capacity` error.
+Before creating a reservation, perform one bounded reclamation pass. Reclaim terminal files whose controlled publication mtime is older than `DOWNLOAD_CACHE_TTL_SECONDS`, then evict the oldest remaining terminal files if capacity still requires it. Never evict `.pending` or a ZIP with a live download lease. If the hard count or byte bound still cannot be satisfied, return `429` immediately; no job is created or queued for capacity.
 
 ## ZIP construction and cache publication
 
-The cache is accessed through a small artifact-cache backend interface. Version 1 uses the single host's local directory `/artifact_exports`, not OS temporary storage. Internal names are derived only from a validated high-entropy server-generated track ID:
+The cache is accessed through a small artifact-cache backend interface. Version 1 uses the single host's persistent local directory `/artifact_exports`, not OS temporary storage. Internal paths are derived only from a validated high-entropy server-generated track ID and an allowlisted kind. The shard is the first `DEFAULT_ARTIFACT_EXPORT_SHARD_HEX_CHARS` characters of the track ID's random component, not its common textual prefix:
 
 ```text
-.partial
-.zip
+/artifact_exports/{artifact_kind}/{shard}/{track_id}.pending
+/artifact_exports/{artifact_kind}/{shard}/{track_id}.zip
+/artifact_exports/{artifact_kind}/{shard}/{track_id}.failed
+/artifact_exports/{artifact_kind}/{shard}/{track_id}.cancelled
 ```
+
+`.pending` contains the partial ZIP. `.failed` and `.cancelled` are bounded JSON terminal markers. An implementation may use an unaddressable temporary suffix while atomically publishing a marker and a `.reclaiming` suffix while physically deleting a terminal file; neither is a public state or downloadable object.
 
 Build rules:
 
-1. resolve and validate the exact persisted input locator while holding the per-`(doc_id, artifact_kind)` artifact-export lock (§Per-artifact keyed lock);
-2. recursively enumerate with bounded memory and no symlink following;
-3. accept only regular files and ordinary directories;
+1. resolve and validate the exact persisted input locator while holding the per-`(doc_id, artifact_kind)` lock;
+2. establish allowed-root containment and open each component/file with descriptor-level no-follow semantics; a pre-open `stat` alone is insufficient;
+3. recursively enumerate with bounded memory, accepting only regular files and ordinary directories;
 4. reject symlinks, FIFO/socket/device entries, absolute/`..`/NUL entry names, duplicate entry names, and entries escaping the exact root;
-5. enforce uncompressed bytes, file count, depth, and preparation timeout while reading, not only from an initial stat;
-6. write `ZIP_DEFLATED` at fixed compression level 6 with ZIP64 support;
-7. stop and remove the partial output once compressed bytes exceed `MAX_DOWNLOAD_SIZE`;
-8. fsync the completed temporary file as required by the local cache implementation;
-9. atomically rename `.partial` to `.zip`;
-10. mark the job `ready` only after the final file exists with its verified size.
+5. enforce uncompressed bytes, compressed bytes, file count, depth, cancellation, and the preparation deadline while reading chunks, not only from initial metadata;
+6. write `.pending` with `ZIP_DEFLATED` at fixed compression level 6 and ZIP64 support in the dedicated executor;
+7. stop and remove `.pending` once any bound is exceeded;
+8. after the last input byte, release the artifact lock, complete the ZIP central directory, set the controlled publication mtime, and fsync the file;
+9. atomically rename `.pending` to `.zip` and fsync the containing directory as required; only this suffix is downloadable;
+10. clear transient JobStore ownership and reservations only after `.zip` exists with its verified size.
 
-The artifact-export lock from rule 1 is held through rule 6 for each input entry and released once the last one is read (§Build task, step 5); rules 7–10 operate only on the ZIP file already being written and require no lock.
+The artifact-export lock is released once the last source byte has been read; finishing, syncing, and renaming the cache file require no source lock. The public download filename is `{track_id}.{artifact_kind}.zip`; ZIP entries continue to use the canonical `file_path` and parsed top-level directory rules.
 
-An interrupted partial ZIP is never downloadable. Startup removes all `.partial` files and cached ZIPs without a valid live job record (§Crash recovery), then performs a bounded expiration/reclamation pass. Version 1 export jobs are ephemeral across server restart; clients submit a new request.
+An interrupted `.pending` ZIP is never downloadable. Startup preserves published terminal files and reconciles only orphaned active/temporary files as described in §Crash recovery. A restarted client may continue using a successfully published track ID without resubmitting the export.
 
-A future S3-backed cache may replace the local backend without changing routes, JobStore states, leases, or `410` semantics. S3 Lifecycle may reclaim physical objects as a backstop, but it is not the authoritative job-state transition. Its deletion threshold must not precede the application expiry policy; if an object is nevertheless absent, the application atomically records the result as expired and returns `410`.
+A future S3-backed cache may replace the local backend without changing routes or public suffix states. It must provide the equivalent of conditional exclusive `.pending` creation and atomic terminal publication; S3 Lifecycle may reclaim terminal objects as a physical-cleanup backstop but must not run earlier than the application retention policy. Once an object is absent, status and download return `404` because version 1 deliberately keeps no expiration tombstone.
 
-## Event-driven cache expiration, eviction, and active-download leases
+## Event-driven cache reclamation, eviction, and active-download leases
 
 Version 1 creates no periodic ZIP-cleanup task per API worker. Cleanup is a bounded, idempotent maintenance step triggered by existing artifact-cache activity:
 
@@ -429,37 +417,36 @@ Version 1 creates no periodic ZIP-cleanup task per API worker. Cleanup is a boun
 - download-lease release;
 - a capacity-reservation failure before the caller retries or fails.
 
-Any worker may initiate a maintenance pass; the shared `ArtifactExportJobStore`'s own CAS/locking (never a pipeline lock) serializes logical state transitions, the single-flight `inflight` map, and download leases. ZIP construction runs in the export subsystem's own bounded builder task, never the ingestion pipeline; cache reclamation does not need to hold the per-`(doc_id, artifact_kind)` artifact lock either, because a published ZIP is immutable and — per §Build task, step 5 — that lock is already released the moment the source bytes are captured, well before the object reaches `ready`. Maintenance therefore only ever touches the ZIP object, its job record, and its download leases; it never contends with the ingestion pipeline, and never contends with a concurrent build/mutation of the *same* document either, because by the time a `ready` object exists that lock has already been released.
+Any worker may initiate a maintenance pass. The JobStore lock serializes active build reconciliation and cache reservations; an independent workspace-scoped `artifact_download_leases` namespace serializes serving admission and terminal-file reclamation. Neither is a pipeline lock. Maintenance is cursor-based across kind/shard directories and examines at most `DEFAULT_ARTIFACT_CACHE_MAINTENANCE_BATCH` entries per trigger, so a cache containing many thousands of files does not turn one request into an unbounded directory walk.
 
-Two independent lease concepts exist on the same job record, covering two different lifecycle phases, and must not be conflated:
+Two independent lease concepts cover different lifecycle phases and live in different namespaces:
 
 | | Build lease | Download lease |
 | --- | --- | --- |
-| Fields | `owner_token`, `lease_expires_at` | `lease_id`, `track_id`, owner PID, heartbeat time |
-| Held while | status is `running` (a builder is producing `.partial`) | status is `ready` and a client is mid-download |
+| Fields | `owner_token`, `lease_expires_at` | `lease_id`, `track_id`, owner PID/process identity, heartbeat time |
+| Held while | status is `queued` or `running` | a client is reading a published `.zip` |
 | Purpose | detect a builder that died mid-build, so the job reaps to `failed` without a watchdog process | serving-concurrency accounting; block physical deletion while a client reads the ZIP |
-| Cardinality | at most one per job | zero or more per job, one per concurrent downloader |
+| Storage | `artifact_export_jobs` | `artifact_download_leases` |
+| Cardinality | exactly one owner per active job | zero or more per ZIP, one per concurrent downloader |
 
-A job never holds both at once: a `running` job has at most a build lease and zero download leases (nothing is downloadable yet); a `ready` job has no build lease (the builder already exited cleanly or was reaped) and zero-or-more download leases.
+A completed build has no JobStore record. A ZIP may have multiple download leases, but those leases never recreate a build job or a `doc_id` mapping.
 
-Serving concurrency is enforced across all workers with a shared download-lease gate. A provider failure fails closed. Download admission atomically verifies that the job is `ready`, `now < expires_at`, the immutable cache object is present, and capacity is available, then creates a unique download lease containing `lease_id`, `track_id`, owner PID, and heartbeat time before opening the ZIP. Multiple clients may hold independent download leases for the same `track_id`. Response completion, cancellation, or disconnect releases only that request's lease in a cancellation-safe callback/finally; PID/heartbeat expiry reclaims download leases after worker death.
+Serving concurrency is enforced across all workers with the download-lease gate. A provider failure fails closed. Under that gate, admission verifies the kind-specific `.zip` is present, is younger than its retention TTL, is not being reclaimed, and serving capacity is available; it then creates a unique lease before opening the ZIP. The route does not look up the document or build JobStore. Response completion, cancellation, or disconnect releases only that request's lease in a cancellation-safe callback/finally. PID/process-identity and heartbeat checks reclaim leases after worker death without reclaiming a live request merely because a PID was reused.
 
-When `now >= expires_at`, a maintenance-triggering operation atomically transitions `ready -> expired`. This immediately blocks new download leases and makes status/download return `expired`/`410`. A download admitted before expiration may finish. Physical deletion occurs only when that `track_id` has no live download lease; releasing the last lease retries deletion of an already-expired object.
+TTL and capacity reclamation acquire the same gate, revalidate that the selected terminal file has no live lease, atomically rename it to an internal `.reclaiming` name, and then delete it. Renaming immediately makes it non-downloadable even if physical deletion fails; the object continues counting against hard byte/count bounds until deletion succeeds. A download admitted before the TTL boundary may finish. Releasing the last lease triggers another bounded reclamation pass.
 
-Capacity eviction selects the oldest eligible `ready` result by job `ready_at`, but may atomically transition and delete it only when it has no live download lease. Logical expiration or eviction retains a compact bounded tombstone. A deletion failure leaves a reclaimable expired record and is retried by a later trigger; it never makes the object downloadable again. Terminal job-record cleanup is lazy as well, removes the oldest eligible records first, and never removes queued/running jobs (which still hold their build lease) or ready records with live download leases.
+The controlled terminal-file mtime is the publication timestamp and defines both TTL age and oldest-first capacity selection; filename order and filesystem iteration order do not. `.failed` and `.cancelled` markers follow the same 12-hour/default capacity policy as `.zip`. No expired/evicted tombstone is retained, so successful reclamation makes status and download return `404`.
 
-If no artifact-cache activity occurs after a TTL boundary, an expired-by-age local ZIP may remain on disk until the next trigger or restart. This is intentional: cache entry and byte reservations remain hard bounds, so idle retention cannot create unbounded growth, and exact-to-the-second physical deletion is not part of the contract.
+If no artifact-cache activity occurs after a TTL boundary, an old terminal file may remain physically present until the next trigger, but download admission itself is a trigger and refuses a new lease once the controlled mtime has crossed the TTL. Exact-to-the-second physical deletion is not part of the contract; hard count/byte admission bounds remain mandatory.
 
 ## HTTP and audit semantics
 
 - `401`: missing or invalid credentials.
 - `403`: authenticated principal lacks the required permission.
-- `404`: an authorized caller requested a document/artifact/job that never existed or is unavailable without an inconsistency.
-- `409`: locator, filesystem type, path, or build-state inconsistency; failed export download.
-- `410`: generated result expired or was evicted.
+- `404`: an authorized caller requested an unavailable document/artifact, or no active build or terminal cache file exists for the track ID (including after TTL/capacity reclamation).
+- `409`: locator, filesystem type, path, conflicting terminal files, or build-state inconsistency; queued/running download with `Retry-After`; failed or cancelled export download.
 - `413`: configured input/output/file-count/depth limit exceeded when detected synchronously; asynchronous jobs expose the equivalent sanitized limit error in `failed` status.
-- `425`: export is not ready.
-- `429`: serving/job-store capacity temporarily unavailable.
+- `429`: build, serving, cache-count, cache-byte, or shared-store capacity temporarily unavailable, with `Retry-After` where retry timing is known.
 - `503`: authorization, job, cache, or shared-control-plane provider unavailable.
 
-Audit events cover export request, claim, success/failure, eviction/expiry, download allow/deny/start/finish/cancel, byte counts, principal, permission, `doc_id`, `track_id`, and artifact kind. They never contain credentials, internal locators, absolute paths, cache paths, ZIP contents, or owner tokens.
+Audit events cover export request, claim, success/failure/cancellation, stale-build recovery, TTL/capacity reclamation, deletion-fence admission denial, download allow/deny/start/finish/cancel, byte counts, principal, permission, `doc_id` when the build still has it, `track_id`, and artifact kind. They never contain credentials, internal locators, absolute paths, cache paths, ZIP contents, owner tokens, or unsanitized exceptions. A post-restart download may have no `doc_id`; that absence never causes a reverse lookup or weakens the kind-specific permission check.
