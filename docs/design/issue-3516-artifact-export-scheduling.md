@@ -282,14 +282,20 @@ retention cannot exceed the hard cache bounds either way.
   only at the point it actually removes that document's files — which
   is a no-op today (no filesystem clear implemented yet) and becomes
   active in lockstep with Part I.
-- **The parser itself, not only delete/rotation, must take the lock.**
-  A retry that reprocesses a document reuses its existing `*.parsed/`
-  directory in place rather than writing a fresh one. Without the parser
-  also holding the `(doc_id, "parsed")` lock while it rewrites that
-  directory, an export build could read a torn mix of old and new files.
-  The parser takes the lock on every parse attempt (uncontended on a
-  document's first parse, since no `sidecar_location` exists yet for any
-  export to have been admitted against).
+- **The parser itself, not only delete/rotation, must take the lock —
+  and take it before the first mutation, not "while writing."** A retry
+  reuses an existing `*.parsed/` directory in place rather than writing a
+  fresh one, and at least one supported external parser (mineru) clears
+  that directory as its very first step, before writing anything back.
+  A lock acquired only "while writing" would still leave the directory
+  empty and unlocked for the parser's entire running time — potentially
+  minutes for an external HTTP-based parser — not just a brief instant.
+  The parser must take the `(doc_id, "parsed")` lock at the start of
+  every parse attempt, before touching an existing directory at all, and
+  hold it until the attempt reaches a terminal outcome (new output fully
+  written and `sidecar_location` re-synced, or the attempt fails). This
+  is uncontended on a document's first parse, since no `sidecar_location`
+  exists yet for any export to have been admitted against.
 - **Deletion cancels before it waits.** Blindly blocking on a contended
   lock would let a slow export (bounded by `MAX_DOWNLOAD_PREPARE_SECONDS`,
   up to 600s by default) silently extend how long a delete holds
@@ -307,20 +313,31 @@ lives:
 1. **How does a request know a `doc_id`'s artifact is available, so a
    client is never handed a pipeline's half-finished output?** The
    request-time check ("confirm the artifact is available" in Request
-   handling, step 1) is deliberately cheap and advisory, not race-free:
-   `source` is available once `source_location` is persisted (its bytes
-   never change in place, only their location, which the lock already
-   governs); `parsed` is available once `full_docs.sidecar_location` is
-   persisted, and *only* that — `doc_status`'s processing stage is
-   deliberately not part of the predicate, since `sidecar_location` is
-   already the sole authority for the parsed artifact and gating on
-   `doc_status` too would duplicate (and could disagree with) that
-   authority. Before a document's first successful parse, no
-   `sidecar_location` exists, so the check alone already returns `404`
-   with nothing to race against.
+   handling, step 1) is deliberately cheap and advisory, not race-free.
+   `source` is available once `source_location` is persisted; its bytes
+   never change in place, so `doc_status`'s stage is irrelevant. `parsed`
+   is available once `full_docs.sidecar_location` is persisted **and**
+   `doc_status.status == PROCESSED` — here `doc_status` deliberately *is*
+   part of the predicate, because `sidecar_location` alone is not proof
+   of current content: a retry can clear that same directory while
+   leaving the metadata unchanged, so requiring `PROCESSED` excludes
+   every in-progress or failed-mid-retry case before a build is even
+   created. The cost is that a document that reached `FAILED` after a
+   *prior* successful parse (its `*.parsed/` directory is intact) becomes
+   undownloadable via this API until it's reprocessed to `PROCESSED`
+   again — a deliberate trade against the parse/extraction-defect
+   diagnosis path in §Retention of the archived source is deliberate,
+   accepted because the weaker alternative (exclude only `PARSING`) does
+   not actually close the gap: it would still admit a `FAILED` document
+   whose last failed retry left the directory incomplete, since nothing
+   in that weaker rule invalidates `sidecar_location` on failure. Before
+   a document's first successful parse, neither condition holds, so the
+   check alone already returns `404` with nothing to race against.
 
-   The actual guarantee is the per-artifact lock, not this check: if a
-   retry is rewriting `parsed` output at the moment of a request or an
+   The advisory check is not the guarantee, though — it's checked once
+   and can go stale immediately. The actual guarantee is the per-artifact
+   lock, enforced at build time on both sides unconditionally: if a retry
+   starts rewriting `parsed` output at the moment of a request or an
    admitted build's read, the build's lock acquisition either happens
    first (reads the complete prior output) or second (blocks, then reads
    the complete new output) — never a torn read either way, regardless of
@@ -386,12 +403,14 @@ lives:
   the delete-cancels-first refinement.
 - **"Exact artifact deletion"**: append the cancel-first sentence to the
   per-kind-lock paragraph.
-- **Acceptance criteria** ("Asynchronous exports"): also add "A request's
-  availability check is advisory only; the per-artifact lock, not
-  `doc_status`, is what prevents a build from reading a half-written
-  `parsed` directory" and "Deletion requests cancellation of a
-  conflicting in-flight export before acquiring its lock, rather than
-  blocking on it for the export's full prepare-time budget."
+- **Acceptance criteria** ("Asynchronous exports"): also add "A `parsed`
+  export request is admitted only when `doc_status.status == PROCESSED`
+  in addition to `sidecar_location` being persisted; the per-artifact
+  lock, not this check, is what actually prevents a build from reading a
+  half-written `parsed` directory if the two race" and "Deletion
+  requests cancellation of a conflicting in-flight export before
+  acquiring its lock, rather than blocking on it for the export's full
+  prepare-time budget."
 
 Every RFC goal is preserved (bounded concurrency, bounded cache,
 immutable ZIPs, `track_id`-keyed downloads, fail-closed on races,
