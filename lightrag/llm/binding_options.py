@@ -482,6 +482,7 @@ class _OllamaOptionsMixin:
     # Output control
     penalize_newline: bool = True  # Penalize newline tokens
     stop: List[str] = field(default_factory=list)  # Stop sequences
+    think: bool | None = None  # Enable or disable Ollama thinking output
 
     # optional help strings
     _help: ClassVar[dict[str, str]] = {
@@ -516,6 +517,7 @@ class _OllamaOptionsMixin:
         "embedding_only": "Only use for embeddings",
         "penalize_newline": "Penalize newline tokens",
         "stop": 'Stop sequences (JSON array of strings, e.g., \'["</s>", "\\n\\n"]\')',
+        "think": "Enable or disable Ollama thinking output",
     }
 
 

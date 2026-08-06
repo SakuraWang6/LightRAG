@@ -137,6 +137,9 @@ async def _ollama_model_if_cache(
         kwargs.pop("keyword_extraction", None)
 
     _normalize_ollama_response_format(kwargs)
+    options = kwargs.get("options")
+    if isinstance(options, dict) and "think" in options:
+        kwargs.setdefault("think", options.pop("think"))
     host = kwargs.pop("host", None)
     timeout = kwargs.pop("timeout", None)
     if timeout == 0:

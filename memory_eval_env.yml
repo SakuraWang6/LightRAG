@@ -1,0 +1,13 @@
+name: lightrag-memory-eval
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - -e .[api,evaluation,test]
+      - python-docx>=0.8.11,<2.0.0
+      - pydantic-settings
+      - typer
+      - rich
+      - pillow
