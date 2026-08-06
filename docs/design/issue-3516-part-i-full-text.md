@@ -90,7 +90,7 @@ If a future requirement needs the exact client-supplied filename, add an explici
 8. After the source reaches the canonical target, commit `source_location = source_archive_location` using an owner-fenced targeted metadata update.
 9. A scan-time alias/already-processed duplicate that is merely archived must not overwrite the existing document's locator.
 10. Every state is idempotently recoverable from the two persisted exact locations; recovery never searches suffix variants.
-11. Steps 5 and 6 acquire the per-`(doc_id, artifact_kind="source")` artifact-export lock (§Export jobs and independent build scheduling) for the duration of the move, so a concurrent source-artifact export build can never observe a half-moved file. This lock has no other effect on this lifecycle and is unrelated to the workspace pipeline reservation in step 3.
+11. Steps 5 and 6 acquire the per-`(doc_id, artifact_kind="source")` artifact-export lock (§Per-artifact keyed lock) for the duration of the move, so a concurrent source-artifact export build can never observe a half-moved file. This lock has no other effect on this lifecycle and is unrelated to the workspace pipeline reservation in step 3.
 
 Recovery table:
 
@@ -114,7 +114,7 @@ When `DELETE /documents/{doc_id}` is invoked with `delete_file=true`, its filesy
 5. delete `doc_status` / `full_docs` and associated data;
 6. clear the deletion journal only after completion.
 
-Steps 3–4 run per artifact kind (`source`, `parsed`) under the corresponding per-`(doc_id, artifact_kind)` artifact-export lock (§Export jobs and independent build scheduling): the lock for a kind is acquired before removing that kind's files and released once its targets are confirmed absent. This keeps a concurrent export build for the *same* document from reading a file this deletion is about to remove, while never blocking an export for any other document, or a different kind of the same document once its own removal has completed. Before acquiring a contended lock, deletion first requests cancellation of any `inflight` export job on that key (§Per-artifact keyed lock) instead of waiting for it to run to completion, so a slow export cannot silently extend how long this deletion — and the `destructive_busy` state it already holds — takes to finish.
+Steps 3–4 run per artifact kind (`source`, `parsed`) under the corresponding per-`(doc_id, artifact_kind)` artifact-export lock (§Per-artifact keyed lock): the lock for a kind is acquired before removing that kind's files and released once its targets are confirmed absent. This keeps a concurrent export build for the *same* document from reading a file this deletion is about to remove, while never blocking an export for any other document, or a different kind of the same document once its own removal has completed. Before acquiring a contended lock, deletion first requests cancellation of any `inflight` export job on that key (§Per-artifact keyed lock) instead of waiting for it to run to completion, so a slow export cannot silently extend how long this deletion — and the `destructive_busy` state it already holds — takes to finish.
 
 A partial failure preserves enough journal state for an idempotent retry. The `delete_file=true` branch must not call a basename variant sweep. The default `DELETE /documents` record-clear operation does not clear the workspace artifact root; any future filesystem-clear option must be separately explicit and run under the destructive reservation.
 
@@ -227,7 +227,7 @@ The export design separates three responsibilities:
 
 ```text
 ArtifactExportJobStore  = source of truth for job records
-Per-artifact keyed lock = narrow protection against a filesystem race, shared with ingestion
+Per-artifact keyed lock = get_storage_keyed_lock([f"{doc_id}:{artifact_kind}"], namespace="artifact_export")
 Local ZIP cache         = immutable result bytes
 ```
 
@@ -262,7 +262,7 @@ Keeping `jobs`, `inflight`, and `running_builds` together under one lock is what
 
 ### Per-artifact keyed lock
 
-A second, unrelated lock protects the one thing genuinely shared with the ingestion pipeline: the source/sidecar file for one `doc_id`. It uses the same keyed-lock mechanism that already serializes entity/edge mutation, keyed by `(doc_id, artifact_kind)`. A build task holds it only from resolving the input locator through reading the last input byte; §Source-location lifecycle and orphan rotation and §Exact artifact deletion acquire the same key before moving or removing that document's files. Neither side ever holds a pipeline-wide busy state on the other's behalf, and neither side blocks an operation on a *different* `doc_id`.
+A second, unrelated lock protects the one thing genuinely shared with the ingestion pipeline: the source/sidecar file for one `doc_id`. It is `get_storage_keyed_lock(keys=[f"{doc_id}:{artifact_kind}"], namespace="artifact_export")` — the exact same primitive already used to serialize entity/edge mutation (`aedit_entity`, `amerge_entities`, `adelete_by_entity`, `ainsert_custom_kg`; see `tests/pipeline/test_graph_keyed_locks.py`), reused here with a different namespace and a composite string key rather than a new locking mechanism. `get_storage_keyed_lock` takes `keys: str | list[str]`, not a tuple, which is why the key is the joined string `f"{doc_id}:{artifact_kind}"` rather than `(doc_id, artifact_kind)`. A build task holds it only from resolving the input locator through reading the last input byte; §Source-location lifecycle and orphan rotation and §Exact artifact deletion acquire the same key before moving or removing that document's files. Neither side ever holds a pipeline-wide busy state on the other's behalf, and neither side blocks an operation on a *different* `doc_id`.
 
 The parser takes the same `(doc_id, "parsed")` key at the very start of every parse attempt — before it touches an existing sidecar directory at all — and holds it until that attempt reaches a terminal outcome for the directory: either the new output is fully written and `full_docs.sidecar_location` is (re-)synced, or the attempt fails. The lock must be acquired before the first mutation, not "while writing": at least one supported external parser (mineru) clears an existing `*.parsed/` directory as its first step and only populates it afterward, so a lock taken at "start of write" would still leave a window — for the parser's entire running time, not just an instant — where the directory is empty or partial and unlocked. Acquiring the lock before that clear closes the window entirely, for the whole duration of the call to an external parser service. This guarantee does not depend on whether the parser writes files into the directory incrementally or stages-then-publishes; the lock alone is sufficient regardless of the parser's internal write strategy. During a document's first-ever parse this lock is never contended, because no `sidecar_location` is published (and so no export can pass admission) until that parse succeeds — see §Availability and half-processed content.
 
@@ -300,7 +300,7 @@ A concurrent delete racing an export request the other way is likewise self-heal
 ### Build task
 
 1. CAS-transition to `running`; start the lease heartbeat (`lease_expires_at`, renewed periodically; default lease duration `ARTIFACT_EXPORT_BUILD_LEASE_SECONDS`);
-2. acquire the per-`(doc_id, artifact_kind)` lock;
+2. acquire `get_storage_keyed_lock([f"{doc_id}:{artifact_kind}"], namespace="artifact_export")` (§Per-artifact keyed lock);
 3. strictly re-resolve the input locator from storage — never from anything cached at request time;
 4. stream input bytes into `{track_id}.partial` under the local cache, enforcing every bound in §Resource limits and §ZIP construction and cache publication while reading, not only from an initial stat;
 5. release the per-artifact lock as soon as the last input byte has been read — nothing from here on reads the source, only the ZIP file itself, so the source is free the instant its bytes are captured;
@@ -376,7 +376,7 @@ The cache is accessed through a small artifact-cache backend interface. Version 
 
 Build rules:
 
-1. resolve and validate the exact persisted input locator while holding the per-`(doc_id, artifact_kind)` artifact-export lock (§Export jobs and independent build scheduling);
+1. resolve and validate the exact persisted input locator while holding the per-`(doc_id, artifact_kind)` artifact-export lock (§Per-artifact keyed lock);
 2. recursively enumerate with bounded memory and no symlink following;
 3. accept only regular files and ordinary directories;
 4. reject symlinks, FIFO/socket/device entries, absolute/`..`/NUL entry names, duplicate entry names, and entries escaping the exact root;
