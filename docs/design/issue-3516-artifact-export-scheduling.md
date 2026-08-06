@@ -282,6 +282,60 @@ retention cannot exceed the hard cache bounds either way.
   only at the point it actually removes that document's files — which
   is a no-op today (no filesystem clear implemented yet) and becomes
   active in lockstep with Part I.
+- **The parser itself, not only delete/rotation, must take the lock.**
+  A retry that reprocesses a document reuses its existing `*.parsed/`
+  directory in place rather than writing a fresh one. Without the parser
+  also holding the `(doc_id, "parsed")` lock while it rewrites that
+  directory, an export build could read a torn mix of old and new files.
+  The parser takes the lock on every parse attempt (uncontended on a
+  document's first parse, since no `sidecar_location` exists yet for any
+  export to have been admitted against).
+- **Deletion cancels before it waits.** Blindly blocking on a contended
+  lock would let a slow export (bounded by `MAX_DOWNLOAD_PREPARE_SECONDS`,
+  up to 600s by default) silently extend how long a delete holds
+  `destructive_busy` — which already blocks unrelated enqueues — for that
+  entire window. Instead, deletion checks the job store's `inflight` map
+  first and requests cancellation of a conflicting job (the build checks
+  for it between input entries and aborts promptly) before acquiring the
+  now-uncontended lock.
+
+## Availability check vs. correctness guarantee
+
+Two questions this design must answer, and where the answer actually
+lives:
+
+1. **How does a request know a `doc_id`'s artifact is available, so a
+   client is never handed a pipeline's half-finished output?** The
+   request-time check ("confirm the artifact is available" in Request
+   handling, step 1) is deliberately cheap and advisory, not race-free:
+   `source` is available once `source_location` is persisted (its bytes
+   never change in place, only their location, which the lock already
+   governs); `parsed` is available once `full_docs.sidecar_location` is
+   persisted, and *only* that — `doc_status`'s processing stage is
+   deliberately not part of the predicate, since `sidecar_location` is
+   already the sole authority for the parsed artifact and gating on
+   `doc_status` too would duplicate (and could disagree with) that
+   authority. Before a document's first successful parse, no
+   `sidecar_location` exists, so the check alone already returns `404`
+   with nothing to race against.
+
+   The actual guarantee is the per-artifact lock, not this check: if a
+   retry is rewriting `parsed` output at the moment of a request or an
+   admitted build's read, the build's lock acquisition either happens
+   first (reads the complete prior output) or second (blocks, then reads
+   the complete new output) — never a torn read either way, regardless of
+   what the advisory check saw a moment earlier. A build that cannot
+   acquire the lock within its `MAX_DOWNLOAD_PREPARE_SECONDS` budget fails
+   with a sanitized `artifact_busy` error instead of hanging.
+
+2. **How is a delete prevented from removing an artifact mid-zip?** This
+   was already covered by the per-`(doc_id, artifact_kind)` lock: the
+   build task holds it while reading; `adelete_by_doc_id`'s
+   filesystem-cleanup branch and orphan rotation acquire the same key
+   before mutating those files. What was missing until this revision was
+   the cancel-first refinement above, so that guarantee doesn't come at
+   the cost of a slow export quietly prolonging a delete's
+   `destructive_busy` window.
 
 ## RFC edits implied
 
@@ -326,6 +380,18 @@ retention cannot exceed the hard cache bounds either way.
   conflated. The rest of the section (serving-concurrency gate,
   `expired`/`410` transition, eviction-by-`ready_at`, lazy terminal
   cleanup, idle-retention note) is unchanged.
+- **"Export jobs and independent build scheduling"**: add the
+  "Availability and half-processed content" subsection above, and extend
+  the per-artifact-lock paragraph with the parser's write obligation and
+  the delete-cancels-first refinement.
+- **"Exact artifact deletion"**: append the cancel-first sentence to the
+  per-kind-lock paragraph.
+- **Acceptance criteria** ("Asynchronous exports"): also add "A request's
+  availability check is advisory only; the per-artifact lock, not
+  `doc_status`, is what prevents a build from reading a half-written
+  `parsed` directory" and "Deletion requests cancellation of a
+  conflicting in-flight export before acquiring its lock, rather than
+  blocking on it for the export's full prepare-time budget."
 
 Every RFC goal is preserved (bounded concurrency, bounded cache,
 immutable ZIPs, `track_id`-keyed downloads, fail-closed on races,
