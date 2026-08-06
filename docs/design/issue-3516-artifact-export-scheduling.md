@@ -195,6 +195,67 @@ This is the direct answer to "根据共享变量来判断文件名产物是否�
   contract, and it now updates itself even when the builder disappears
   without a trace.
 
+## Event-driven cache expiration, eviction, and active-download leases
+
+This RFC section also assumed pipeline-owned building and needs the same
+treatment, plus one clarification the crash-recovery design above makes
+necessary: there are now two distinct lease concepts on a job record,
+and they must not be conflated.
+
+- The RFC's original caveat — "does not reuse the pipeline feeder's
+  bounded mailbox wait as a timer" — is now moot rather than merely
+  true: exports never touch the mailbox at all under this redesign, so
+  there is nothing to rule out. Drop the sentence instead of restating
+  it as a non-goal.
+- "No periodic cleanup signal is published to the pipeline mailbox" is
+  the same kind of stale reference — remove it.
+- "ZIP construction remains pipeline-owned; cache reclamation does not
+  need to hold the pipeline reservation because published ZIPs are
+  immutable" no longer describes the system. Replace with: **ZIP
+  construction runs in the export subsystem's own bounded builder task,
+  never the ingestion pipeline; cache reclamation does not need to hold
+  the per-`(doc_id, kind)` artifact lock either**, because a published
+  ZIP is immutable and — per the build-task design above — that lock is
+  already released the moment the source bytes are captured, well
+  before the object reaches `ready`. Maintenance therefore only ever
+  touches the ZIP object, its job record, and its download leases; it
+  never contends with the ingestion pipeline, and never contends with a
+  concurrent mutation of the *same* document either, because by the time
+  a `ready` object exists the artifact lock has already been released.
+
+**Two independent lease concepts live on the same job record, covering
+two different lifecycle phases:**
+
+| | Build lease | Download lease |
+| --- | --- | --- |
+| Fields | `owner_token`, `lease_expires_at` | `lease_id`, `track_id`, owner PID, heartbeat time |
+| Held while | status is `running` (a builder is producing `.partial`) | status is `ready` and a client is mid-download |
+| Purpose | detect a builder that died mid-build, so the job reaps to `failed` without a watchdog process | serving-concurrency accounting; block physical deletion while a client reads the ZIP |
+| Cardinality | at most one per job | zero or more per job, one per concurrent downloader |
+
+A job never holds both at once: a `running` job has at most a build
+lease and zero download leases (nothing is downloadable yet); a `ready`
+job has no build lease (the builder already exited cleanly or was
+reaped) and zero-or-more download leases. This falls out of the state
+machine, not an extra invariant to enforce separately.
+
+Everything else in this RFC section is unchanged by the redesign:
+serving concurrency is still enforced across all workers with a shared
+download-lease gate that fails closed on a provider failure; download
+admission still atomically verifies `ready` + `now < expires_at` +
+object-present + capacity before creating a download lease; `now >=
+expires_at` still atomically transitions `ready -> expired`, blocking
+new download leases while a download admitted before expiration may
+finish; physical deletion still requires zero live download leases (not
+build leases — those are already gone by the time an object is `ready`);
+capacity eviction still picks the oldest eligible `ready` result by
+`ready_at` and only deletes it once it has no live download lease;
+terminal job-record cleanup stays lazy, oldest-first, and never touches
+`queued`/`running` jobs (which still hold their build lease) or `ready`
+records with live download leases; and an expired-by-age local ZIP may
+still sit on disk until the next trigger or restart, since idle
+retention cannot exceed the hard cache bounds either way.
+
 ## Compatibility with the existing insert/delete pipeline
 
 - Zero changes to `pipeline_status`, `pipeline_ingress`, or the
@@ -252,6 +313,19 @@ This is the direct answer to "根据共享变量来判断文件名产物是否�
   per-artifact lock at the existing orphan-rotation/deletion/retry sites.
   Add `lightrag/kg/artifact_export_job_store.py` (new, sibling to
   `lightrag/kg/scan_job_store.py`, same single-process/Manager-hub split).
+- **"Event-driven cache expiration, eviction, and active-download
+  leases"**: drop the pipeline-mailbox-timer caveat and the "no periodic
+  signal to the pipeline mailbox" sentence (both moot, not just true);
+  replace "ZIP construction remains pipeline-owned; cache reclamation
+  does not need to hold the pipeline reservation" with "ZIP construction
+  runs in the export subsystem's own bounded builder task; cache
+  reclamation does not need to hold the per-artifact lock, which is
+  already released before the object reaches `ready`". Add the
+  build-lease/download-lease distinction table so the crash-recovery
+  lease introduced above and the RFC's existing download lease are never
+  conflated. The rest of the section (serving-concurrency gate,
+  `expired`/`410` transition, eviction-by-`ready_at`, lazy terminal
+  cleanup, idle-retention note) is unchanged.
 
 Every RFC goal is preserved (bounded concurrency, bounded cache,
 immutable ZIPs, `track_id`-keyed downloads, fail-closed on races,
