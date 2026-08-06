@@ -235,7 +235,11 @@ There is no mailbox and no pipeline-owned build step. A request either joins an 
 
 ### Job store
 
-`ArtifactExportJobStore` is a bounded, `track_id`-keyed store of job records, with the same shape as the existing scan job store (`lightrag/kg/scan_job_store.py`): a single-process store plus a Manager-hub-backed variant for multi-worker deployments, one store per workspace. One record per `track_id`:
+`ArtifactExportJobStore` is not a new subsystem with its own lock and multiprocess plumbing. It is a shared, workspace-scoped dict obtained via `get_namespace_data("artifact_export_jobs", workspace=...)` and mutated only under `get_namespace_lock("artifact_export_jobs", workspace=...)` — the exact mechanism `pipeline_status` already uses (`initialize_pipeline_status()` / `get_namespace_data("pipeline_status", ...)` in `lightrag/kg/shared_storage.py`), pointed at a new namespace name instead of a new class hierarchy. This gets single-process vs. Manager-backed multi-worker support and per-workspace isolation for free from existing infrastructure; no Hub, no explicit `BaseProxy`, no second parallel shared-state mechanism.
+
+An `initialize_artifact_export_status(workspace=None)` bootstrap, called at the same lifespan point as `initialize_pipeline_status()`, seeds the namespace once per process with three top-level keys — `jobs`, `inflight`, `running_builds` — exactly as `initialize_pipeline_status()` seeds `busy`, `scanning`, `pending_enqueues`, and the rest into one namespace dict. `jobs` and `inflight` are seeded as `manager.dict()` under multiprocess mode (a plain `{}` otherwise) — the same trick `pipeline_status.history_messages` already uses as a `manager.list()` — specifically so `namespace["jobs"][track_id] = record` is a live mutation through a real proxy and propagates across workers, rather than a copy-on-read no-op: a value read out of a `manager.dict()` is a plain, disconnected copy, so mutating it in place would silently not persist. Every job update therefore replaces a record wholesale — `namespace["jobs"][track_id] = new_record`, never a mutation of an existing record's individual keys — which is also exactly the shape CAS-by-version-check-then-write needs anyway.
+
+One record per `track_id`, with the CAS/owner-lease/terminal-transition shape already proven for `/scan` job tracking (`lightrag/kg/scan_job_store.py`): create is idempotent on an existing `track_id`, an update is refused on owner or version mismatch, and a lease-expired `running` job is reaped to `failed` on any later read — only the storage/locking underneath differs, from that module's own `threading.Lock` + Manager-hub, to the `get_namespace_data`/`get_namespace_lock` pair above:
 
 ```text
 track_id, doc_id, artifact_kind, owner_token
@@ -247,12 +251,14 @@ error_code, error_message                            (sanitized, set on failed)
 
 A builder whose lease expires is CAS-transitioned straight to `failed` with a sanitized `builder_lease_expired` error code (see §Crash recovery below) — the public state machine stays exactly the six states in §Query export status; there is no separate public "abandoned" state.
 
-The store additionally holds, guarded by its own internal lock (never a pipeline lock):
+The namespace additionally holds, in the same dict and guarded by the same lock:
 
 ```text
 inflight: {(doc_id, artifact_kind) -> track_id}   # queued/running jobs only
 running_builds: int                                 # <= MAX_DOWNLOAD_BUILD_CONCURRENCY
 ```
+
+Keeping `jobs`, `inflight`, and `running_builds` together under one lock is what lets admission (§Request handling) check and update all three atomically in one critical section — the same reason `pipeline_status` keeps `busy`, `scanning`, and `pending_enqueues` under one lock instead of three independent ones.
 
 ### Per-artifact keyed lock
 

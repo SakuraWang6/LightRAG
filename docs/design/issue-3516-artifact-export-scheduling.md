@@ -40,27 +40,46 @@ Per-artifact keyed lock = get_storage_keyed_lock(["{doc_id}:{kind}"], namespace=
 Local ZIP cache         = /artifact_exports/{track_id}.partial -> {track_id}.zip
 ```
 
-`ArtifactExportJobStore` is modeled directly on the existing
-`AsyncioScanJobStore` / `ScanJobStoreHub` pair in
-`lightrag/kg/scan_job_store.py` — the codebase already has a bounded,
-track_id-keyed, owner-lease job store with CAS updates and a
-single-process/Manager-hub split for multi-worker deployments; exports
-need the same shape, not a new one:
+`ArtifactExportJobStore` is not a new subsystem with its own lock and
+multiprocess plumbing — it is a shared, workspace-scoped dict obtained
+via `get_namespace_data("artifact_export_jobs", workspace=...)` and mutated
+only under `get_namespace_lock("artifact_export_jobs", workspace=...)`: the
+exact mechanism `pipeline_status` already uses
+(`initialize_pipeline_status()` / `get_namespace_data("pipeline_status",
+...)` in `lightrag/kg/shared_storage.py`), pointed at a new namespace
+name instead of a new class hierarchy. This gets single-process vs.
+Manager-backed multi-worker support and per-workspace isolation for
+free; no Hub, no explicit `BaseProxy`, no second parallel shared-state
+mechanism alongside the one the rest of the pipeline already relies on.
 
-- single-process mode: `AsyncioScanJobStore`-equivalent instance, one
-  `threading.Lock` guarding its own dict of records — no async waits, so
-  it is safe to call from an event loop or a Manager server thread.
-- multi-worker mode: a `ArtifactExportJobStoreHub` behind the Manager,
-  one store per workspace namespace, same explicit `BaseProxy` pattern as
-  `ScanJobStoreHub`/`_ScanJobStoreHubProxy`.
+An `initialize_artifact_export_status(workspace=None)` bootstrap, called
+at the same lifespan point as `initialize_pipeline_status()`, seeds the
+namespace once per process with three top-level keys — `jobs`,
+`inflight`, and `running_builds` — exactly as `initialize_pipeline_status()`
+seeds `busy`, `scanning`, `pending_enqueues`, and the rest into one
+namespace dict. `jobs` and `inflight` are seeded as `manager.dict()`
+under multiprocess mode (a plain `{}` otherwise) — the same trick
+`pipeline_status.history_messages` already uses as a `manager.list()` —
+specifically so `namespace["jobs"][track_id] = record` is a live
+mutation through a real proxy and propagates across workers, rather than
+a copy-on-read no-op: a value read out of a `manager.dict()` is a plain,
+disconnected copy, so mutating it in place would silently not persist
+(the same hazard `test_json_doc_status_copy_on_read.py` /
+`test_json_kv_copy_on_read.py` already pin down for other storage). Every
+job update therefore replaces a record wholesale —
+`namespace["jobs"][track_id] = new_record`, never a mutation of an
+existing record dict's individual keys — which is also exactly the shape
+CAS-by-version-check-then-write needs anyway.
 
 Two *different* lock mechanisms serve two different jobs, and the design
 only works if they stay separate:
 
-- The job store's **own internal lock** guards its own bookkeeping only:
-  job records, the single-flight `inflight` map, and the
-  `running_builds` counter (all described below). This is exactly what
-  `ScanJobStore._lock` already does for scan records.
+- `get_namespace_lock("artifact_export_jobs", workspace=...)` guards the job
+  store's own bookkeeping only: job records, the single-flight `inflight`
+  map, and the `running_builds` counter, all in one namespace so
+  admission (§Request flow) can check and update all three atomically in
+  one critical section — the same reason `pipeline_status` keeps `busy`,
+  `scanning`, and `pending_enqueues` under one lock instead of three.
 - The **per-artifact keyed lock** (`get_storage_keyed_lock`, already used
   cross-module for entity/edge mutation) guards the one thing that is
   genuinely shared with the ingestion pipeline: the actual source/sidecar
@@ -70,8 +89,14 @@ only works if they stay separate:
 
 ## Data model
 
-One job record per `track_id`, fields mirroring `ScanJobStore`'s
-record plus export-specific ones:
+One job record per `track_id`. The CAS/owner-lease/terminal-transition
+shape mirrors the one already proven for `/scan` job tracking
+(`lightrag/kg/scan_job_store.py`): create is idempotent on an existing
+`track_id`, an update is refused on owner or version mismatch, and a
+lease-expired `running` job is reaped to `failed` on any later read —
+only the storage/locking underneath changes, from that module's own
+`threading.Lock` + Manager-hub, to the `get_namespace_data`/
+`get_namespace_lock` pair above.
 
 ```text
 track_id            high-entropy, path-safe, server-generated
@@ -85,7 +110,8 @@ compressed_size, uncompressed_size, file_count   (set on ready)
 error_code, error_message                        (sanitized, set on failed)
 ```
 
-Store-level (not per-record) bookkeeping, guarded by the store's own lock:
+Store-level (not per-record) bookkeeping, in the same namespace, guarded
+by the same lock:
 
 ```text
 inflight: {(doc_id, kind) -> track_id}   # queued/running jobs only
@@ -121,8 +147,10 @@ running_builds: int                       # <= MAX_DOWNLOAD_BUILD_CONCURRENCY
 
 ## Build task
 
-1. CAS-transition the job to `running`; start the same heartbeat/lease
-   renewal `ScanJobStore.update` already does.
+1. CAS-transition the job to `running` (a whole-record replace under
+   `get_namespace_lock("artifact_export_jobs", ...)`); start the same
+   heartbeat/lease renewal `ScanJobStore.update` already does, just
+   against the namespace dict instead of that module's own lock.
 2. Acquire `get_storage_keyed_lock(["{doc_id}:{kind}"], namespace="artifact_export")`.
 3. Strictly re-resolve the input locator (`source_location` /
    `sidecar_location`) fresh from storage — never trust anything cached
@@ -425,8 +453,13 @@ never deployment policy, and belongs with the rest.
   scheduling, bounded/fair export batches" from `pipeline.py` — the only
   remaining `pipeline.py`/`lightrag.py` touch point is acquiring the
   per-artifact lock at the existing orphan-rotation/deletion/retry sites.
-  Add `lightrag/kg/artifact_export_job_store.py` (new, sibling to
-  `lightrag/kg/scan_job_store.py`, same single-process/Manager-hub split).
+  Add the `artifact_export_jobs` namespace helpers (create/update/
+  set_status/get/cancel, an `initialize_artifact_export_status()`
+  bootstrap) to `lightrag/kg/shared_storage.py` alongside
+  `initialize_pipeline_status()` — not a new module, and not a
+  `ScanJobStoreHub`-style Hub/Proxy pair, since `get_namespace_data`/
+  `get_namespace_lock` already provide the single-process/Manager-backed
+  split generically.
   Replace "policy profiles and every export/cache limit" for
   `lightrag/api/config.py`, `constants`, and `env.example` with: only
   `MAX_DOWNLOAD_SIZE` and `DOWNLOAD_CACHE_TTL_SECONDS` are new
