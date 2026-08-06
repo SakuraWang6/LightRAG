@@ -1,22 +1,8 @@
-# Proposed full replacement text — Part I (issue #3516)
+# RFC: Document Artifact Downloads
 
-This is the complete proposed text for "Part I: document artifact and
-export model" in https://github.com/HKUDS/LightRAG/issues/3516,
-incorporating the export-scheduling redesign discussed in this session.
-Sections untouched by that redesign are carried over unchanged from the
-current RFC body; the two changed sections ("Export jobs, mailbox, and
-pipeline scheduling" and "Event-driven cache expiration, eviction, and
-active-download leases") are rewritten, and small cross-reference notes
-are added to the sections that now interact with the per-artifact lock.
-Rationale for the changes is in the sibling file
-`issue-3516-artifact-export-scheduling.md`; this file is the clean draft
-meant to be pasted into the issue body.
-
-Parts II–V are unaffected and are not repeated here.
-
----
-
-# Part I: document artifact and export model
+> **Proposed full replacement text — Part I (issue #3516)**
+>
+> This is the complete proposed text for "Part I: document artifact and export model" in https://github.com/HKUDS/LightRAG/issues/3516, incorporating the export-scheduling redesign discussed in this session.Sections untouched by that redesign are carried over unchanged from the current RFC body; the two changed sections ("Export jobs, mailbox, and pipeline scheduling" and "Event-driven cache expiration, eviction, and active-download leases") are rewritten, and small cross-reference notes are added to the sections that now interact with the per-artifact lock. Parts II–V are unaffected and are not repeated here.
 
 ## Why basename lookup is invalid
 
@@ -221,7 +207,7 @@ The explicit `artifact_kind` path segment lets the route declare and enforce the
 
 ## Export jobs and independent build scheduling
 
-*(Renamed from "Export jobs, mailbox, and pipeline scheduling": building is no longer owned by, or scheduled through, the document-ingestion pipeline. Concurrent downloads of the same or different artifacts need no pipeline coordination at all.)*
+> Renamed from "Export jobs, mailbox, and pipeline scheduling": building is no longer owned by, or scheduled through, the document-ingestion pipeline. Concurrent downloads of the same or different artifacts need no pipeline coordination at all.
 
 The export design separates three responsibilities:
 
