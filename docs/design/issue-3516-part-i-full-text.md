@@ -320,23 +320,36 @@ A client polling `GET /documents/artifact-exports/{artifact_kind}/{track_id}` th
 
 All values are byte counts or positive integers. Invalid/non-positive configured values fail startup; normal authorized mode does not silently become unlimited.
 
+An environment variable is a permanent compatibility surface the moment it ships, so only two of these values are exposed that way; the rest are plain constants in `lightrag/constants.py`, following the same reasoning that module already applies to other unauthenticated-request ceilings: a resource-exhaustion bound is worth nothing if an operator who doesn't understand its purpose can misconfigure it away, and a concurrency knob whose right value depends on server hardware and this subsystem's own implementation is not something an `.env` file should be guessing at.
+
+### Environment variables
+
 | Environment variable | Default | Meaning |
 | --- | ---: | --- |
 | `MAX_DOWNLOAD_SIZE` | `3 * MAX_UPLOAD_SIZE`, or 300 MiB when upload is unlimited | Maximum completed ZIP bytes |
-| `MAX_DOWNLOAD_UNCOMPRESSED_SIZE` | `2147483648` (2 GiB) | Maximum sum of regular-file bytes before compression |
-| `MAX_DOWNLOAD_FILE_COUNT` | `10000` | Maximum regular files in one export |
-| `MAX_DOWNLOAD_DIRECTORY_DEPTH` | `16` | Maximum parsed directory depth |
-| `MAX_DOWNLOAD_PREPARE_SECONDS` | `600` | Maximum validation/compression time |
-| `MAX_DOWNLOAD_BUILD_CONCURRENCY` | `5` | Concurrent ZIP builders across the whole server (a shared counter, not scoped to any one worker or the pipeline) |
-| `ARTIFACT_EXPORT_BUILD_LEASE_SECONDS` | `60` | Build-lease duration; a `running` job whose lease is not renewed within this window is reaped to `failed` |
-| `MAX_DOWNLOAD_SERVE_CONCURRENCY` | `5` | Cross-worker concurrent ZIP responses |
-| `MAX_DOWNLOAD_CACHE_COUNT` | `20` | Maximum cache entries across running reservations and ready/expired objects awaiting reclamation |
-| `MAX_DOWNLOAD_CACHE_BYTES` | `5 * MAX_DOWNLOAD_SIZE` | Maximum reserved or physical bytes across running, partial, ready, and expired-not-yet-reclaimed results |
 | `DOWNLOAD_CACHE_TTL_SECONDS` | `86400` | Age at which a ready ZIP becomes logically expired and eligible for lazy reclamation |
-| `MAX_DOWNLOAD_JOB_RECORDS` | `1000` | Maximum compact job/tombstone records |
-| `DOWNLOAD_JOB_RECORD_TTL_SECONDS` | `86400` | Age at which a terminal job record becomes eligible for lazy reclamation |
 
-(`MAX_DOWNLOAD_JOBS_PER_CYCLE` is removed: there is no pipeline export cycle left to bound.)
+`MAX_DOWNLOAD_SIZE` is operator-facing for the same reason `MAX_UPLOAD_SIZE` already is: it trades directly against a deployment's disk and network budget, and raising the upload ceiling is an immediate, obvious reason to raise this one too. `DOWNLOAD_CACHE_TTL_SECONDS` is operator-facing because it is a retention/disk-usage policy, not a safety bound — how long a finished export stays around before reclamation is a legitimate per-deployment choice with no single correct value.
+
+### Internal constants (`lightrag/constants.py`)
+
+| Constant | Default | Meaning |
+| --- | ---: | --- |
+| `DEFAULT_MAX_DOWNLOAD_UNCOMPRESSED_SIZE` | `2147483648` (2 GiB) | Maximum sum of regular-file bytes before compression |
+| `DEFAULT_MAX_DOWNLOAD_FILE_COUNT` | `10000` | Maximum regular files in one export |
+| `DEFAULT_MAX_DOWNLOAD_DIRECTORY_DEPTH` | `16` | Maximum parsed directory depth |
+| `DEFAULT_MAX_DOWNLOAD_PREPARE_SECONDS` | `600` | Maximum validation/compression time |
+| `DEFAULT_MAX_DOWNLOAD_BUILD_CONCURRENCY` | `5` | Concurrent ZIP builders across the whole server (a shared counter, not scoped to any one worker or the pipeline) |
+| `DEFAULT_ARTIFACT_EXPORT_BUILD_LEASE_SECONDS` | `60` | Build-lease duration; a `running` job whose lease is not renewed within this window is reaped to `failed` |
+| `DEFAULT_MAX_DOWNLOAD_SERVE_CONCURRENCY` | `5` | Cross-worker concurrent ZIP responses |
+| `DEFAULT_MAX_DOWNLOAD_CACHE_COUNT` | `20` | Maximum cache entries across running reservations and ready/expired objects awaiting reclamation |
+| `DEFAULT_MAX_DOWNLOAD_CACHE_BYTES` | `5 * MAX_DOWNLOAD_SIZE` | Maximum reserved or physical bytes across running, partial, ready, and expired-not-yet-reclaimed results |
+| `DEFAULT_MAX_DOWNLOAD_JOB_RECORDS` | `1000` | Maximum compact job/tombstone records |
+| `DEFAULT_DOWNLOAD_JOB_RECORD_TTL_SECONDS` | `86400` | Age at which a terminal job record becomes eligible for lazy reclamation |
+
+None of these has a legitimate range of "correct" per-deployment values the way `MAX_DOWNLOAD_SIZE` or the cache TTL do: each is either a hard-coded abuse/resource-exhaustion ceiling (file count, depth, prepare time), a concurrency knob tied to this subsystem's own implementation rather than deployment policy, or derived arithmetic (`DEFAULT_MAX_DOWNLOAD_CACHE_BYTES` as a multiple of `MAX_DOWNLOAD_SIZE`, the same relationship `MULTIPART_OVERHEAD_BYTES` already has to `MAX_UPLOAD_SIZE` elsewhere in `constants.py`). `DEFAULT_ARTIFACT_EXPORT_BUILD_LEASE_SECONDS` in particular is an internal crash-detection timer (§Crash recovery), never deployment policy, and belongs here even though it was listed as an environment variable earlier in this redesign — that was an oversight, corrected here. `MAX_DOWNLOAD_JOB_RECORD_TTL_SECONDS` is deliberately not the one TTL kept operator-facing either: it governs how long *bookkeeping records* linger, which has no operator-visible effect, unlike `DOWNLOAD_CACHE_TTL_SECONDS`, which governs how long the actual downloadable ZIP stays available.
+
+(`MAX_DOWNLOAD_JOBS_PER_CYCLE` is removed outright, not merely relocated: there is no pipeline export cycle left to bound.)
 
 A 2 GiB uncompressed limit is a safety ceiling, not a promise that a 2 GiB image artifact is downloadable. Image-heavy inputs compress poorly and will normally hit `MAX_DOWNLOAD_SIZE` first.
 

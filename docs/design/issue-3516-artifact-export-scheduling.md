@@ -354,6 +354,45 @@ lives:
    the cost of a slow export quietly prolonging a delete's
    `destructive_busy` window.
 
+## Env vars vs. internal constants
+
+An environment variable is a permanent compatibility surface the moment
+it ships — removing or renaming one later breaks deployments that set
+it. Most of the resource-limits table is not deployment policy at all:
+it's either a hard-coded abuse/resource-exhaustion ceiling (file count,
+depth, prepare time) or a concurrency knob tied to this subsystem's own
+implementation and server hardware, not something an operator has a
+legitimate reason to retune from an `.env` file. `lightrag/constants.py`
+already draws exactly this line for other unauthenticated-request
+ceilings (`DEFAULT_MAX_INGEST_BODY_BYTES` is explicitly "Not an env
+knob"; `MULTIPART_OVERHEAD_BYTES` is a fixed derived value with no
+override at all), so the export limits should follow the same
+convention rather than introducing a second one.
+
+Only two values stay operator-facing:
+
+- `MAX_DOWNLOAD_SIZE` — trades directly against a deployment's disk and
+  network budget, the same reason `MAX_UPLOAD_SIZE` already is an env
+  var; raising the upload ceiling is an immediate reason to raise this
+  one too.
+- `DOWNLOAD_CACHE_TTL_SECONDS` — a retention/disk-usage policy with no
+  single correct value, not a safety bound.
+
+Everything else — `MAX_DOWNLOAD_UNCOMPRESSED_SIZE`,
+`MAX_DOWNLOAD_FILE_COUNT`, `MAX_DOWNLOAD_DIRECTORY_DEPTH`,
+`MAX_DOWNLOAD_PREPARE_SECONDS`, `MAX_DOWNLOAD_BUILD_CONCURRENCY`,
+`ARTIFACT_EXPORT_BUILD_LEASE_SECONDS`, `MAX_DOWNLOAD_SERVE_CONCURRENCY`,
+`MAX_DOWNLOAD_CACHE_COUNT`, `MAX_DOWNLOAD_CACHE_BYTES` (a multiple of
+`MAX_DOWNLOAD_SIZE`, the same relationship `MULTIPART_OVERHEAD_BYTES`
+has to `MAX_UPLOAD_SIZE`), `MAX_DOWNLOAD_JOB_RECORDS`, and
+`DOWNLOAD_JOB_RECORD_TTL_SECONDS` (bookkeeping-record retention, with no
+operator-visible effect, unlike the cache TTL that governs the actual
+downloadable ZIP) — become `DEFAULT_*` constants in
+`lightrag/constants.py` instead. `ARTIFACT_EXPORT_BUILD_LEASE_SECONDS`
+was listed as an environment variable earlier in this redesign; that was
+an oversight — it is an internal crash-detection timer (§Crash recovery),
+never deployment policy, and belongs with the rest.
+
 ## RFC edits implied
 
 - **"Export jobs, mailbox, and pipeline scheduling"**: replace with the
@@ -361,9 +400,13 @@ lives:
   build exports", "the pipeline remains busy while validating and
   building ZIP snapshots", the batch/cycle fairness paragraphs, and the
   mailbox paragraph.
-- **Resource limits table**: drop `MAX_DOWNLOAD_JOBS_PER_CYCLE`; keep
-  `MAX_DOWNLOAD_BUILD_CONCURRENCY` as a plain cross-worker counter, not
-  "concurrent ZIP builders inside the sole pipeline owner".
+- **Resource limits table**: drop `MAX_DOWNLOAD_JOBS_PER_CYCLE` outright
+  (no pipeline export cycle left to bound); split the rest into two env
+  vars (`MAX_DOWNLOAD_SIZE`, `DOWNLOAD_CACHE_TTL_SECONDS`) and everything
+  else as `lightrag/constants.py` constants — see §Env vars vs. internal
+  constants above. `MAX_DOWNLOAD_BUILD_CONCURRENCY` moves there too, as a
+  plain cross-worker counter, not "concurrent ZIP builders inside the
+  sole pipeline owner".
 - **Acceptance criteria** ("Asynchronous exports"): replace "Only the
   pipeline owner builds ZIPs, and inputs cannot change during
   validation/compression" with "Only a build holding the per-`(doc_id,
@@ -384,6 +427,12 @@ lives:
   per-artifact lock at the existing orphan-rotation/deletion/retry sites.
   Add `lightrag/kg/artifact_export_job_store.py` (new, sibling to
   `lightrag/kg/scan_job_store.py`, same single-process/Manager-hub split).
+  Replace "policy profiles and every export/cache limit" for
+  `lightrag/api/config.py`, `constants`, and `env.example` with: only
+  `MAX_DOWNLOAD_SIZE` and `DOWNLOAD_CACHE_TTL_SECONDS` are new
+  `config.py`/`env.example` entries; every other export/cache limit is a
+  new `DEFAULT_*` constant in `lightrag/constants.py`, not a
+  `config.py`/`env.example` entry at all.
 - **"Event-driven cache expiration, eviction, and active-download
   leases"**: drop the pipeline-mailbox-timer caveat and the "no periodic
   signal to the pipeline mailbox" sentence (both moot, not just true);
