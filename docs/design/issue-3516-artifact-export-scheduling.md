@@ -1,5 +1,12 @@
 # Simplifying artifact-export scheduling (issue #3516)
 
+> **Superseded.** Part I (including this scheduling redesign) moved to
+> its own issue, https://github.com/HKUDS/LightRAG/issues/3585 ("RFC:
+> Document Artifact Downloads"), where the RFC author revised it further
+> — see the banner in the sibling `issue-3516-part-i-full-text.md` for
+> the delta. #3585 is the normative source going forward; this file is
+> kept only as a historical record of the reasoning that led there.
+
 Source RFC: https://github.com/HKUDS/LightRAG/issues/3516, section
 "Export jobs, mailbox, and pipeline scheduling". This note redesigns that
 section only; the rest of the RFC (artifact identity, orphan rotation,

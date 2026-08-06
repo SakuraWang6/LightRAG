@@ -1,5 +1,29 @@
 # Proposed full replacement text — Part I (issue #3516)
 
+> **Superseded.** The RFC author split Part I out into its own issue,
+> https://github.com/HKUDS/LightRAG/issues/3585 ("RFC: Document Artifact
+> Downloads"), and revised it further there — most notably: the download
+> lifecycle is no longer tracked by `ArtifactExportJobStore` at all (it
+> only owns transient `queued`/`running` build ownership); the terminal
+> cache-file suffix (`.zip` / `.failed` / `.cancelled`) is the durable
+> source of truth for `ready`/`failed`/`cancelled`, so a published ZIP
+> survives a full service restart with no tombstone needed; `delete_file=true`
+> no longer touches previously published ZIPs; a deletion fence closes
+> the cancel-then-relock race window; ZIP traversal/compression moved to
+> a dedicated executor instead of the event loop; the cache directory is
+> sharded by track-ID entropy; and `425`/`410` are gone in favor of `409`
+> (queued/running, with `Retry-After`) and `404` (reclaimed, no
+> tombstone) respectively. **#3585 is the normative source for Part I
+> going forward — this file is kept only as a historical record of how
+> the design got there and is no longer maintained.**
+>
+> The scheduling redesign discussion this file and its sibling
+> (`issue-3516-artifact-export-scheduling.md`) captured — decoupling
+> export builds from the ingestion pipeline, the per-artifact keyed
+> lock, the `get_namespace_data`-backed job store — carried forward into
+> #3585 largely intact; the delta above is what #3585 additionally
+> changed on top of it.
+
 This is the complete proposed text for "Part I: document artifact and
 export model" in https://github.com/HKUDS/LightRAG/issues/3516,
 incorporating the export-scheduling redesign discussed in this session.
