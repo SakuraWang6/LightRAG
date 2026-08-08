@@ -144,3 +144,242 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# --------------------------------------------------------------------------- #
+# Standardized harness spec (replaces the ad-hoc CLI entry point above).
+# --------------------------------------------------------------------------- #
+
+from memory_eval_tests.experiments.common import (  # noqa: E402
+    ExperimentSpec,
+    RunContext,
+    chat_ollama,
+    normalize_summary,
+    write_progress,
+)
+from memory_eval_tests.experiments.common.context import split_prompt  # noqa: E402
+
+
+def _spec_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(rows)
+    rate = lambda key: sum(bool(row["metrics"].get(key)) for row in rows) / total if total else 0.0
+    average = lambda key: (
+        sum(bool(row["metrics"][key]) for row in rows if row["metrics"].get(key) is not None)
+        / sum(1 for row in rows if row["metrics"].get(key) is not None)
+        if any(row["metrics"].get(key) is not None for row in rows)
+        else None
+    )
+    by_type: dict[str, dict[str, Any]] = {}
+    for name in ("FACT", "TABLE", "FIGURE", "FORMULA", "MULTIHOP", "ABSTAIN"):
+        subset = [row for row in rows if row["question_group"] == name]
+        if subset:
+            by_type[name] = {
+                "cases": len(subset),
+                "answer_accuracy": sum(bool(r["metrics"]["exact_match"]) for r in subset) / len(subset),
+            }
+    return {
+        "cases": total,
+        "answer_accuracy": rate("exact_match"),
+        "groundedness": rate("grounded"),
+        "hallucination_rate": rate("hallucinated"),
+        "abstention_accuracy": average("abstention_correct"),
+        "numeric_unit_accuracy": average("numeric_unit_correct"),
+        "formula_accuracy": average("formula_correct"),
+        "table_cell_accuracy": average("table_cell_correct"),
+        "by_question_type": by_type,
+    }
+
+
+def _render_spec_report(methods: list[dict[str, Any]]) -> str:
+    lines = [
+        "# 结构元数据消融",
+        "",
+        "同一 Select5 证据包，对比原生上下文与附加 Oracle 结构元数据（page/order/section/relations）对回答的影响。",
+        "",
+        "| 臂 | Accuracy | Groundedness | Hallucination | Table Cell |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for item in methods:
+        s = item["summary"]
+        fmt = lambda v: "n/a" if v is None else f"{v:.4f}"
+        lines.append(
+            f"| {item['label']} | {fmt(s.get('answer_accuracy'))} | {fmt(s.get('groundedness'))} | "
+            f"{fmt(s.get('hallucination_rate'))} | {fmt(s.get('table_cell_accuracy'))} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 分题型回答准确率",
+            "",
+            "| 题型 | Cases | Native | Oracle-Full |",
+            "|---|---:|---:|---:|",
+        ]
+    )
+    arms = {item["method"]: item["summary"]["by_question_type"] for item in methods}
+    for name in ("FACT", "TABLE", "FIGURE", "FORMULA", "MULTIHOP", "ABSTAIN"):
+        cases = next((v.get("cases") for arm in arms.values() if (v := arm.get(name))), 0)
+        if not cases:
+            continue
+        fmt = lambda v: "n/a" if v is None else f"{v:.4f}"
+        lines.append(
+            f"| {name} | {cases} | {fmt(arms.get('native', {}).get(name, {}).get('answer_accuracy'))} | "
+            f"{fmt(arms.get('oracle_full', {}).get(name, {}).get('answer_accuracy'))} |"
+        )
+    lines.extend(["", "## 口径", "", "- 元数据仅来自 oracle，提示中明确标注不构成新证据；原生臂复用保存的 Select5 回答。", ""])
+    return "\n".join(lines)
+
+
+async def _run_spec(context: RunContext) -> dict[str, Any]:
+    evidence_run = Path(
+        context.extra.get(
+            "evidence_run",
+            "memory_eval_tests/runs/context-selection-v1/run.json",
+        )
+    )
+    envelope = json.loads(evidence_run.read_text(encoding="utf-8"))
+    select5 = next(item for item in envelope["methods"] if item["method"] == "select5")
+    saved = {row["question_id"]: row for row in select5["results"]}
+    dataset = context.dataset
+    baseline = context.baseline
+    num_ctx = int(baseline.get("num_ctx") or 16384)
+    num_predict = int(baseline.get("num_predict") or 128)
+    temperature = float(baseline.get("temperature") or 0)
+    ollama_url = context.environment["ollama_url"]
+    model = baseline["model"]
+    storage_dir = Path(context.environment.get("storage_dir") or str(DEFAULT_STORAGE))
+
+    oracle = DatasetClient(str(dataset)).oracle()
+    questions = {q["id"]: q for q in oracle["questions"]}
+    facts = {fact["fact_id"]: fact for fact in oracle["facts"]}
+    object_list = json.loads((dataset / "objects.json").read_text(encoding="utf-8"))["objects"]
+    objects = {item["object_id"]: item for item in object_list}
+    order = {item["object_id"]: index for index, item in enumerate(object_list)}
+    relations = json.loads((dataset / "relations.json").read_text(encoding="utf-8"))["relations"]
+    cache = _load_keyword_cache(storage_dir)
+    rag = _find_rag()
+    await rag.initialize_storages()
+    rag.llm_response_cache.global_config["enable_llm_cache"] = False
+    rows: list[dict[str, Any]] = []
+    total = len(saved)
+    try:
+        for index, question_id in enumerate(saved, start=1):
+            base = saved[question_id]
+            question = questions[question_id]
+            evidence_facts = [facts[item] for item in question.get("evidence_fact_ids", []) if item in facts]
+            high, low = cache[question["question"]]
+            prompt = await rag.aquery(
+                question["question"],
+                param=_query_param(top_k=20, high_keywords=high, low_keywords=low, prompt_only=True),
+            )
+            prefix, user = split_prompt(str(prompt))
+            native_context = base["selected_context"]
+            metadata = _oracle_metadata(
+                context=native_context,
+                evidence_facts=evidence_facts,
+                objects=objects,
+                order=order,
+                relations=relations,
+            )
+            oracle_context = (
+                native_context
+                + "\nOracle Structure Metadata (metadata only; do not treat as new evidence):\n```json\n"
+                + json.dumps(metadata, ensure_ascii=False)
+                + "\n```\n"
+            )
+            oracle_answer = chat_ollama(
+                host=ollama_url,
+                model=model,
+                system=prefix + oracle_context,
+                user=user,
+                num_predict=num_predict,
+                num_ctx=num_ctx,
+                temperature=temperature,
+            )
+            oracle_metrics = score_answer(
+                answer_text=oracle_answer,
+                expected=question["answer"],
+                question=question,
+                evidence_facts=evidence_facts,
+                references_blob=native_context,
+            )
+            native_metrics = {key: base[key] for key in oracle_metrics if key in base}
+            rows.append(
+                {
+                    "question_id": question_id,
+                    "question_group": _group(question),
+                    "evidence_ids": base["selected_evidence_ids"],
+                    "native_metadata": [],
+                    "oracle_metadata": metadata,
+                    "native_answer": base["answer"],
+                    "oracle_answer": oracle_answer,
+                    "native_metrics": native_metrics,
+                    "oracle_metrics": oracle_metrics,
+                    "oracle_context_chars": len(oracle_context),
+                    "estimated_tokens": (len(prefix) + len(oracle_context)) // 3 + 1,
+                }
+            )
+            write_progress(
+                context.output_dir,
+                status="running",
+                done=index,
+                total=total,
+                phase=f"question {question_id}",
+            )
+            print(f"[{index}/{total}] {question_id}", flush=True)
+    finally:
+        await rag.finalize_storages()
+
+    methods = []
+    for method, label in (("native", "Native (Select5 保存)"), ("oracle_full", "Oracle-Full 结构元数据")):
+        subset = [
+            {
+                "question_group": row["question_group"],
+                "metrics": row["native_metrics"] if method == "native" else row["oracle_metrics"],
+            }
+            for row in rows
+        ]
+        methods.append(
+            {
+                "method": method,
+                "label": label,
+                "params": {"num_ctx": num_ctx, "num_predict": num_predict},
+                "summary": normalize_summary(_spec_metrics(subset), "selector"),
+                "results": rows,
+            }
+        )
+    return {"methods": methods, "report": _render_spec_report(methods), "status": "complete"}
+
+
+def _runner_spec(context: RunContext) -> dict[str, Any]:
+    return asyncio.run(_run_spec(context))
+
+
+spec = ExperimentSpec(
+    id="structure_ablation",
+    label="结构元数据消融",
+    description=(
+        "在完全相同的 Select5 证据包上对比原生上下文与附加 Oracle 结构元数据"
+        "（page/order/section/relations）对回答质量的影响；原生臂复用已保存的回答。"
+    ),
+    default_baseline={
+        "model": "qwen3:8b",
+        "mode": "mix",
+        "top_k": 20,
+        "chunk_top_k": 20,
+        "num_ctx": 16384,
+        "num_predict": 128,
+        "temperature": 0,
+        "kg": True,
+    },
+    variables=[
+        {
+            "axis": "structure_metadata",
+            "label": "结构元数据",
+            "arms": [
+                {"arm": "native", "label": "原生"},
+                {"arm": "oracle_full", "label": "Oracle-Full"},
+            ],
+        }
+    ],
+    runner=_runner_spec,
+)
