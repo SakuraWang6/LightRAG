@@ -1,4 +1,4 @@
-from memory_eval_tests.answer_eval import _canonical_formula, _formula_match, score_answer
+from memory_eval_tests.online.answer_eval import _canonical_formula, _formula_match, score_answer
 
 
 def test_formula_normalization_accepts_latex_unicode_and_fraction_variants():

@@ -33,11 +33,13 @@ memory_eval_tests/                   # 评估消费者，不生成文档
   experiments/                        # KG/selector/structure 等消融实验
   reporting/                          # 单次、对比、规模与就绪度报告
   runs/                               # 评估产物，已忽略，不提交、不移动
-  <legacy .py>                        # 旧命令兼容入口
 
 memory_eval_tests/runs/EXPERIMENT_RESULTS_SUMMARY.md  # 已验证实验结论与产物索引
 memory_eval_env.yml                   # 推荐 Conda 环境定义
 ```
+
+所有入口均位于职责化子包中（`offline/ online/ experiments/ reporting/`），
+不再保留顶层兼容入口；新脚本一律使用分组后的模块路径。
 
 ```mermaid
 flowchart LR
@@ -159,14 +161,14 @@ PDF 是由本机 LibreOffice `soffice --headless` 从 DOCX 转换。若工具未
 ```bash
 DATASET=memory_data_service/generated/rich-smoke-v1
 /Users/sakura/miniconda3/bin/conda run -n lightrag-memory-eval \
-  python -m memory_eval_tests.integrity "$DATASET" --json
+  python -m memory_eval_tests.offline.integrity "$DATASET" --json
 ```
 
 一键运行完整离线套件：
 
 ```bash
 /Users/sakura/miniconda3/bin/conda run -n lightrag-memory-eval \
-  python -m memory_eval_tests.offline_runner \
+  python -m memory_eval_tests.offline.offline_runner \
   --dataset "$DATASET" --engine native --top-k 5 --force-reparse --json
 ```
 
@@ -174,7 +176,7 @@ DATASET=memory_data_service/generated/rich-smoke-v1
 
 ```bash
 /Users/sakura/miniconda3/bin/conda run -n lightrag-memory-eval \
-  python -m memory_eval_tests.offline_runner \
+  python -m memory_eval_tests.offline.offline_runner \
   --dataset "$DATASET" --engine native --top-k 5 \
   --max-cases 500 --max-facts 1000
 ```
@@ -202,7 +204,7 @@ DATASET=memory_data_service/generated/rich-smoke-v1
 
 ```bash
 /Users/sakura/miniconda3/bin/conda run -n lightrag-memory-eval \
-  python -m memory_eval_tests.api_preflight \
+  python -m memory_eval_tests.online.api_preflight \
   --rag-api-url http://127.0.0.1:9621 \
   --ollama-url http://127.0.0.1:11434 \
   --output memory_eval_tests/runs/api_preflight.json
@@ -224,27 +226,27 @@ NO_PROXY=127.0.0.1,localhost \
 ```bash
 # 导入文档并等待索引完成
 /Users/sakura/miniconda3/bin/conda run -n lightrag-memory-eval \
-  python -m memory_eval_tests.index_runner \
+  python -m memory_eval_tests.online.index_runner \
   --dataset "$DATASET" --rag-api-url http://127.0.0.1:9621 \
   --formats docx --wait --timeout-seconds 5400 --poll-seconds 15
 
 # 评估检索证据
 /Users/sakura/miniconda3/bin/conda run -n lightrag-memory-eval \
-  python -m memory_eval_tests.retrieval_eval \
+  python -m memory_eval_tests.online.retrieval_eval \
   --backend api --dataset "$DATASET" --rag-api-url http://127.0.0.1:9621 \
   --mode mix --top-k 5 \
   --output memory_eval_tests/runs/online/<run-id>/retrieval_mix_top5.json
 
 # 评估最终回答与引用
 /Users/sakura/miniconda3/bin/conda run -n lightrag-memory-eval \
-  python -m memory_eval_tests.answer_eval \
+  python -m memory_eval_tests.online.answer_eval \
   --dataset "$DATASET" --rag-api-url http://127.0.0.1:9621 \
   --mode mix --top-k 5 --chunk-top-k 5 --max-total-tokens 8192 \
   --output memory_eval_tests/runs/online/<run-id>/answer_mix_top5.json
 
 # 汇总成可读报告
 /Users/sakura/miniconda3/bin/conda run -n lightrag-memory-eval \
-  python -m memory_eval_tests.report \
+  python -m memory_eval_tests.reporting.report \
   memory_eval_tests/runs/online/<run-id>/retrieval_mix_top5.json \
   memory_eval_tests/runs/online/<run-id>/answer_mix_top5.json \
   --format markdown --output memory_eval_tests/runs/online/<run-id>/online_report.md

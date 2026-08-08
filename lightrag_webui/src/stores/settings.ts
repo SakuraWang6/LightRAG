@@ -6,7 +6,7 @@ import { Message, QueryRequest } from '@/api/lightrag'
 
 type Theme = 'dark' | 'light' | 'system'
 type Language = 'en' | 'zh' | 'fr' | 'ar' | 'zh_TW' | 'ru' | 'ja' | 'de' | 'uk' | 'ko' | 'vi'
-type Tab = 'documents' | 'knowledge-graph' | 'retrieval' | 'api'
+type Tab = 'documents' | 'knowledge-graph' | 'retrieval' | 'api' | 'eval'
 
 interface SettingsState {
   // Document manager settings
@@ -85,7 +85,7 @@ const useSettingsStoreBase = create<SettingsState>()(
   persist(
     (set) => ({
       theme: 'system',
-      language: 'en',
+      language: 'zh',
       showPropertyPanel: true,
       showNodeSearchBar: true,
       showLegend: false,

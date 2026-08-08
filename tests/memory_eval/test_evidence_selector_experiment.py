@@ -1,4 +1,4 @@
-from memory_eval_tests.evidence_selector_experiment import _make_candidates, _parse_selection
+from memory_eval_tests.experiments.evidence_selector_experiment import _make_candidates, _parse_selection
 
 
 def test_selector_parses_only_known_ids_and_enforces_limit():

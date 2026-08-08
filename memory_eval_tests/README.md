@@ -11,13 +11,12 @@ memory_eval_tests/
 ├── online/       # API preflight, ingestion, retrieval and answer evaluation
 ├── experiments/  # KG, evaluator, selector and structure ablations
 ├── reporting/    # single-run, comparison, scale and readiness reports
-├── runs/         # generated artifacts; never move or edit by framework cleanup
-└── <legacy .py>  # stable compatibility entry points
+└── runs/         # generated artifacts; never move or edit by framework cleanup
 ```
 
-Use the grouped module paths for new automation. Existing commands such as
-`python -m memory_eval_tests.offline_runner` remain supported as compatibility
-aliases, so saved scripts and prior experiment notes continue to work.
+Every entry point lives in a responsibility-based package; there are no
+top-level compatibility aliases. Use the grouped module paths below for all
+new automation.
 
 | Task | Recommended module |
 | --- | --- |
