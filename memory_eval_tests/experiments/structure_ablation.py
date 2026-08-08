@@ -215,7 +215,10 @@ def _render_spec_report(methods: list[dict[str, Any]]) -> str:
             "|---|---:|---:|---:|",
         ]
     )
-    arms = {item["method"]: item["summary"]["by_question_type"] for item in methods}
+    arms = {
+        item["method"]: (item["summary"] or {}).get("by_question_type", {})
+        for item in methods
+    }
     for name in ("FACT", "TABLE", "FIGURE", "FORMULA", "MULTIHOP", "ABSTAIN"):
         cases = next((v.get("cases") for arm in arms.values() if (v := arm.get(name))), 0)
         if not cases:
