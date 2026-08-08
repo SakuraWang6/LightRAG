@@ -202,6 +202,7 @@ def _write_envelope(args, summary: dict) -> None:
         "profile": summary.get("profile"),
     }
     baseline = {
+        "dataset": summary.get("dataset_id"),
         "engine": summary.get("engine"),
         "top_k": summary.get("top_k"),
         "chunk_token_size": summary.get("chunk_token_size"),
