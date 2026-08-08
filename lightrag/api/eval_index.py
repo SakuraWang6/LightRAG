@@ -11,8 +11,15 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
+
+# The server console script does not put the repository root on sys.path;
+# ``memory_eval_tests`` is a repo-local package, so expose it explicitly.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from memory_eval_tests.experiments.common.envelope import build_conditions
 
