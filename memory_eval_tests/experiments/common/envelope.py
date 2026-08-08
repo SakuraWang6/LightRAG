@@ -198,6 +198,38 @@ def write_envelope(
     return path
 
 
+def write_simple_envelope(
+    output_dir: Path,
+    *,
+    kind: str,
+    run_id: str,
+    experiment: dict[str, Any],
+    baseline: dict[str, Any],
+    environment: dict[str, Any],
+    methods: list[dict[str, Any]],
+    status: str,
+    report_rel_path: str | None = None,
+) -> Path:
+    """Envelope writer for non-registry runs (offline/online evaluators)."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    envelope = {
+        "schema_version": SCHEMA_VERSION,
+        "kind": kind,
+        "run_id": run_id,
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "status": status,
+        "experiment": experiment,
+        "environment": environment,
+        "baseline": baseline,
+        "variables": [],
+        "methods": methods,
+        "reports": {"report.md": report_rel_path} if report_rel_path else {},
+    }
+    path = output_dir / "run.json"
+    path.write_text(json.dumps(envelope, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
 def write_progress(
     output_dir: Path,
     *,

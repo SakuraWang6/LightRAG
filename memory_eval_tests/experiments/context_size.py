@@ -158,12 +158,12 @@ async def _run(context: RunContext) -> dict[str, Any]:
             for num_ctx in NUM_CTX_GRID:
                 arm = f"top{top_k}_ctx{num_ctx}"
                 for question in questions:
-                    prefix, user, context = retrieval[question["id"]]
-                    preflight = context_check(prefix + context, num_ctx, arm)
+                    prefix, user, retrieved = retrieval[question["id"]]
+                    preflight = context_check(prefix + retrieved, num_ctx, arm)
                     answer = chat_ollama(
                         host=ollama_url,
                         model=model,
-                        system=prefix + context,
+                        system=prefix + retrieved,
                         user=user,
                         num_predict=num_predict,
                         num_ctx=num_ctx,
@@ -174,13 +174,13 @@ async def _run(context: RunContext) -> dict[str, Any]:
                         for fid in question.get("evidence_fact_ids", [])
                         if fid in facts_by_id
                     ]
-                    covered, total_facts = _recall_proxy(context, evidence_facts)
+                    covered, total_facts = _recall_proxy(retrieved, evidence_facts)
                     scores = score_answer(
                         answer_text=answer,
                         expected=str(question.get("answer", "")),
                         question=question,
                         evidence_facts=evidence_facts,
-                        references_blob=context,
+                        references_blob=retrieved,
                     )
                     rows[arm].append(
                         {
@@ -190,7 +190,7 @@ async def _run(context: RunContext) -> dict[str, Any]:
                             "num_ctx": num_ctx,
                             "question_group": group(question),
                             "question_type": question.get("question_type", ""),
-                            "context_chars": len(context),
+                            "context_chars": len(retrieved),
                             "estimated_tokens": preflight["estimated_tokens"],
                             "context_overflow": preflight["overflow"],
                             "retrieval_recall": (covered / total_facts) if total_facts else 1.0,

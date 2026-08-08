@@ -280,12 +280,12 @@ async def _run(context: RunContext) -> dict[str, Any]:
                     selected = kept
                     candidate_pool = top20
                     candidate_context = render_context(top20)
-                    context = render_combined_context(kept, chunks)
-                    preflight = context_check(prefix + context, num_ctx, method)
+                    combined_context = render_combined_context(kept, chunks)
+                    preflight = context_check(prefix + combined_context, num_ctx, method)
                     answer = chat_ollama(
                         host=ollama_url,
                         model=model,
-                        system=prefix + context,
+                        system=prefix + combined_context,
                         user=user,
                         num_predict=256,
                         num_ctx=num_ctx,
@@ -296,7 +296,7 @@ async def _run(context: RunContext) -> dict[str, Any]:
                         expected=str(question.get("answer", "")),
                         question=question,
                         evidence_facts=evidence_facts,
-                        references_blob=context,
+                        references_blob=combined_context,
                     )
                     rows[method].append(
                         {
@@ -313,7 +313,7 @@ async def _run(context: RunContext) -> dict[str, Any]:
                             "role_coverage": None,
                             "evidence_count": len(kept),
                             "candidate_context_chars": len(candidate_context),
-                            "selected_context_chars": len(context),
+                            "selected_context_chars": len(combined_context),
                             "estimated_tokens": preflight["estimated_tokens"],
                             "context_overflow": preflight["overflow"],
                             "answer": answer,
@@ -323,7 +323,7 @@ async def _run(context: RunContext) -> dict[str, Any]:
                     )
                     continue
                 elif method == "oracle_text":
-                    context = build_oracle_context(
+                    oracle_context = build_oracle_context(
                         question=question,
                         facts=evidence_facts,
                         objects=objects,
@@ -332,11 +332,11 @@ async def _run(context: RunContext) -> dict[str, Any]:
                         tables=tables,
                         arm="oracle_text",
                     )
-                    preflight = context_check(prefix + context, num_ctx, method)
+                    preflight = context_check(prefix + oracle_context, num_ctx, method)
                     answer = chat_ollama(
                         host=ollama_url,
                         model=model,
-                        system=prefix + context,
+                        system=prefix + oracle_context,
                         user=user,
                         num_predict=256,
                         num_ctx=num_ctx,
@@ -347,7 +347,7 @@ async def _run(context: RunContext) -> dict[str, Any]:
                         expected=str(question.get("answer", "")),
                         question=question,
                         evidence_facts=evidence_facts,
-                        references_blob=context,
+                        references_blob=oracle_context,
                     )
                     rows[method].append(
                         {
@@ -364,7 +364,7 @@ async def _run(context: RunContext) -> dict[str, Any]:
                             "role_coverage": None,
                             "evidence_count": len(evidence_facts),
                             "candidate_context_chars": None,
-                            "selected_context_chars": len(context),
+                            "selected_context_chars": len(oracle_context),
                             "estimated_tokens": preflight["estimated_tokens"],
                             "context_overflow": preflight["overflow"],
                             "answer": answer,

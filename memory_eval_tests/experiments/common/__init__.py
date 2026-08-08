@@ -14,6 +14,7 @@ from memory_eval_tests.experiments.common.envelope import (
     read_progress,
     write_envelope,
     write_progress,
+    write_simple_envelope,
 )
 from memory_eval_tests.experiments.common.metrics import (
     METRIC_LABELS,
@@ -36,4 +37,5 @@ __all__ = [
     "read_progress",
     "write_envelope",
     "write_progress",
+    "write_simple_envelope",
 ]
