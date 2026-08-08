@@ -34,6 +34,27 @@ export type RunCondition = {
   value: string
 }
 
+export type EvalRunProgress = {
+  status?: string | null
+  phase?: string | null
+  done?: number | null
+  total?: number | null
+  message?: string | null
+  updated_at?: string | null
+}
+
+export type VariableArm = {
+  arm: string
+  label?: string
+  [key: string]: unknown
+}
+
+export type EvalVariable = {
+  axis: string
+  label?: string
+  arms: VariableArm[]
+}
+
 export type EvalArtifact = {
   rel_path: string
   kind: string
@@ -55,6 +76,9 @@ export type EvalRun = {
   updated_at?: string | null
   status?: string | null
   conditions: RunCondition[]
+  description?: string
+  variables: EvalVariable[]
+  progress: EvalRunProgress
   headline: Record<string, MetricItem>
   artifact_titles: string[]
 }

@@ -530,7 +530,9 @@
     "condition": "条件",
     "noMethods": "该实验没有方法对比数据",
     "noMethodsHint": "通常是独立审计或诊断产物",
-    "toc": "目录"
+    "toc": "目录",
+    "running": "运行中",
+    "variables": "变量轴"
   },
   "pagination": {
     "showing": "显示第 {{start}} 到 {{end}} 条，共 {{total}} 条记录",

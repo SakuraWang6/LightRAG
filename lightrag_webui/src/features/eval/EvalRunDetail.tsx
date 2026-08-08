@@ -19,6 +19,7 @@ import EvalDataTable from '@/features/eval/EvalDataTable'
 import MarkdownReport from '@/features/eval/MarkdownReport'
 import MetricCards from '@/features/eval/MetricCards'
 import MethodCompare from '@/features/eval/MethodCompare'
+import ProgressBar from '@/features/eval/ProgressBar'
 import ReportDocument from '@/features/eval/ReportDocument'
 import { formatDate, runKindClass, statusBadgeClass } from '@/features/eval/utils'
 
@@ -40,9 +41,22 @@ function RunHeader({ run }: { run: EvalRunDetail }) {
         {' · '}
         {run.artifacts.length} {t('eval.artifactLabel')}
       </p>
+      {run.description ? <p className="text-muted-foreground mt-1 text-sm">{run.description}</p> : null}
       <div className="mt-2">
         <ConditionChips conditions={run.conditions} limit={10} />
       </div>
+      {run.variables && run.variables.length > 0 ? (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-muted-foreground text-xs">{t('eval.variables')}:</span>
+          {run.variables.map((variable) => (
+            <Badge key={variable.axis} variant="outline" className="font-normal">
+              {variable.label ?? variable.axis}:{' '}
+              {variable.arms.map((arm) => arm.label ?? String(arm.arm)).join(' / ')}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+      <ProgressBar progress={run.progress} />
     </div>
   )
 }

@@ -132,6 +132,23 @@ export default function EvalConsole() {
     return Array.from(values).sort()
   }, [runs])
 
+  const hasActiveRuns = useMemo(
+    () =>
+      (runs ?? []).some((run) =>
+        ['running', 'queued'].includes(run.progress?.status ?? '')
+      ),
+    [runs]
+  )
+
+  useEffect(() => {
+    if (!hasActiveRuns) return
+    const timer = window.setInterval(() => {
+      void loadRuns()
+      if (selectedId) void loadDetail(selectedId)
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [hasActiveRuns, loadRuns, loadDetail, selectedId])
+
   const toggleCompare = useCallback((id: string) => {
     setCompareIds((prev) => {
       const next = new Set(prev)
@@ -309,6 +326,11 @@ export default function EvalConsole() {
                           ) : null}
                           <span>{formatDate(run.updated_at)}</span>
                         </div>
+                        {['running', 'queued'].includes(run.progress?.status ?? '') ? (
+                          <div className="text-emerald-600 dark:text-emerald-400 mt-1 text-[11px] font-medium">
+                            ● {t('eval.running')} {run.progress.done ?? 0}/{run.progress.total ?? '?'}
+                          </div>
+                        ) : null}
                         <div className="mt-1.5">
                           <ConditionChips conditions={run.conditions} limit={3} />
                         </div>

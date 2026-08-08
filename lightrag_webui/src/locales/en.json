@@ -530,7 +530,9 @@
     "condition": "Condition",
     "noMethods": "This experiment has no method comparison data",
     "noMethodsHint": "Usually an independent audit or diagnostic artifact",
-    "toc": "Table of contents"
+    "toc": "Table of contents",
+    "running": "Running",
+    "variables": "Variable axes"
   },
   "pagination": {
     "showing": "Showing {{start}} to {{end}} of {{total}} entries",
