@@ -171,6 +171,7 @@ def write_envelope(
     methods: list[dict[str, Any]],
     report_rel_path: str | None = None,
     extra: dict[str, Any] | None = None,
+    write_progress_file: bool = True,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     envelope: dict[str, Any] = {
@@ -194,7 +195,8 @@ def write_envelope(
         envelope.update(extra)
     path = output_dir / "run.json"
     path.write_text(json.dumps(envelope, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    write_progress(output_dir, status=status, done=1, total=1, phase="done", message="")
+    if write_progress_file:
+        write_progress(output_dir, status=status, done=1, total=1, phase="done", message="")
     return path
 
 

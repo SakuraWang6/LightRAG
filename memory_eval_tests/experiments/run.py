@@ -88,6 +88,16 @@ def main() -> None:
         extra=extra,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    # Publish an initial envelope immediately so the console can supervise the
+    # run while it is in progress; the final write below replaces it.
+    write_envelope(
+        args.output_dir,
+        context=context,
+        status="running",
+        methods=[],
+        report_rel_path=None,
+        write_progress_file=False,
+    )
     write_progress(args.output_dir, status="queued", done=0, total=1, phase="starting")
     try:
         payload = spec.runner(context)
