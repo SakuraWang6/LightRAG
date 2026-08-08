@@ -27,18 +27,13 @@ memory_data_service/                 # 独立数据生成/托管服务
   schemas.py                          # manifest/oracle 数据模型
 
 memory_eval_tests/                   # 评估消费者，不生成文档
-  integrity.py                        # 数据集与 oracle 一致性
-  sidecar_audit.py                    # 调用 LightRAG parser，审计 sidecar
-  layout_audit.py                     # 位置/复杂版面审计
-  object_traceability.py              # 对象 -> block/chunk 追溯
-  chunk_traceability.py               # chunk -> sidecar.refs -> block 追溯
-  cross_reference_audit.py            # REF/bookmark/引用链路
-  retrieval_eval.py                   # sidecar 或 API 检索评估
-  answer_eval.py                      # 在线回答、证据与引用评估
-  performance_audit.py                # 离线解析/规模指标
-  offline_runner.py                   # 一键离线套件
-  report.py                           # JSON/CSV/Markdown 汇总
-  runs/                               # 评估产物，已忽略，不提交
+  common/                             # DatasetClient 等共享接口
+  offline/                            # 完整性、parser、版面、追溯和性能审计
+  online/                             # API 预检、导入、检索与回答评测
+  experiments/                        # KG/selector/structure 等消融实验
+  reporting/                          # 单次、对比、规模与就绪度报告
+  runs/                               # 评估产物，已忽略，不提交、不移动
+  <legacy .py>                        # 旧命令兼容入口
 
 memory_eval_tests/runs/EXPERIMENT_RESULTS_SUMMARY.md  # 已验证实验结论与产物索引
 memory_eval_env.yml                   # 推荐 Conda 环境定义

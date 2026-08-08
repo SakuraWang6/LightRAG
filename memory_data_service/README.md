@@ -4,6 +4,25 @@ Independent synthetic data service for rich single-document memory evaluation.
 It generates DOCX/PDF files plus `manifest.json`, `facts.json`,
 `questions.json`, `objects.json`, `relations.json`, and `oracle.json`.
 
+## Structure and boundaries
+
+```text
+memory_data_service/
+├── cli.py             # local generate/list/serve commands
+├── app.py             # FastAPI transport only
+├── schemas.py         # request, manifest and oracle contracts
+├── storage.py         # generated-dataset persistence helpers
+├── resource_guard.py  # generation size/resource protection
+├── generators/        # basic and rich DOCX generation implementations
+└── generated/         # generated datasets; runtime artifacts, never reorganized
+```
+
+For new code, keep document construction in `generators/`, dataset contracts in
+`schemas.py`, and disk access in `storage.py`. `cli.py` and `app.py` are thin
+entry points; neither should contain generation logic. The `generated/` tree is
+an artifact area rather than framework source and is intentionally left in
+place by code cleanup.
+
 ## Generate Locally
 
 ```bash
