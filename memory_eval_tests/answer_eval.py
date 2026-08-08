@@ -74,6 +74,9 @@ def evaluate_answers(
         "formula_accuracy": _average(results, "formula_correct"),
         "table_cell_accuracy": _average(results, "table_cell_correct"),
         "abstention_accuracy": _average(results, "abstention_correct"),
+        "evidence_available": _average(results, "evidence_available"),
+        "citation_presence": _average(results, "citation_presence"),
+        "citation_correctness": _average(results, "citation_correctness"),
         "citation_accuracy": sum(r["citation_correct"] for r in results) / total if total else 0.0,
         "groundedness": sum(r["grounded"] for r in results) / total if total else 0.0,
         "hallucination_rate": sum(r["hallucinated"] for r in results) / total if total else 0.0,
@@ -88,11 +91,17 @@ def score_answer(
     question: dict[str, Any],
     evidence_facts: list[dict[str, Any]],
     references_blob: str,
+    evidence_available_override: bool | None = None,
 ) -> dict[str, bool | None]:
     question_type = question.get("question_type", "")
     expected_behavior = question.get("expected_behavior", "answer")
-    exact = _answer_match(expected, answer_text, evidence_facts)
-    citation_correct = _citation_correct(evidence_facts, references_blob)
+    exact = _answer_match(expected, answer_text, evidence_facts, question_type=question_type)
+    evidence_available = (
+        evidence_available_override
+        if evidence_available_override is not None
+        else _evidence_available(evidence_facts, references_blob)
+    )
+    citation_presence, citation_correctness = _citation_metrics(evidence_facts, answer_text)
 
     numeric_unit_correct = None
     formula_correct = None
@@ -108,9 +117,15 @@ def score_answer(
     if expected_behavior == "abstain":
         abstention_correct = _looks_like_abstain(answer_text)
         exact = abstention_correct
-        citation_correct = True
+        # Refusing an unanswerable question does not require a source citation.
+        evidence_available = True
+        citation_presence = False
+        citation_correctness = None
 
-    grounded = bool(exact and citation_correct)
+    # Groundedness means the answer is correct and its oracle evidence was
+    # supplied to the model.  It deliberately does not conflate availability
+    # with an explicit citation in the generated prose.
+    grounded = bool(exact and evidence_available)
     hallucinated = bool(expected_behavior == "abstain" and not abstention_correct)
     if expected_behavior != "abstain":
         hallucinated = not grounded
@@ -121,7 +136,13 @@ def score_answer(
         "formula_correct": formula_correct,
         "table_cell_correct": table_cell_correct,
         "abstention_correct": abstention_correct,
-        "citation_correct": bool(citation_correct),
+        "evidence_available": bool(evidence_available),
+        "citation_presence": bool(citation_presence),
+        "citation_correctness": citation_correctness,
+        # Backward-compatible alias used by older runners.  Historically this
+        # field measured evidence availability in the supplied references, not
+        # whether the answer made a correct citation.
+        "citation_correct": bool(evidence_available),
         "grounded": grounded,
         "hallucinated": hallucinated,
     }
@@ -149,39 +170,58 @@ def _numeric_unit_match(expected: str, answer_text: str) -> bool:
 def _formula_match(expected: str, answer_text: str) -> bool:
     expected_compact = _canonical_formula(expected)
     answer_compact = _canonical_formula(answer_text)
-    if expected_compact and expected_compact in answer_compact:
-        return True
-    expected_tokens = _formula_tokens(expected)
-    answer_tokens = _formula_tokens(answer_text)
-    return bool(expected_tokens) and expected_tokens <= answer_tokens
+    return bool(expected_compact) and expected_compact in answer_compact
 
 
 def _answer_match(
     expected: str,
     answer_text: str,
     evidence_facts: list[dict[str, Any]],
+    *,
+    question_type: str,
 ) -> bool:
     normalized_answer = _normalize(answer_text)
     if expected and _normalize(expected) in normalized_answer:
         return True
-    if _numeric_unit_match(expected, answer_text):
+    formula = _formula_fragment(expected)
+    if formula:
+        if not _formula_match(formula, answer_text):
+            return False
+        remainder = expected.replace(formula, " ", 1)
+        numeric_pairs = re.findall(r"([-+]?\d+(?:\.\d+)?)\s*([A-Za-z%]+)", remainder)
+        if numeric_pairs and not _numeric_unit_match(" ".join("".join(pair) for pair in numeric_pairs), answer_text):
+            return False
+        return _required_terms_present(remainder, answer_text)
+    if question_type in {"direct_numeric", "table_cell"}:
+        return _numeric_unit_match(expected, answer_text)
+    if _numeric_unit_match(expected, answer_text) and not _required_terms(expected):
         return True
-    if _formula_match(expected, answer_text):
-        return True
-    fact_answers = [
-        str(fact.get("answer", ""))
-        for fact in evidence_facts
-        if str(fact.get("answer", "")).strip()
+    return _required_terms_present(expected, answer_text)
+
+
+def _formula_fragment(text: str) -> str | None:
+    match = re.search(r"[A-Za-z]\s*_?\s*\{?\d+\}?\s*=\s*[^;\n]+", text)
+    return match.group(0).strip() if match else None
+
+
+def _required_terms(text: str) -> list[str]:
+    ignored = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "is", "of", "on", "or", "the", "to", "with"}
+    return [
+        term
+        for term in re.findall(r"[a-z0-9]+(?:[._-][a-z0-9]+)*", text.lower())
+        if term not in ignored and not re.fullmatch(r"\d+(?:\.\d+)?", term)
     ]
-    return bool(fact_answers) and all(
-        _numeric_unit_match(answer, answer_text)
-        or _normalize(answer) in normalized_answer
-        or _compact(answer) in _compact(answer_text)
-        for answer in fact_answers
-    )
 
 
-def _citation_correct(evidence_facts: list[dict[str, Any]], references_blob: str) -> bool:
+def _required_terms_present(expected: str, answer_text: str) -> bool:
+    terms = _required_terms(expected)
+    if not terms:
+        return True
+    compact_answer = _compact(answer_text)
+    return all(_compact(term) in compact_answer for term in terms)
+
+
+def _evidence_available(evidence_facts: list[dict[str, Any]], references_blob: str) -> bool:
     if not evidence_facts:
         return True
     normalized_refs = _compact(references_blob)
@@ -197,6 +237,25 @@ def _citation_correct(evidence_facts: list[dict[str, Any]], references_blob: str
     return hits == len(evidence_facts)
 
 
+def _citation_metrics(
+    evidence_facts: list[dict[str, Any]], answer_text: str
+) -> tuple[bool, bool | None]:
+    """Score explicit stable-ID citations separately from available evidence.
+
+    Answers may be grounded without mentioning a stable ID.  When a response
+    does cite IDs, correctness requires every oracle fact ID to be cited.  The
+    function intentionally avoids treating a matching answer value as a
+    citation; otherwise numeric answers would make citation presence vacuous.
+    """
+    cited_ids = {item.upper() for item in re.findall(r"\b(?:FACT|OBJ)-\d{5}\b", answer_text, re.I)}
+    if not cited_ids:
+        return False, None
+    expected_ids = {str(fact.get("fact_id", "")).upper() for fact in evidence_facts}
+    if not expected_ids:
+        return True, False
+    return True, expected_ids <= cited_ids
+
+
 def _average(results: list[dict[str, Any]], key: str) -> float | None:
     applicable = [row[key] for row in results if row.get(key) is not None]
     if not applicable:
@@ -205,39 +264,83 @@ def _average(results: list[dict[str, Any]], key: str) -> float | None:
 
 
 def _looks_like_abstain(text: str) -> bool:
-    lowered = text.lower()
-    return any(
-        phrase in lowered
-        for phrase in (
-            "does not provide",
-            "do not have enough information",
-            "not enough information",
-            "not provided",
-            "not mentioned",
-            "cannot determine",
-            "cannot answer",
-            "unable to determine",
-            "没有",
-            "未提供",
-            "无法确定",
-        )
+    lowered = _normalize(text)
+    patterns = (
+        r"\b(?:is |are )?not (?:mentioned|provided|specified|stated)\b",
+        r"\b(?:does|do) not (?:mention|provide|specify|state|contain)\b",
+        r"\b(?:cannot|can't|can not) (?:be )?(?:determined|answered|addressed)\b",
+        r"\b(?:unable to|insufficient information to|not enough information to) (?:determine|answer|address)\b",
+        r"\binsufficient information\b",
+        r"\b(?:document|context|provided information) (?:does not|do not) contain\b",
+        r"(?:文档|上下文).{0,12}(?:没有|未提供|未提及|无法确定|无法回答)",
     )
+    return any(re.search(pattern, lowered) is not None for pattern in patterns)
 
 
 def _canonical_formula(text: str) -> str:
+    """Canonicalize the limited algebra grammar used by the synthetic oracle.
+
+    This is deliberately structural rather than token-set based: it preserves
+    equality and division, converts only equivalent LaTex/Unicode spellings,
+    and does not accept a bag of variable names as a formula match.
+    """
     normalized = text.lower()
-    normalized = normalized.replace("\\eta", "eta")
-    normalized = normalized.replace("\\times", "")
-    normalized = normalized.replace("\\cdot", "")
-    normalized = normalized.replace("\\frac", "")
-    return re.sub(r"[^a-z0-9=/+*\\-]+", "", normalized)
+    normalized = normalized.replace("η", "eta")
+    normalized = re.sub(r"\\(?:eta|mathrm\{eta\})", "eta", normalized)
+    normalized = normalized.replace("\\left", "").replace("\\right", "")
+    normalized = normalized.replace("\\times", "*").replace("\\cdot", "*")
+
+    # Convert LaTex fractions before stripping braces. The operands can contain
+    # subscript braces (for example ``P_{5}``), so a flat regex is insufficient.
+    previous = None
+    while previous != normalized:
+        previous = normalized
+        normalized = _replace_latex_fractions(normalized)
+
+    normalized = re.sub(r"_\s*\{\s*([^{}]+?)\s*\}", r"_\1", normalized)
+    normalized = re.sub(r"\s+", "", normalized)
+    # Multiplication signs and grouping parentheses are optional for the
+    # single-product formulas in this dataset (P_5 T_5 == P_5*T_5).
+    normalized = normalized.replace("*", "").replace("{", "").replace("}", "")
+    normalized = normalized.replace("(", "").replace(")", "")
+    return re.sub(r"[^a-z0-9_=/+\-.]+", "", normalized)
 
 
-def _formula_tokens(text: str) -> set[str]:
-    normalized = text.lower().replace("\\eta", "eta")
-    normalized = re.sub(r"\\[a-z]+", " ", normalized)
-    normalized = normalized.replace("_", "")
-    return set(re.findall(r"[a-z]+(?:\{?\d+\}?)?", normalized))
+def _replace_latex_fractions(text: str) -> str:
+    def group_end(start: int) -> tuple[str, int] | None:
+        if start >= len(text) or text[start] != "{":
+            return None
+        depth = 0
+        for index in range(start, len(text)):
+            if text[index] == "{":
+                depth += 1
+            elif text[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start + 1 : index], index + 1
+        return None
+
+    output = []
+    index = 0
+    while index < len(text):
+        if not text.startswith("\\frac", index):
+            output.append(text[index])
+            index += 1
+            continue
+        numerator_start = index + len("\\frac")
+        while numerator_start < len(text) and text[numerator_start].isspace():
+            numerator_start += 1
+        numerator = group_end(numerator_start)
+        denominator = group_end(numerator[1]) if numerator else None
+        if not numerator or not denominator:
+            output.append(text[index])
+            index += 1
+            continue
+        output.append(f"({numerator[0]})/({denominator[0]})")
+        index = denominator[1]
+    return "".join(output)
+
+
 
 
 def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:

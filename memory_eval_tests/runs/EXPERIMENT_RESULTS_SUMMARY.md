@@ -8,6 +8,8 @@
 2. **更大的 KG context 并不等于更高 answer quality。** 在受控的 qwen3:8b Top-K 曲线中，Top-3 已达到 0.8611 Accuracy；Top-20 上下文扩大至 35,669 字符后准确率降至 0.7778，hallucination 升至 0.2778。
 3. **生成阶段（模型能力与上下文窗口匹配）是已验证的瓶颈。** 在完全冻结同一份 KG Top-5 Prompt 后，`gpt-4o-mini` 的 answer accuracy 为 0.8889，高于旧 qwen3:8b 8K 运行的 0.8056；16K 修复后 qwen3:8b Top-5 为 0.8611，说明旧差距同时包含模型选择与运行窗口不足两个因素。
 4. **上下文膨胀是第二个已验证瓶颈。** Top-1 到 Top-20 的平均上下文字符数从 5,630 增至 35,669；证据覆盖代理在 Top-3 后不再提升、Top-20 反而下降，最终 answer 曲线也同步回落。
+5. **Evidence Selector 有条件有效。** 在新的受控四组实验中，Top20→Select5 保留 96.72% 的 Top-20 proxy recall、移除 72.23% context，并使 Accuracy 从 Direct Top-20 的 0.8056 提升到 0.8333；Select3 压缩更多但效果较差。
+6. **Oracle structure metadata 未改善当前 Select5 + qwen3:8b。** 24/36 个 evidence packs 获得真实 page/order/parent/relation metadata，但 Native 与 Oracle Structure-Full 的 Accuracy、Groundedness、Hallucination、MULTIHOP 均不变。因此不能据此优先更换 parser。
 
 ## 2. 数据与评测口径
 
@@ -141,3 +143,65 @@
 - Context Size 检索消融：`memory_eval_tests/runs/online/rich-smoke-v1-kg-ablation/retrieval_context_size_qwen8b.json`
 - Context Size 完整回答消融（有效 16K 运行）：`memory_eval_tests/runs/online/rich-smoke-v1-kg-ablation/context_size_qwen8b_ctx16384.json`
 - 运行器与检查点逻辑：`memory_eval_tests/kg_ablation.py`
+
+## 9. 后续实验：Evaluator、Evidence Selector 与 Structure Ablation（完成）
+
+### 9.1 Evaluator 修复与历史答案重评
+
+评分器已完成以下确定性修复：
+
+- 公式规范化覆盖 Greek、Unicode/LaTex、下标、空格与 `a/b`/`\\frac{a}{b}` 等价形式；
+- 拒答判定覆盖 `not mentioned/provided/specified/stated`、`cannot be determined/answered/addressed`、`insufficient information` 与 document/context 缺失等表达；
+- 指标拆为 `evidence_available`、`citation_presence`、`citation_correctness` 与 `groundedness`。
+
+6 个回归测试通过。重评完全复用保存回答、不调用 LLM；9 份历史报告中有 41 个题目分数变化，其中 22 个为 false-to-true evaluator false negative，19 个为更严格规则暴露出的 true-to-false。详见 `memory_eval_tests/runs/evaluator_recheck_report.md`。
+
+### 9.2 实验 A：Evidence Selector / Reranker
+
+控制变量：同一 `rich-smoke-v1`、历史 KG storage、缓存 keywords、`mix` retrieval、qwen3:8b、16,384 token generation window、temperature 0 与同一 answer template。Selector 只接收稳定 evidence ID、object type 与 Top-20 renderer 的前 20 个 entity records；其 JSON debug 输出不进入 Answer Context。下表的 recall/precision 是 object-level proxy，不能与历史 API Recall@K 混用。
+
+| Method | Candidate K | Selected K | Candidate Recall | Selected Recall | Selection Precision | Avg Context chars | Accuracy | Groundedness | Hallucination |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Direct Top-3 | 3 | 3 | 0.6111 | 0.6111 | 0.6471 | 1,021 | 0.6111 | 0.5278 | 0.4722 |
+| Direct Top-20 | 20 | 20 | 0.8472 | 0.8472 | 0.8824 | 8,006 | 0.8056 | 0.7222 | 0.2778 |
+| Top20 → Select3 | 20 | ≤3 | 0.8472 | 0.8056 | 0.8529 | 1,575 | 0.7778 | 0.6944 | 0.3056 |
+| Top20 → Select5 | 20 | ≤5 | 0.8472 | 0.8194 | 0.8529 | 2,223 | **0.8333** | **0.7500** | **0.2500** |
+
+结论：Top-20 candidate pool 相比 Direct Top-3 提升 23.61 个百分点 proxy recall；Select5 保留 96.72% Top-20 proxy recall、缩短 72.23% context，并比 Direct Top-20 提高 2.78 个百分点 Accuracy、降低 2.78 个百分点 Hallucination。Select3 更短但 Accuracy 低 5.56 个百分点，因此当前最稳的 selector 配置是 **Top20 → Select5**，而不是 Select3。
+
+按题型看，Select5 的 FACT=0.9333、FIGURE=1.0000、FORMULA=1.0000、ABSTAIN=1.0000；TABLE=0.6000、MULTIHOP=0.2500 仍是短板。
+
+对 Select5 的 6 个错误逐题分解：Retrieval=2、Selection=1、Context Interference=1、Generation/Reasoning=2、Evaluator=0。对应占比分别为 33.3%、16.7%、16.7%、33.3%、0%。详细原始 output 与依据见：
+
+- `memory_eval_tests/runs/evidence-selector-v1/evidence_selector_results.json`
+- `memory_eval_tests/runs/evidence-selector-v1/evidence_selector_report.md`
+- `memory_eval_tests/runs/evidence-selector-v1/evidence_selector_failure_analysis.md`
+
+### 9.3 实验 B：Native vs Oracle Structure-Full
+
+Native 直接复用 Select5 的原始 evidence pack 和回答。Oracle Structure-Full 保持 evidence text/IDs 不变，只对已在 pack 中可验证的事实附加 synthetic oracle 已存在的 object ID、object type、page、document order、section、parent、前后邻居与真实 relation。Answer model/parameters 保持 qwen3:8b、temperature 0、16,384 token context、128 token output。
+
+| Condition | Accuracy | Groundedness | Hallucination | MULTIHOP | TABLE | FIGURE | FORMULA |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Native | 0.8333 | 0.7500 | 0.2500 | 0.2500 | 0.6000 | 1.0000 | 1.0000 |
+| Oracle Structure-Full | 0.8333 | 0.7500 | 0.2500 | 0.2500 | 0.6000 | 1.0000 | 1.0000 |
+
+Oracle metadata 实际附加到 24/36 packs。转变矩阵为 Native Wrong→Oracle Correct=0、Native Correct→Oracle Wrong=0、Both Wrong=6、Both Correct=30。两题在 structure 前缺少正确 evidence、一道 MULTIHOP 被 selector 删除一半证据；剩余三道有 page/order/relation metadata 的题仍错误，说明模型没有利用关系或无法从长表抽取目标值。结论是：**当前证据不足以支持更换 parser；结构“存在”不是当前主瓶颈。**
+
+详细结果：
+
+- `memory_eval_tests/runs/structure-ablation-v1/structure_ablation_results.json`
+- `memory_eval_tests/runs/structure-ablation-v1/structure_ablation_report.md`
+
+### 9.4 当前状态与建议
+
+已完成：Evaluator 修复与重评、Evidence Selector 四组对照、Selector 失败分解、Native vs Oracle Structure-Full。尚未完成：Oracle Structure-Light 独立对照，以及 Select5 在 20/200 页在线 KG 上的复现。
+
+当前主要瓶颈排序：
+
+1. MULTIHOP/TABLE 的 retrieval 与 evidence-selection 完整性；
+2. 有充分 evidence 后的 generation/reasoning；
+3. context construction 的粒度；
+4. 结构 metadata 利用，而非 metadata 是否存在。
+
+下一步应先做 relation-aware Select5（多跳题对每个关系角色至少保留一个 evidence），然后在 20 页、200 页验证；不要先扩大 Top-K 或全量替换 parser。

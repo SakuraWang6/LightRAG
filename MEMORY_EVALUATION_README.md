@@ -40,7 +40,7 @@ memory_eval_tests/                   # 评估消费者，不生成文档
   report.py                           # JSON/CSV/Markdown 汇总
   runs/                               # 评估产物，已忽略，不提交
 
-memory_evaluation_task_plan.md        # 任务清单、完成状态、实验记录
+memory_eval_tests/runs/EXPERIMENT_RESULTS_SUMMARY.md  # 已验证实验结论与产物索引
 memory_eval_env.yml                   # 推荐 Conda 环境定义
 ```
 
@@ -301,4 +301,4 @@ Groundedness + Hallucination Rate + Query latency
 - Docling/MinerU 需要相应服务环境、模型与 PDF 输入；它们尚未纳入稳定基线。
 - 1000/3000 页在线端到端实验会显著放大 KG extraction 时间与存储成本，应先在 smoke/medium 完成配置与消融，再进入长文档。
 
-详细完成状态、历史实验数值和后续任务请查看 [memory_evaluation_task_plan.md](memory_evaluation_task_plan.md)。
+已验证实验结论、历史数值、当前瓶颈与下一阶段建议请查看 [实验结果汇总](memory_eval_tests/runs/EXPERIMENT_RESULTS_SUMMARY.md)。
