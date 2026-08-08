@@ -378,8 +378,50 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(output + "\n", encoding="utf-8")
+        _write_envelope(args, report)
     print(output)
     return 0
+
+
+def _write_envelope(args, report: dict) -> None:
+    from memory_eval_tests.experiments.common import (
+        capture_environment,
+        write_simple_envelope,
+    )
+
+    output_dir = args.output.parent
+    summary = {
+        key: value
+        for key, value in report.items()
+        if isinstance(value, (int, float, bool)) and key != "results"
+    }
+    write_simple_envelope(
+        output_dir,
+        kind="online",
+        run_id=output_dir.name,
+        experiment={
+            "id": "online_answer",
+            "label": "在线回答评测",
+            "description": "通过 LightRAG API 回答 oracle 问题并计算准确率/groundedness/幻觉率等。",
+        },
+        baseline={
+            "mode": report.get("mode"),
+            "top_k": report.get("top_k"),
+            "chunk_top_k": report.get("chunk_top_k"),
+            "max_total_tokens": report.get("max_total_tokens"),
+        },
+        environment=capture_environment(rag_api_url=getattr(args, "rag_api_url", None)),
+        methods=[
+            {
+                "method": "answer",
+                "label": "回答评测",
+                "params": {"top_k": report.get("top_k")},
+                "summary": summary,
+                "results": report.get("results", []),
+            }
+        ],
+        status="complete",
+    )
 
 
 if __name__ == "__main__":

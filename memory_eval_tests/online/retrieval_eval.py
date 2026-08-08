@@ -357,8 +357,49 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(output + "\n", encoding="utf-8")
+        _write_envelope(args, report, "retrieval")
     print(output)
     return 0
+
+
+def _write_envelope(args, report: dict, kind: str) -> None:
+    from memory_eval_tests.experiments.common import (
+        capture_environment,
+        write_simple_envelope,
+    )
+
+    output_dir = args.output.parent
+    summary = {
+        key: value
+        for key, value in report.items()
+        if isinstance(value, (int, float, bool)) and key != "results"
+    }
+    write_simple_envelope(
+        output_dir,
+        kind="online",
+        run_id=output_dir.name,
+        experiment={
+            "id": "online_retrieval",
+            "label": "在线检索评测",
+            "description": "通过 LightRAG API 检索 oracle 证据并计算 Recall@K / MRR。",
+        },
+        baseline={
+            "mode": report.get("mode"),
+            "top_k": report.get("top_k"),
+            "backend": report.get("backend"),
+        },
+        environment=capture_environment(rag_api_url=getattr(args, "rag_api_url", None)),
+        methods=[
+            {
+                "method": kind,
+                "label": "检索结果",
+                "params": {"top_k": report.get("top_k")},
+                "summary": summary,
+                "results": report.get("results", []),
+            }
+        ],
+        status="complete",
+    )
 
 
 if __name__ == "__main__":

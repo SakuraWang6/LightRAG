@@ -11,8 +11,9 @@ def _specs() -> list[ExperimentSpec]:
     from memory_eval_tests.experiments.context_size import spec as context_size
     from memory_eval_tests.experiments.structure_ablation import spec as structure_ablation
     from memory_eval_tests.experiments.scale import spec as scale
+    from memory_eval_tests.experiments.online_baseline import spec as online_baseline
 
-    return [context_selection, context_size, structure_ablation, scale]
+    return [context_selection, context_size, structure_ablation, scale, online_baseline]
 
 
 def get_spec(experiment_id: str) -> ExperimentSpec:

@@ -182,7 +182,82 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Dataset: {summary['dataset_id']}")
         print(f"Passed: {summary['passed']}")
         print(f"Report: {summary['markdown_report']}")
+    _write_envelope(args, summary)
     return 0 if summary["passed"] else 1
+
+
+def _write_envelope(args, summary: dict) -> None:
+    """Write the standard run.json envelope beside the offline artifacts."""
+    from memory_eval_tests.experiments.common import (
+        capture_environment,
+        write_simple_envelope,
+    )
+
+    output_dir = Path(summary["output_dir"])
+    environment = capture_environment()
+    dataset_meta = {
+        "dataset": summary.get("dataset_id"),
+        "pages": summary.get("pages"),
+        "tier": summary.get("tier"),
+        "profile": summary.get("profile"),
+    }
+    baseline = {
+        "engine": summary.get("engine"),
+        "top_k": summary.get("top_k"),
+        "chunk_token_size": summary.get("chunk_token_size"),
+        "max_cases": summary.get("max_cases"),
+        "max_facts": summary.get("max_facts"),
+    }
+    methods = []
+    for name, path in (summary.get("reports") or {}).items():
+        audit_path = Path(path)
+        if not audit_path.exists():
+            continue
+        try:
+            payload = json.loads(audit_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        methods.append(
+            {
+                "method": name,
+                "label": name,
+                "params": {},
+                "summary": {
+                    key: value
+                    for key, value in payload.items()
+                    if isinstance(value, (int, float, bool))
+                },
+                "results": [],
+            }
+        )
+    methods.append(
+        {
+            "method": "offline_summary",
+            "label": "离线审计汇总",
+            "params": {},
+            "summary": {
+                key: value
+                for key, value in summary.items()
+                if isinstance(value, (int, float, bool))
+            },
+            "results": [],
+        }
+    )
+    write_simple_envelope(
+        output_dir,
+        kind="offline",
+        run_id=output_dir.name,
+        experiment={
+            "id": "offline_audit",
+            "label": "离线审计",
+            "description": "完整性、sidecar、版式、交叉引用、对象/Chunk 可追溯性与词法检索基线（无 LLM）。",
+        },
+        baseline=baseline,
+        environment=environment,
+        methods=methods,
+        status="complete" if summary.get("passed") else "failed",
+        report_rel_path=Path(summary.get("markdown_report", "")).name or None,
+    )
 
 
 if __name__ == "__main__":
