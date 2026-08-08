@@ -32,6 +32,24 @@ function collectMetrics(run: EvalRunDetail): Map<string, MetricItem> {
         map.set(metric.key, metric)
       }
     }
+    // Experiments carry their comparisons in the method table; expose each
+    // method's scalar metrics as comparable rows ("method · metric").
+    for (const row of artifact.table?.rows ?? []) {
+      const methodName = String(row.label ?? row.method ?? row.arm ?? '')
+      if (!methodName) continue
+      for (const column of artifact.table?.columns ?? []) {
+        const value = row[column.key]
+        if (typeof value !== 'number' && typeof value !== 'boolean') continue
+        const key = `${methodName}|${column.key}`
+        if (map.has(key)) continue
+        map.set(key, {
+          key,
+          label: `${methodName} · ${column.label}`,
+          value,
+          type: typeof value === 'boolean' ? 'bool' : 'number'
+        })
+      }
+    }
   }
   return map
 }
