@@ -1,26 +1,21 @@
 """Read-only routes for the evaluation-console tab of the WebUI.
 
-These endpoints expose the SQLite index built by :mod:`lightrag.api.eval_index`
-from ``memory_eval_tests/runs``. They never write to the evaluation artifacts
-themselves; ``POST /eval/refresh`` only rebuilds the derived index.
+Envelopes are read straight from ``memory_eval_tests/runs`` (see
+:mod:`lightrag.api.eval_index`); ``POST /eval/refresh`` is a no-op rescan that
+keeps the WebUI refresh button meaningful.
 """
 
 from __future__ import annotations
 
 import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from lightrag.utils import logger
-from ..eval_index import (
-    build_index,
-    default_db_path,
-    default_runs_root,
-    load_run,
-    load_runs,
-)
+from ..eval_index import default_runs_root, load_run, scan_runs
 from ..utils_api import get_combined_auth_dependency, internal_server_error
 
 
@@ -34,19 +29,16 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
     router = APIRouter(prefix="/eval", tags=["eval-console"])
     combined_auth = get_combined_auth_dependency(api_key)
     root = Path(runs_root) if runs_root is not None else default_runs_root()
-    db = default_db_path(root)
 
     @router.get("/status", dependencies=[Depends(combined_auth)])
     async def eval_status() -> dict[str, Any]:
         try:
-            if not db.exists():
-                build_index(root, db)
             return {
                 "runs_root": str(root.relative_to(Path(__file__).resolve().parents[2])) if root.is_relative_to(
                     Path(__file__).resolve().parents[2]
                 ) else str(root),
-                "indexed_at": None,
-                "run_count": len(load_runs(db)),
+                "indexed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "run_count": len(scan_runs(root)),
             }
         except HTTPException:
             raise
@@ -62,9 +54,7 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
         q: Optional[str] = Query(default=None, description="Search label / dataset / artifact titles"),
     ) -> dict[str, Any]:
         try:
-            if not db.exists():
-                build_index(root, db)
-            runs = load_runs(db)
+            runs = scan_runs(root)
             if kind:
                 runs = [r for r in runs if r["kind"] == kind]
             if dataset:
@@ -90,9 +80,7 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
     @router.get("/runs/{run_id:path}", dependencies=[Depends(combined_auth)])
     async def get_run(run_id: str) -> dict[str, Any]:
         try:
-            if not db.exists():
-                build_index(root, db)
-            detail = load_run(db, run_id)
+            detail = load_run(root, run_id)
             if detail is None:
                 raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
             return detail
@@ -106,7 +94,12 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
     @router.post("/refresh", dependencies=[Depends(combined_auth)])
     async def refresh_index() -> dict[str, Any]:
         try:
-            return build_index(root, db)
+            runs = scan_runs(root)
+            return {
+                "indexed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "file_count": sum(len(run.get("artifact_titles", [])) for run in runs),
+                "run_count": len(runs),
+            }
         except Exception as exc:
             logger.error(f"Error rebuilding eval index: {exc}")
             logger.error(traceback.format_exc())
