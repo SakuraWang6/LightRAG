@@ -34,7 +34,7 @@ import EvalCompare from '@/features/eval/EvalCompare'
 import ConditionChips from '@/features/eval/ConditionChips'
 import DatasetsView from '@/features/eval/DatasetsView'
 import NewRunWizard from '@/features/eval/NewRunWizard'
-import type { EvalRun, EvalTemplate } from '@/api/eval'
+import type { EvalTemplate } from '@/api/eval'
 import { formatDate, runKindClass, statusBadgeClass, statusLabel } from '@/features/eval/utils'
 
 const KIND_OPTIONS: { value: EvalRunKind | 'all'; labelKey: string }[] = [
