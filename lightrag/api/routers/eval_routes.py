@@ -185,8 +185,8 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
                 user=prompt,
                 num_predict=700,
                 num_ctx=8192,
-                timeout=300,
-                read_timeout=60,
+                timeout=1800,
+                read_timeout=600,
                 retries=1,
             )
             payload = {

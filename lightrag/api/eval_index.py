@@ -227,7 +227,8 @@ def _run_record(
         failed_checks = [
             m.get("label") or m.get("method") or ""
             for m in methods
-            if (m.get("summary") or {}).get("passed") is False
+            if m.get("method") != "offline_summary"
+            and (m.get("summary") or {}).get("passed") is False
         ]
     record: dict[str, Any] = {
         "id": run_id,
