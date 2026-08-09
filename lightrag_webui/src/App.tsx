@@ -201,25 +201,37 @@ function App() {
           // Main content after initialization
           <main className="flex h-screen w-screen overflow-hidden">
             <Tabs
-              defaultValue={currentTab}
+              value={currentTab}
               className="!m-0 flex grow flex-col !p-0 overflow-hidden"
               onValueChange={handleTabChange}
             >
               <SiteHeader />
               <div className="relative grow">
-                <TabsContent value="documents" className="absolute top-0 right-0 bottom-0 left-0 overflow-auto">
+                <TabsContent
+                  value="documents"
+                  className={`absolute top-0 right-0 bottom-0 left-0 overflow-auto ${currentTab === 'documents' ? '' : 'hidden'}`}
+                >
                   <DocumentManager />
                 </TabsContent>
                 <TabsContent value="knowledge-graph" className="absolute top-0 right-0 bottom-0 left-0 overflow-hidden">
                   <GraphViewer />
                 </TabsContent>
-                <TabsContent value="retrieval" className="absolute top-0 right-0 bottom-0 left-0 overflow-hidden">
+                <TabsContent
+                  value="retrieval"
+                  className={`absolute top-0 right-0 bottom-0 left-0 overflow-hidden ${currentTab === 'retrieval' ? '' : 'hidden'}`}
+                >
                   <RetrievalView />
                 </TabsContent>
-                <TabsContent value="api" className="absolute top-0 right-0 bottom-0 left-0 overflow-hidden">
+                <TabsContent
+                  value="api"
+                  className={`absolute top-0 right-0 bottom-0 left-0 overflow-hidden ${currentTab === 'api' ? '' : 'hidden'}`}
+                >
                   <ApiSite />
                 </TabsContent>
-                <TabsContent value="eval" className="absolute top-0 right-0 bottom-0 left-0 overflow-hidden">
+                <TabsContent
+                  value="eval"
+                  className={`absolute top-0 right-0 bottom-0 left-0 overflow-hidden ${currentTab === 'eval' ? '' : 'hidden'}`}
+                >
                   <EvalConsole />
                 </TabsContent>
               </div>
