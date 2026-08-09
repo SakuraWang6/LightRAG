@@ -195,6 +195,7 @@ def migrate_legacy_runs(
             status=status,
             report_rel_path=report_md,
             extra={"legacy": True, "metric_semantics": "legacy"},
+            runs_root=runs_root,
         )
         created.append(str(run_dir))
     return {
@@ -229,6 +230,7 @@ def migrate_legacy_reports(*, runs_root: Path, dry_run: bool = False) -> dict[st
             label=label,
             description=f"历史报告迁移（{filename}，旧口径产物）。",
             baseline={},
+            runs_root=runs_root,
         )
         created.append(str(run_dir))
     return {"dry_run": dry_run, "created": created, "count": len(created)}

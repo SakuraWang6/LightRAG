@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -126,3 +127,15 @@ def test_legacy_adapter_namespace_carries_credentials(tmp_path: Path) -> None:
     assert args.access_token == "t"
     # Default storage is relative to the run output dir, not a hardcoded path.
     assert args.storage_dir == tmp_path / "run" / "rag_storage"
+
+
+def test_harness_tee_log_captures_runner_output(tmp_path: Path) -> None:
+    from memory_eval_tests.experiments.run import _tee_log
+
+    log_path = tmp_path / "run.log"
+    with _tee_log(tmp_path):
+        print("runner-progress-line")
+        sys.stderr.write("runner-error-line\n")
+    content = log_path.read_text(encoding="utf-8")
+    assert "runner-progress-line" in content
+    assert "runner-error-line" in content

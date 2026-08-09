@@ -7,9 +7,13 @@ supervision; each registered spec only implements its runner and defaults.
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 import traceback
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Iterator
 
 from memory_eval_tests.experiments.common import (
     BASELINE_DEFAULTS,
@@ -32,6 +36,47 @@ def _log(output_dir: Path, message: str) -> None:
         handle.write(
             f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] {message}\n"
         )
+
+
+class _Tee:
+    """Write through to the real stream while appending to run.log."""
+
+    def __init__(self, real, log) -> None:
+        self.real = real
+        self.log = log
+
+    def write(self, data: str) -> int:
+        self.real.write(data)
+        self.log.write(data)
+        return len(data)
+
+    def flush(self) -> None:
+        self.real.flush()
+        self.log.flush()
+
+    def isatty(self) -> bool:
+        return self.real.isatty()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.real, name)
+
+
+@contextmanager
+def _tee_log(output_dir: Path) -> Iterator[None]:
+    """Capture the runner's stdout/stderr into ``run.log`` during execution."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with (output_dir / "run.log").open("a", encoding="utf-8") as log:
+        old_out, old_err = sys.stdout, sys.stderr
+        sys.stdout = _Tee(old_out, log)
+        sys.stderr = _Tee(old_err, log)
+        try:
+            yield
+        finally:
+            try:
+                sys.stdout.flush()
+                sys.stderr.flush()
+            finally:
+                sys.stdout, sys.stderr = old_out, old_err
 
 
 def main() -> None:
@@ -70,6 +115,12 @@ def main() -> None:
         "--access-token",
         default=None,
         help="Bearer access token for the LightRAG API (defaults to LIGHTRAG_ACCESS_TOKEN).",
+    )
+    parser.add_argument(
+        "--runs-root",
+        type=Path,
+        default=None,
+        help="Runs root used for scan-index invalidation (defaults to MEMORY_EVAL_RUNS_ROOT or repo runs/).",
     )
     parser.add_argument("--storage-dir", type=Path, default=None)
     parser.add_argument("--engine", default=None)
@@ -121,6 +172,12 @@ def main() -> None:
         storage_dir=str(storage_dir),
     )
     run_id = args.run_id or args.output_dir.name
+    runs_root = args.runs_root or Path(
+        os.getenv(
+            "MEMORY_EVAL_RUNS_ROOT",
+            str(Path(__file__).resolve().parents[2] / "memory_eval_tests" / "runs"),
+        )
+    )
     context = RunContext(
         spec=spec,
         dataset=args.dataset,
@@ -145,39 +202,42 @@ def main() -> None:
         methods=[],
         report_rel_path=None,
         write_progress_file=False,
+        runs_root=runs_root,
     )
     write_progress(args.output_dir, status="queued", done=0, total=1, phase="starting")
-    try:
-        payload = spec.runner(context)
-        methods = payload.get("methods", [])
-        report_md = payload.get("report", "")
-        report_path = args.output_dir / "report.md"
-        report_path.write_text(report_md, encoding="utf-8")
-        status = payload.get("status", "complete")
-        write_envelope(
-            args.output_dir,
-            context=context,
-            status=status,
-            methods=methods,
-            report_rel_path=report_path.name,
-            extra=payload.get("extra"),
-        )
-        _log(
-            args.output_dir,
-            f"finished status={status} cases={sum(len(m.get('results') or []) for m in methods)}",
-        )
-    except Exception as exc:  # keep the failure visible for the console monitor
-        _log(args.output_dir, f"failed {type(exc).__name__}: {exc}")
-        write_progress(
-            args.output_dir,
-            status="failed",
-            done=0,
-            total=1,
-            phase="failed",
-            message=f"{type(exc).__name__}: {exc}",
-        )
-        print(traceback.format_exc())
-        raise
+    with _tee_log(args.output_dir):
+        try:
+            payload = spec.runner(context)
+            methods = payload.get("methods", [])
+            report_md = payload.get("report", "")
+            report_path = args.output_dir / "report.md"
+            report_path.write_text(report_md, encoding="utf-8")
+            status = payload.get("status", "complete")
+            write_envelope(
+                args.output_dir,
+                context=context,
+                status=status,
+                methods=methods,
+                report_rel_path=report_path.name,
+                extra=payload.get("extra"),
+                runs_root=runs_root,
+            )
+            _log(
+                args.output_dir,
+                f"finished status={status} cases={sum(len(m.get('results') or []) for m in methods)}",
+            )
+        except Exception as exc:  # keep the failure visible for the console monitor
+            _log(args.output_dir, f"failed {type(exc).__name__}: {exc}")
+            write_progress(
+                args.output_dir,
+                status="failed",
+                done=0,
+                total=1,
+                phase="failed",
+                message=f"{type(exc).__name__}: {exc}",
+            )
+            print(traceback.format_exc())
+            raise
 
 
 if __name__ == "__main__":

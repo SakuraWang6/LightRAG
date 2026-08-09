@@ -16,7 +16,6 @@ from typing import Any
 
 from memory_eval_tests.common.dataset_client import DatasetClient
 from memory_eval_tests.experiments.common.rag_session import (
-    DEFAULT_STORAGE,
     find_rag,
     load_keyword_cache,
     query_param,
@@ -30,12 +29,20 @@ from memory_eval_tests.online.answer_eval import score_answer
 
 def _contains_fact(context: str, fact: dict[str, Any]) -> bool:
     lowered = context.lower()
-    return any(str(value).lower() in lowered for value in (fact.get("fact_id"), fact.get("answer")) if value)
+    return any(
+        str(value).lower() in lowered
+        for value in (fact.get("fact_id"), fact.get("answer"))
+        if value
+    )
 
 
 def _oracle_metadata(
-    *, context: str, evidence_facts: list[dict[str, Any]], objects: dict[str, dict[str, Any]],
-    order: dict[str, int], relations: list[dict[str, Any]],
+    *,
+    context: str,
+    evidence_facts: list[dict[str, Any]],
+    objects: dict[str, dict[str, Any]],
+    order: dict[str, int],
+    relations: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     result = []
     object_ids = []
@@ -53,15 +60,26 @@ def _oracle_metadata(
             "document_order": index,
             "section": obj.get("section"),
             "parent_id": obj.get("parent_id") or None,
-            "previous_object": next((key for key, value in order.items() if value == index - 1), None),
-            "next_object": next((key for key, value in order.items() if value == index + 1), None),
+            "previous_object": next(
+                (key for key, value in order.items() if value == index - 1), None
+            ),
+            "next_object": next(
+                (key for key, value in order.items() if value == index + 1), None
+            ),
             "relations": [
-                {"relation_type": rel["relation_type"], "source_id": rel["source_id"], "target_id": rel["target_id"]}
+                {
+                    "relation_type": rel["relation_type"],
+                    "source_id": rel["source_id"],
+                    "target_id": rel["target_id"],
+                }
                 for rel in relations
-                if rel.get("source_id") == object_id or rel.get("target_id") == object_id
+                if rel.get("source_id") == object_id
+                or rel.get("target_id") == object_id
             ],
         }
-        result.append({key: value for key, value in item.items() if value not in (None, [], "")})
+        result.append(
+            {key: value for key, value in item.items() if value not in (None, [], "")}
+        )
     return result
 
 
@@ -82,13 +100,25 @@ def _group(question: dict[str, Any]) -> str:
 
 def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(rows)
-    rate = lambda key: sum(bool(row["metrics"].get(key)) for row in rows) / total if total else 0.0
+    rate = lambda key: (
+        sum(bool(row["metrics"].get(key)) for row in rows) / total if total else 0.0
+    )
     by_type = {}
     for name in ("FACT", "TABLE", "FIGURE", "FORMULA", "MULTIHOP", "ABSTAIN"):
         subset = [row for row in rows if row["question_group"] == name]
         if subset:
-            by_type[name] = {"cases": len(subset), "accuracy": sum(bool(r["metrics"]["exact_match"]) for r in subset) / len(subset)}
-    return {"cases": total, "accuracy": rate("exact_match"), "groundedness": rate("grounded"), "ungrounded_rate": rate("ungrounded"), "by_question_type": by_type}
+            by_type[name] = {
+                "cases": len(subset),
+                "accuracy": sum(bool(r["metrics"]["exact_match"]) for r in subset)
+                / len(subset),
+            }
+    return {
+        "cases": total,
+        "accuracy": rate("exact_match"),
+        "groundedness": rate("grounded"),
+        "ungrounded_rate": rate("ungrounded"),
+        "by_question_type": by_type,
+    }
 
 
 async def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -98,11 +128,15 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     oracle = DatasetClient(str(args.dataset)).oracle()
     questions = {q["id"]: q for q in oracle["questions"]}
     facts = {fact["fact_id"]: fact for fact in oracle["facts"]}
-    objects_payload = json.loads((args.dataset / "objects.json").read_text(encoding="utf-8"))
+    objects_payload = json.loads(
+        (args.dataset / "objects.json").read_text(encoding="utf-8")
+    )
     object_list = objects_payload["objects"]
     objects = {item["object_id"]: item for item in object_list}
     order = {item["object_id"]: index for index, item in enumerate(object_list)}
-    relations = json.loads((args.dataset / "relations.json").read_text(encoding="utf-8"))["relations"]
+    relations = json.loads(
+        (args.dataset / "relations.json").read_text(encoding="utf-8")
+    )["relations"]
     cache = load_keyword_cache(args.storage_dir)
     rows = []
     rag = find_rag()
@@ -112,42 +146,113 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         for index, question_id in enumerate(saved, start=1):
             base = saved[question_id]
             question = questions[question_id]
-            evidence_facts = [facts[item] for item in question.get("evidence_fact_ids", []) if item in facts]
+            evidence_facts = [
+                facts[item]
+                for item in question.get("evidence_fact_ids", [])
+                if item in facts
+            ]
             high, low = cache[question["question"]]
-            prompt = await rag.aquery(question["question"], param=query_param(top_k=20, high_keywords=high, low_keywords=low, prompt_only=True))
+            prompt = await rag.aquery(
+                question["question"],
+                param=query_param(
+                    top_k=20, high_keywords=high, low_keywords=low, prompt_only=True
+                ),
+            )
             prefix, user = split_prompt(str(prompt))
             native_context = base["selected_context"]
-            metadata = _oracle_metadata(context=native_context, evidence_facts=evidence_facts, objects=objects, order=order, relations=relations)
-            oracle_context = native_context + "\nOracle Structure Metadata (metadata only; do not treat as new evidence):\n```json\n" + json.dumps(metadata, ensure_ascii=False) + "\n```\n"
-            oracle_answer = simple_chat_ollama(host=args.ollama_url, model=args.model, system=prefix + oracle_context, user=user, num_predict=128)
-            oracle_metrics = score_answer(answer_text=oracle_answer, expected=question["answer"], question=question, evidence_facts=evidence_facts, references_blob=native_context)
+            metadata = _oracle_metadata(
+                context=native_context,
+                evidence_facts=evidence_facts,
+                objects=objects,
+                order=order,
+                relations=relations,
+            )
+            oracle_context = (
+                native_context
+                + "\nOracle Structure Metadata (metadata only; do not treat as new evidence):\n```json\n"
+                + json.dumps(metadata, ensure_ascii=False)
+                + "\n```\n"
+            )
+            oracle_answer = simple_chat_ollama(
+                host=args.ollama_url,
+                model=args.model,
+                system=prefix + oracle_context,
+                user=user,
+                num_predict=128,
+            )
+            oracle_metrics = score_answer(
+                answer_text=oracle_answer,
+                expected=question["answer"],
+                question=question,
+                evidence_facts=evidence_facts,
+                references_blob=native_context,
+            )
             native_metrics = {key: base[key] for key in oracle_metrics if key in base}
-            rows.append({
-                "question_id": question_id, "question_group": _group(question), "evidence_ids": base["selected_evidence_ids"],
-                "native_metadata": [], "oracle_metadata": metadata, "native_answer": base["answer"], "oracle_answer": oracle_answer,
-                "native_metrics": native_metrics, "oracle_metrics": oracle_metrics,
-            })
+            rows.append(
+                {
+                    "question_id": question_id,
+                    "question_group": _group(question),
+                    "evidence_ids": base["selected_evidence_ids"],
+                    "native_metadata": [],
+                    "oracle_metadata": metadata,
+                    "native_answer": base["answer"],
+                    "oracle_answer": oracle_answer,
+                    "native_metrics": native_metrics,
+                    "oracle_metrics": oracle_metrics,
+                }
+            )
             args.output_json.parent.mkdir(parents=True, exist_ok=True)
-            args.output_json.write_text(json.dumps({"status": "in_progress", "results": rows}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            args.output_json.write_text(
+                json.dumps(
+                    {"status": "in_progress", "results": rows},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             print(f"[{index}/{len(saved)}] {question_id}", flush=True)
     finally:
         await rag.finalize_storages()
-    native_rows = [{"question_group": row["question_group"], "metrics": row["native_metrics"]} for row in rows]
-    oracle_rows = [{"question_group": row["question_group"], "metrics": row["oracle_metrics"]} for row in rows]
-    return {"status": "complete", "dataset": str(args.dataset), "native": _metrics(native_rows), "oracle_full": _metrics(oracle_rows), "results": rows}
+    native_rows = [
+        {"question_group": row["question_group"], "metrics": row["native_metrics"]}
+        for row in rows
+    ]
+    oracle_rows = [
+        {"question_group": row["question_group"], "metrics": row["oracle_metrics"]}
+        for row in rows
+    ]
+    return {
+        "status": "complete",
+        "dataset": str(args.dataset),
+        "native": _metrics(native_rows),
+        "oracle_full": _metrics(oracle_rows),
+        "results": rows,
+    }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", type=Path, default=Path("memory_data_service/generated/rich-smoke-v1"))
-    parser.add_argument("--storage-dir", type=Path, default=DEFAULT_STORAGE)
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=Path("memory_data_service/generated/rich-smoke-v1"),
+    )
+    parser.add_argument(
+        "--storage-dir",
+        type=Path,
+        required=True,
+        help="Existing LightRAG storage dir containing the keyword cache.",
+    )
     parser.add_argument("--evidence-results", type=Path, required=True)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--model", default="qwen3:8b")
     args = parser.parse_args()
     payload = asyncio.run(run(args))
-    args.output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.output_json.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 if __name__ == "__main__":
@@ -170,9 +275,15 @@ from memory_eval_tests.experiments.common.context import split_prompt  # noqa: E
 
 def _spec_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(rows)
-    rate = lambda key: sum(bool(row["metrics"].get(key)) for row in rows) / total if total else 0.0
+    rate = lambda key: (
+        sum(bool(row["metrics"].get(key)) for row in rows) / total if total else 0.0
+    )
     average = lambda key: (
-        sum(bool(row["metrics"][key]) for row in rows if row["metrics"].get(key) is not None)
+        sum(
+            bool(row["metrics"][key])
+            for row in rows
+            if row["metrics"].get(key) is not None
+        )
         / sum(1 for row in rows if row["metrics"].get(key) is not None)
         if any(row["metrics"].get(key) is not None for row in rows)
         else None
@@ -183,7 +294,10 @@ def _spec_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if subset:
             by_type[name] = {
                 "cases": len(subset),
-                "answer_accuracy": sum(bool(r["metrics"]["exact_match"]) for r in subset) / len(subset),
+                "answer_accuracy": sum(
+                    bool(r["metrics"]["exact_match"]) for r in subset
+                )
+                / len(subset),
             }
     return {
         "cases": total,
@@ -228,7 +342,9 @@ def _render_spec_report(methods: list[dict[str, Any]]) -> str:
         for item in methods
     }
     for name in ("FACT", "TABLE", "FIGURE", "FORMULA", "MULTIHOP", "ABSTAIN"):
-        cases = next((v.get("cases") for arm in arms.values() if (v := arm.get(name))), 0)
+        cases = next(
+            (v.get("cases") for arm in arms.values() if (v := arm.get(name))), 0
+        )
         if not cases:
             continue
         fmt = lambda v: "n/a" if v is None else f"{v:.4f}"
@@ -236,7 +352,15 @@ def _render_spec_report(methods: list[dict[str, Any]]) -> str:
             f"| {name} | {cases} | {fmt(arms.get('native', {}).get(name, {}).get('answer_accuracy'))} | "
             f"{fmt(arms.get('oracle_full', {}).get(name, {}).get('answer_accuracy'))} |"
         )
-    lines.extend(["", "## 口径", "", "- 元数据仅来自 oracle，提示中明确标注不构成新证据；原生臂复用保存的 Select5 回答。", ""])
+    lines.extend(
+        [
+            "",
+            "## 口径",
+            "",
+            "- 元数据仅来自 oracle，提示中明确标注不构成新证据；原生臂复用保存的 Select5 回答。",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -257,15 +381,22 @@ async def _run_spec(context: RunContext) -> dict[str, Any]:
     temperature = float(baseline.get("temperature") or 0)
     ollama_url = context.environment["ollama_url"]
     model = baseline["model"]
-    storage_dir = Path(context.environment.get("storage_dir") or str(DEFAULT_STORAGE))
+    storage_dir = Path(
+        context.environment.get("storage_dir")
+        or str(context.output_dir / "rag_storage")
+    )
 
     oracle = DatasetClient(str(dataset)).oracle()
     questions = {q["id"]: q for q in oracle["questions"]}
     facts = {fact["fact_id"]: fact for fact in oracle["facts"]}
-    object_list = json.loads((dataset / "objects.json").read_text(encoding="utf-8"))["objects"]
+    object_list = json.loads((dataset / "objects.json").read_text(encoding="utf-8"))[
+        "objects"
+    ]
     objects = {item["object_id"]: item for item in object_list}
     order = {item["object_id"]: index for index, item in enumerate(object_list)}
-    relations = json.loads((dataset / "relations.json").read_text(encoding="utf-8"))["relations"]
+    relations = json.loads((dataset / "relations.json").read_text(encoding="utf-8"))[
+        "relations"
+    ]
     cache = load_keyword_cache(storage_dir)
     rag = find_rag()
     await rag.initialize_storages()
@@ -276,11 +407,17 @@ async def _run_spec(context: RunContext) -> dict[str, Any]:
         for index, question_id in enumerate(saved, start=1):
             base = saved[question_id]
             question = questions[question_id]
-            evidence_facts = [facts[item] for item in question.get("evidence_fact_ids", []) if item in facts]
+            evidence_facts = [
+                facts[item]
+                for item in question.get("evidence_fact_ids", [])
+                if item in facts
+            ]
             high, low = cache[question["question"]]
             prompt = await rag.aquery(
                 question["question"],
-                param=query_param(top_k=20, high_keywords=high, low_keywords=low, prompt_only=True),
+                param=query_param(
+                    top_k=20, high_keywords=high, low_keywords=low, prompt_only=True
+                ),
             )
             prefix, user = split_prompt(str(prompt))
             native_context = base["selected_context"]
@@ -341,11 +478,16 @@ async def _run_spec(context: RunContext) -> dict[str, Any]:
         await rag.finalize_storages()
 
     methods = []
-    for method, label in (("native", "Native (Select5 保存)"), ("oracle_full", "Oracle-Full 结构元数据")):
+    for method, label in (
+        ("native", "Native (Select5 保存)"),
+        ("oracle_full", "Oracle-Full 结构元数据"),
+    ):
         subset = [
             {
                 "question_group": row["question_group"],
-                "metrics": row["native_metrics"] if method == "native" else row["oracle_metrics"],
+                "metrics": row["native_metrics"]
+                if method == "native"
+                else row["oracle_metrics"],
             }
             for row in rows
         ]
@@ -358,7 +500,11 @@ async def _run_spec(context: RunContext) -> dict[str, Any]:
                 "results": rows,
             }
         )
-    return {"methods": methods, "report": _render_spec_report(methods), "status": "complete"}
+    return {
+        "methods": methods,
+        "report": _render_spec_report(methods),
+        "status": "complete",
+    }
 
 
 def _runner_spec(context: RunContext) -> dict[str, Any]:

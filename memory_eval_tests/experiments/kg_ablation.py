@@ -19,7 +19,6 @@ from lightrag import LightRAG
 from memory_eval_tests.common.dataset_client import DatasetClient
 from memory_eval_tests.experiments.common import ExperimentSpec, RunContext
 from memory_eval_tests.experiments.common.rag_session import (
-    DEFAULT_STORAGE,
     find_rag,
     load_keyword_cache,
     query_param,
@@ -127,7 +126,8 @@ async def run_local_ablation(
             references_blob=str(context),
         )
         recall = (
-            sum(_fact_in_context(fact, str(context)) for fact in evidence) / len(evidence)
+            sum(_fact_in_context(fact, str(context)) for fact in evidence)
+            / len(evidence)
             if evidence
             else 1.0
         )
@@ -157,18 +157,32 @@ def _report_from_rows(rows: list[dict[str, Any]], *, top_k: int) -> dict[str, An
         "chunk_top_k": top_k,
         "max_total_tokens": 8192,
         "cases": total,
-        "retrieval_recall": sum(row["retrieval_recall"] for row in rows) / total if total else 0.0,
-        "answer_accuracy": sum(row["exact_match"] for row in rows) / total if total else 0.0,
+        "retrieval_recall": sum(row["retrieval_recall"] for row in rows) / total
+        if total
+        else 0.0,
+        "answer_accuracy": sum(row["exact_match"] for row in rows) / total
+        if total
+        else 0.0,
         "groundedness": sum(row["grounded"] for row in rows) / total if total else 0.0,
-        "ungrounded_rate": sum(row["ungrounded"] for row in rows) / total if total else 0.0,
-        "evidence_available": sum(row["evidence_available"] for row in rows) / total if total else 0.0,
+        "ungrounded_rate": sum(row["ungrounded"] for row in rows) / total
+        if total
+        else 0.0,
+        "evidence_available": sum(row["evidence_available"] for row in rows) / total
+        if total
+        else 0.0,
         "abstention_accuracy": (
-            sum(bool(row["abstention_correct"]) for row in rows if row["abstention_correct"] is not None)
+            sum(
+                bool(row["abstention_correct"])
+                for row in rows
+                if row["abstention_correct"] is not None
+            )
             / abstention_total
             if abstention_total
             else None
         ),
-        "mean_context_chars": sum(row["context_chars"] for row in rows) / total if total else 0.0,
+        "mean_context_chars": sum(row["context_chars"] for row in rows) / total
+        if total
+        else 0.0,
         "results": rows,
     }
 
@@ -177,7 +191,9 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     """Atomically replace a JSON report so an interruption cannot corrupt it."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     temporary.replace(path)
 
 
@@ -209,7 +225,8 @@ async def run_retrieval_ablation(
             if fact_id in facts_by_id
         ]
         recall = (
-            sum(_fact_in_context(fact, str(context)) for fact in evidence) / len(evidence)
+            sum(_fact_in_context(fact, str(context)) for fact in evidence)
+            / len(evidence)
             if evidence
             else 1.0
         )
@@ -239,14 +256,22 @@ async def _amain(args: argparse.Namespace) -> None:
     questions = list(oracle["questions"])
     if args.question_id:
         requested = set(args.question_id)
-        questions = [question for question in questions if str(question["id"]) in requested]
+        questions = [
+            question for question in questions if str(question["id"]) in requested
+        ]
         found = {str(question["id"]) for question in questions}
         missing_requested = requested - found
         if missing_requested:
-            raise RuntimeError(f"Unknown question IDs: {', '.join(sorted(missing_requested))}")
+            raise RuntimeError(
+                f"Unknown question IDs: {', '.join(sorted(missing_requested))}"
+            )
     facts_by_id = {fact["fact_id"]: fact for fact in oracle["facts"]}
     keyword_cache = load_keyword_cache(args.storage_dir)
-    missing = [question["id"] for question in questions if question["question"] not in keyword_cache]
+    missing = [
+        question["id"]
+        for question in questions
+        if question["question"] not in keyword_cache
+    ]
     if missing:
         raise RuntimeError(f"Missing cached keywords for: {', '.join(missing)}")
 
@@ -284,10 +309,14 @@ async def _amain(args: argparse.Namespace) -> None:
                     int(report["top_k"]): report for report in saved.get("reports", [])
                 }
 
-            def save_progress(current_top_k: int, current_rows: list[dict[str, Any]]) -> None:
+            def save_progress(
+                current_top_k: int, current_rows: list[dict[str, Any]]
+            ) -> None:
                 current_report = _report_from_rows(current_rows, top_k=current_top_k)
                 ordered = [
-                    saved_reports.get(top_k, current_report if top_k == current_top_k else None)
+                    saved_reports.get(
+                        top_k, current_report if top_k == current_top_k else None
+                    )
                     for top_k in args.top_k
                 ]
                 _write_json(
@@ -319,7 +348,14 @@ async def _amain(args: argparse.Namespace) -> None:
                 saved_reports[top_k] = report
                 reports.append(report)
                 save_progress(top_k, report["results"])
-            _write_json(args.run_local, {"dataset": str(args.dataset), "status": "complete", "reports": reports})
+            _write_json(
+                args.run_local,
+                {
+                    "dataset": str(args.dataset),
+                    "status": "complete",
+                    "reports": reports,
+                },
+            )
         if args.retrieval_only:
             reports = []
             for top_k in args.top_k:
@@ -353,7 +389,12 @@ def main() -> None:
         type=Path,
         default=Path("memory_data_service/generated/rich-smoke-v1"),
     )
-    parser.add_argument("--storage-dir", type=Path, default=DEFAULT_STORAGE)
+    parser.add_argument(
+        "--storage-dir",
+        type=Path,
+        required=True,
+        help="Existing LightRAG storage dir containing the keyword cache.",
+    )
     parser.add_argument("--freeze-prompts", type=Path)
     parser.add_argument("--run-local", type=Path)
     parser.add_argument("--retrieval-only", type=Path)
@@ -371,7 +412,9 @@ def main() -> None:
     )
     args = parser.parse_args()
     if not args.freeze_prompts and not args.run_local and not args.retrieval_only:
-        parser.error("one of --freeze-prompts, --run-local, or --retrieval-only is required")
+        parser.error(
+            "one of --freeze-prompts, --run-local, or --retrieval-only is required"
+        )
     asyncio.run(_amain(args))
 
 
@@ -383,8 +426,7 @@ def _render_kg_report(payload: dict[str, Any]) -> str:
     lines = [
         "# KG 上下文消融",
         "",
-        "固定 KG 索引、关键词缓存、qwen3:8b 与 16,384 token 生成窗口，"
-        "仅改变检索深度。",
+        "固定 KG 索引、关键词缓存、qwen3:8b 与 16,384 token 生成窗口，仅改变检索深度。",
         "",
         "| Top-K | Cases | Retrieval Recall | Accuracy | Groundedness | 未支撑率 | Mean Context (chars) |",
         "|---|---:|---:|---:|---:|---:|---:|",

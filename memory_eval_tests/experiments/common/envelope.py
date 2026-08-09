@@ -120,6 +120,20 @@ def _dataset_meta(dataset: Path) -> dict[str, Any]:
     }
 
 
+def _redact_environment(environment: dict[str, Any]) -> dict[str, Any]:
+    """Strip live credentials before an environment dict is persisted.
+
+    ``api_key`` / ``access_token`` stay plaintext in memory for runner use, but
+    the on-disk envelope must never contain them; a non-empty value is replaced
+    with a marker so reviewers still know auth was configured.
+    """
+    redacted = dict(environment)
+    for key in ("api_key", "access_token"):
+        if redacted.get(key):
+            redacted[key] = "configured"
+    return redacted
+
+
 def capture_environment(**overrides: Any) -> dict[str, Any]:
     try:
         from lightrag._version import __api_version__ as api_version
@@ -209,6 +223,7 @@ def write_envelope(
     report_rel_path: str | None = None,
     extra: dict[str, Any] | None = None,
     write_progress_file: bool = True,
+    runs_root: Path | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -224,7 +239,7 @@ def write_envelope(
             "label": context.spec.label,
             "description": context.spec.description,
         },
-        "environment": context.environment,
+        "environment": _redact_environment(context.environment),
         "baseline": context.baseline,
         "variables": context.variables,
         "methods": methods,
@@ -238,7 +253,7 @@ def write_envelope(
     path.write_text(
         json.dumps(envelope, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    _invalidate_scan_index()
+    _invalidate_scan_index(runs_root)
     if write_progress_file:
         write_progress(
             output_dir, status=status, done=1, total=1, phase="done", message=""
@@ -260,6 +275,7 @@ def write_simple_envelope(
     extra: dict[str, Any] | None = None,
     started_at: str | None = None,
     finished_at: str | None = None,
+    runs_root: Path | None = None,
 ) -> Path:
     """Envelope writer for non-registry runs (offline/online evaluators)."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -271,7 +287,7 @@ def write_simple_envelope(
         "created_at": now,
         "status": status,
         "experiment": experiment,
-        "environment": environment,
+        "environment": _redact_environment(environment),
         "baseline": baseline,
         "variables": [],
         "methods": methods,
@@ -287,7 +303,7 @@ def write_simple_envelope(
     path.write_text(
         json.dumps(envelope, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    _invalidate_scan_index()
+    _invalidate_scan_index(runs_root)
     return path
 
 
@@ -314,18 +330,19 @@ def write_progress(
     )
 
 
-def _invalidate_scan_index() -> None:
+def _invalidate_scan_index(runs_root: Path | None = None) -> None:
     """Drop the console's persisted scan index after a run file changes.
 
     The index lives at the runs root (env ``MEMORY_EVAL_RUNS_ROOT`` or the repo
     default) and is rebuilt lazily by ``lightrag.api.eval_index``.
     """
-    configured = os.getenv("MEMORY_EVAL_RUNS_ROOT")
-    runs_root = (
-        Path(configured)
-        if configured
-        else Path(__file__).resolve().parents[3] / "memory_eval_tests" / "runs"
-    )
+    if runs_root is None:
+        configured = os.getenv("MEMORY_EVAL_RUNS_ROOT")
+        runs_root = (
+            Path(configured)
+            if configured
+            else Path(__file__).resolve().parents[3] / "memory_eval_tests" / "runs"
+        )
     try:
         (runs_root / _SCAN_INDEX_NAME).unlink()
     except FileNotFoundError:

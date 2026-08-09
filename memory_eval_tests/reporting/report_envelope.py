@@ -26,6 +26,7 @@ def write_report_envelope(
     baseline: dict[str, Any],
     methods: list[dict[str, Any]] | None = None,
     status: str = "complete",
+    runs_root: Path | None = None,
 ) -> Path:
     """Write ``run.json`` next to an aggregate report markdown file."""
     return write_simple_envelope(
@@ -43,4 +44,5 @@ def write_report_envelope(
         status=status,
         report_rel_path=output_path.name,
         extra={"report_type": report_type, "metric_semantics": "report"},
+        runs_root=runs_root,
     )

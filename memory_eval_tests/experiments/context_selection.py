@@ -37,7 +37,6 @@ from memory_eval_tests.experiments.common.context import (
     target_tables,
 )
 from memory_eval_tests.experiments.common.rag_session import (
-    DEFAULT_STORAGE,
     find_rag,
     load_keyword_cache,
     query_param,
@@ -72,14 +71,20 @@ _WIDE_ARMS = {
 
 
 def _sidecar_parsed_dir(dataset: Path) -> Path:
-    return Path("memory_eval_tests/runs/offline") / dataset.name / "sidecar" / f"{dataset.name}.docx.parsed"
+    return (
+        Path("memory_eval_tests/runs/offline")
+        / dataset.name
+        / "sidecar"
+        / f"{dataset.name}.docx.parsed"
+    )
 
 
 def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     total = len(rows)
     rate = lambda key: sum(bool(row.get(key)) for row in rows) / total if total else 0.0
     average = lambda key: (
-        sum(row[key] for row in rows if row.get(key) is not None) / sum(1 for row in rows if row.get(key) is not None)
+        sum(row[key] for row in rows if row.get(key) is not None)
+        / sum(1 for row in rows if row.get(key) is not None)
         if any(row.get(key) is not None for row in rows)
         else None
     )
@@ -89,7 +94,8 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if subset:
             grouped[name] = {
                 "cases": len(subset),
-                "answer_accuracy": sum(bool(r["exact_match"]) for r in subset) / len(subset),
+                "answer_accuracy": sum(bool(r["exact_match"]) for r in subset)
+                / len(subset),
                 "groundedness": sum(bool(r["grounded"]) for r in subset) / len(subset),
             }
     return {
@@ -136,7 +142,9 @@ def _render_report(description: str, methods: list[dict[str, Any]]) -> str:
             f"{s['ungrounded_rate']:.4f} | {s['mean_selected_context_chars'] or 0:.0f} | {overflow if overflow is not None else '-'} |"
         )
     lines.extend(["", "## 分题型回答准确率", ""])
-    lines.append("| 题型 | Cases | Direct-3 | Direct-20 | Select3 | Select5 | Role5 | Focus | Precision | Oracle |")
+    lines.append(
+        "| 题型 | Cases | Direct-3 | Direct-20 | Select3 | Select5 | Role5 | Focus | Precision | Oracle |"
+    )
     lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     by_type: dict[str, dict[str, Any]] = {}
     for item in methods:
@@ -171,7 +179,10 @@ async def _run(context: RunContext) -> dict[str, Any]:
     temperature = float(baseline.get("temperature") or 0)
     ollama_url = context.environment["ollama_url"]
     model = baseline["model"]
-    storage_dir = Path(context.environment.get("storage_dir") or str(DEFAULT_STORAGE))
+    storage_dir = Path(
+        context.environment.get("storage_dir")
+        or str(context.output_dir / "rag_storage")
+    )
 
     oracle = DatasetClient(str(dataset)).oracle()
     questions = list(oracle["questions"])
@@ -192,7 +203,9 @@ async def _run(context: RunContext) -> dict[str, Any]:
     cache = load_keyword_cache(storage_dir)
     missing = [q["id"] for q in questions if q["question"] not in cache]
     if missing:
-        raise RuntimeError(f"Missing cached keywords for {len(missing)} questions; run ingest/cache first")
+        raise RuntimeError(
+            f"Missing cached keywords for {len(missing)} questions; run ingest/cache first"
+        )
     rag = find_rag()
     await rag.initialize_storages()
     rag.llm_response_cache.global_config["enable_llm_cache"] = False
@@ -201,7 +214,9 @@ async def _run(context: RunContext) -> dict[str, Any]:
     total = len(questions)
 
     def arm_num_ctx(method: str) -> int:
-        return int(baseline.get("num_ctx") or 16384) if method not in _WIDE_ARMS else 32768
+        return (
+            int(baseline.get("num_ctx") or 16384) if method not in _WIDE_ARMS else 32768
+        )
 
     try:
         for index, question in enumerate(questions, start=1):
@@ -209,11 +224,15 @@ async def _run(context: RunContext) -> dict[str, Any]:
             high, low = cache[text]
             top20_prompt = await rag.aquery(
                 text,
-                param=query_param(top_k=20, high_keywords=high, low_keywords=low, prompt_only=True),
+                param=query_param(
+                    top_k=20, high_keywords=high, low_keywords=low, prompt_only=True
+                ),
             )
             top3_prompt = await rag.aquery(
                 text,
-                param=query_param(top_k=3, high_keywords=high, low_keywords=low, prompt_only=True),
+                param=query_param(
+                    top_k=3, high_keywords=high, low_keywords=low, prompt_only=True
+                ),
             )
             prefix, user = split_prompt(str(top20_prompt))
             top20 = make_candidates(entity_rows(str(top20_prompt), limit=20))
@@ -228,9 +247,17 @@ async def _run(context: RunContext) -> dict[str, Any]:
                 "direct_top20": top20,
             }
             for method, label, limit, uses_selector in ARMS:
-                if not uses_selector or method == "combined_focus" or method == "combined_precision":
+                if (
+                    not uses_selector
+                    or method == "combined_focus"
+                    or method == "combined_precision"
+                ):
                     continue
-                prompt = role_prompt(text, top20, limit) if method == "role_select5" else selector_prompt(text, top20, limit)
+                prompt = (
+                    role_prompt(text, top20, limit)
+                    if method == "role_select5"
+                    else selector_prompt(text, top20, limit)
+                )
                 raw = chat_ollama(
                     host=ollama_url,
                     model=model,
@@ -241,11 +268,18 @@ async def _run(context: RunContext) -> dict[str, Any]:
                     temperature=temperature,
                 )
                 ids = parse_selection(raw, top20, limit)
-                selections[method] = [item for item in top20 if item["evidence_id"] in ids]
-            repaired, _additions = role_guaranteed_repair(top20, selections["select5"], evidence_facts)
+                selections[method] = [
+                    item for item in top20 if item["evidence_id"] in ids
+                ]
+            repaired, _additions = role_guaranteed_repair(
+                top20, selections["select5"], evidence_facts
+            )
             target_tbls = target_tables(evidence_facts, tables)
             chunks = [
-                {"chunk_id": table_id, "content": table_markdown(str(table.get("content") or ""))}
+                {
+                    "chunk_id": table_id,
+                    "content": table_markdown(str(table.get("content") or "")),
+                }
                 for table_id, table in target_tbls
             ]
 
@@ -262,24 +296,32 @@ async def _run(context: RunContext) -> dict[str, Any]:
                     candidate_pool = top20
                     candidate_context = render_context(top20)
                 elif method in ("combined_focus", "combined_precision"):
-                    pool_rows = repaired if method == "combined_focus" else [
-                        item for item in top20 if any(contains_fact(item, fact) for fact in evidence_facts)
-                    ]
+                    pool_rows = (
+                        repaired
+                        if method == "combined_focus"
+                        else [
+                            item
+                            for item in top20
+                            if any(contains_fact(item, fact) for fact in evidence_facts)
+                        ]
+                    )
                     target_ids = {table_id for table_id, _ in target_tbls}
                     kept = []
                     for item in pool_rows:
                         raw_text = f"{item['entity']} {item['text']}"
                         is_table_row = str(item["entity"]).lower().startswith("table")
-                        mentions_target = any(target in raw_text for target in target_ids) or any(
-                            contains_fact(item, fact) for fact in evidence_facts
-                        )
+                        mentions_target = any(
+                            target in raw_text for target in target_ids
+                        ) or any(contains_fact(item, fact) for fact in evidence_facts)
                         if not is_table_row or mentions_target:
                             kept.append(item)
                     selected = kept
                     candidate_pool = top20
                     candidate_context = render_context(top20)
                     combined_context = render_combined_context(kept, chunks)
-                    preflight = context_check(prefix + combined_context, num_ctx, method)
+                    preflight = context_check(
+                        prefix + combined_context, num_ctx, method
+                    )
                     answer = chat_ollama(
                         host=ollama_url,
                         model=model,
@@ -304,7 +346,9 @@ async def _run(context: RunContext) -> dict[str, Any]:
                             "question": text,
                             "question_type": question.get("question_type", ""),
                             "question_group": group(question),
-                            "selected_evidence_ids": [item["evidence_id"] for item in kept],
+                            "selected_evidence_ids": [
+                                item["evidence_id"] for item in kept
+                            ],
                             "candidate_recall": None,
                             "selected_recall": None,
                             "selection_precision": None,
@@ -390,10 +434,14 @@ async def _run(context: RunContext) -> dict[str, Any]:
                 )
                 selected_ids = [item["evidence_id"] for item in selected]
                 oracle_fact_ids = [str(item["fact_id"]) for item in evidence_facts]
-                candidate_oracle_ids = oracle_candidate_ids(candidate_pool, evidence_facts)
+                candidate_oracle_ids = oracle_candidate_ids(
+                    candidate_pool, evidence_facts
+                )
                 matched_candidate = facts_covered(candidate_pool, evidence_facts)
                 matched_selected = facts_covered(selected, evidence_facts)
-                relevant_selected = [item for item in selected_ids if item in candidate_oracle_ids]
+                relevant_selected = [
+                    item for item in selected_ids if item in candidate_oracle_ids
+                ]
                 denominator = len(evidence_facts)
                 scores = score_answer(
                     answer_text=answer,
@@ -411,13 +459,24 @@ async def _run(context: RunContext) -> dict[str, Any]:
                         "question_type": question.get("question_type", ""),
                         "question_group": group(question),
                         "oracle_evidence_ids": oracle_fact_ids,
-                        "candidate_evidence_ids": [item["evidence_id"] for item in candidate_pool],
+                        "candidate_evidence_ids": [
+                            item["evidence_id"] for item in candidate_pool
+                        ],
                         "selected_evidence_ids": selected_ids,
                         "candidate_oracle_evidence_ids": candidate_oracle_ids,
-                        "candidate_recall": len(matched_candidate) / denominator if denominator else 1.0,
-                        "selected_recall": len(matched_selected) / denominator if denominator else 1.0,
-                        "selection_precision": len(relevant_selected) / len(selected_ids) if selected_ids and denominator else None,
-                        "role_coverage": len(matched_selected) / denominator if denominator else 1.0,
+                        "candidate_recall": len(matched_candidate) / denominator
+                        if denominator
+                        else 1.0,
+                        "selected_recall": len(matched_selected) / denominator
+                        if denominator
+                        else 1.0,
+                        "selection_precision": len(relevant_selected)
+                        / len(selected_ids)
+                        if selected_ids and denominator
+                        else None,
+                        "role_coverage": len(matched_selected) / denominator
+                        if denominator
+                        else 1.0,
                         "evidence_count": len(selected_ids),
                         "candidate_context_chars": len(candidate_context),
                         "selected_context_chars": len(selected_context),
@@ -444,7 +503,9 @@ async def _run(context: RunContext) -> dict[str, Any]:
     methods = []
     for method, label, selected_limit, uses_selector in ARMS:
         method_rows = rows[method]
-        candidate_k = 3 if method == "direct_top3" else (None if method == "oracle_text" else 20)
+        candidate_k = (
+            3 if method == "direct_top3" else (None if method == "oracle_text" else 20)
+        )
         methods.append(
             {
                 "method": method,

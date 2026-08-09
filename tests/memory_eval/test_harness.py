@@ -17,9 +17,15 @@ from memory_eval_tests.experiments.common import (
 
 pytestmark = pytest.mark.offline
 
+
 def test_metric_alias_normalization() -> None:
     summary = normalize_summary(
-        {"accuracy": 0.8, "groundedness": 0.7, "abstention_correct": 1.0, "by_question_type": {}},
+        {
+            "accuracy": 0.8,
+            "groundedness": 0.7,
+            "abstention_correct": 1.0,
+            "by_question_type": {},
+        },
         "selector",
     )
     assert summary["answer_accuracy"] == 0.8
@@ -116,7 +122,15 @@ def test_envelope_roundtrip(tmp_path: Path) -> None:
         experiment={"id": "offline_audit", "label": "离线审计", "description": "x"},
         baseline={"dataset": "rich-smoke-v1"},
         environment={},
-        methods=[{"method": "m", "label": "M", "params": {}, "summary": {"passed": True}, "results": []}],
+        methods=[
+            {
+                "method": "m",
+                "label": "M",
+                "params": {},
+                "summary": {"passed": True},
+                "results": [],
+            }
+        ],
         status="passed",
     )
     envelope = json.loads(path.read_text(encoding="utf-8"))
@@ -165,6 +179,75 @@ def test_envelope_records_started_and_finished(tmp_path: Path) -> None:
     assert simple["finished_at"]
 
 
+def test_envelope_redacts_credentials(tmp_path: Path) -> None:
+    from memory_eval_tests.experiments.common import (
+        ExperimentSpec,
+        RunContext,
+        write_envelope,
+        write_simple_envelope,
+    )
+
+    secret_environment = {
+        "api_key": "super-secret-key",
+        "access_token": "super-secret-token",
+        "rag_api_url": "http://api.test",
+        "storage_dir": "",
+    }
+    spec = ExperimentSpec(id="x", label="X", description="d", runner=lambda c: {})
+    context = RunContext(
+        spec=spec,
+        dataset=tmp_path / "dataset",
+        output_dir=tmp_path / "run",
+        baseline={},
+        environment=secret_environment,
+        variables=[],
+        run_id="r",
+    )
+    write_envelope(tmp_path / "run", context=context, status="complete", methods=[])
+    envelope = json.loads((tmp_path / "run" / "run.json").read_text(encoding="utf-8"))
+    assert envelope["environment"]["api_key"] == "configured"
+    assert envelope["environment"]["access_token"] == "configured"
+    assert "super-secret" not in json.dumps(envelope, ensure_ascii=False)
+    # The in-memory environment keeps the real credentials for runners.
+    assert context.environment["api_key"] == "super-secret-key"
+
+    simple_path = write_simple_envelope(
+        tmp_path / "simple",
+        kind="online",
+        run_id="s",
+        experiment={"id": "e", "label": "L", "description": "d"},
+        baseline={},
+        environment=secret_environment,
+        methods=[],
+        status="complete",
+    )
+    simple = json.loads(simple_path.read_text(encoding="utf-8"))
+    assert simple["environment"]["api_key"] == "configured"
+    assert "super-secret" not in json.dumps(simple, ensure_ascii=False)
+
+
+def test_environment_without_credentials_keeps_nulls(tmp_path: Path) -> None:
+    from memory_eval_tests.experiments.common import (
+        ExperimentSpec,
+        RunContext,
+        write_envelope,
+    )
+
+    spec = ExperimentSpec(id="x", label="X", description="d", runner=lambda c: {})
+    context = RunContext(
+        spec=spec,
+        dataset=tmp_path / "dataset",
+        output_dir=tmp_path / "run",
+        baseline={},
+        environment={"api_key": None, "access_token": None, "rag_api_url": "http://x"},
+        variables=[],
+        run_id="r",
+    )
+    write_envelope(tmp_path / "run", context=context, status="complete", methods=[])
+    envelope = json.loads((tmp_path / "run" / "run.json").read_text(encoding="utf-8"))
+    assert envelope["environment"]["api_key"] is None
+
+
 def test_registry_specs() -> None:
     from memory_eval_tests.experiments.registry import list_specs
 
@@ -198,7 +281,11 @@ def test_summary_report(tmp_path: Path) -> None:
         runs / "context-selection-v1",
         kind="experiment",
         run_id="context-selection-v1",
-        experiment={"id": "context_selection", "label": "上下文选择消融", "description": "d"},
+        experiment={
+            "id": "context_selection",
+            "label": "上下文选择消融",
+            "description": "d",
+        },
         baseline={"dataset": "rich-smoke-v1"},
         environment={},
         methods=[
@@ -206,7 +293,11 @@ def test_summary_report(tmp_path: Path) -> None:
                 "method": "select5",
                 "label": "Select Top-5",
                 "params": {},
-                "summary": {"cases": 36, "answer_accuracy": 0.8333, "groundedness": 0.75},
+                "summary": {
+                    "cases": 36,
+                    "answer_accuracy": 0.8333,
+                    "groundedness": 0.75,
+                },
                 "results": [],
             }
         ],
@@ -219,7 +310,15 @@ def test_summary_report(tmp_path: Path) -> None:
         experiment={"id": "offline_audit", "label": "离线审计", "description": "d"},
         baseline={"dataset": "rich-smoke-v1"},
         environment={},
-        methods=[{"method": "offline_summary", "label": "汇总", "params": {}, "summary": {"passed": True}, "results": []}],
+        methods=[
+            {
+                "method": "offline_summary",
+                "label": "汇总",
+                "params": {},
+                "summary": {"passed": True},
+                "results": [],
+            }
+        ],
         status="passed",
     )
     payload = build_summary(runs)

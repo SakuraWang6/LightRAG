@@ -23,7 +23,6 @@ from memory_eval_tests.experiments.common import (
 )
 from memory_eval_tests.experiments.common.context import group, split_prompt
 from memory_eval_tests.experiments.common.rag_session import (
-    DEFAULT_STORAGE,
     find_rag,
     load_keyword_cache,
     query_param,
@@ -119,7 +118,10 @@ async def _run(context: RunContext) -> dict[str, Any]:
     temperature = float(baseline.get("temperature") or 0)
     ollama_url = context.environment["ollama_url"]
     model = baseline["model"]
-    storage_dir = Path(context.environment.get("storage_dir") or str(DEFAULT_STORAGE))
+    storage_dir = Path(
+        context.environment.get("storage_dir")
+        or str(context.output_dir / "rag_storage")
+    )
 
     oracle = DatasetClient(str(dataset)).oracle()
     questions = list(oracle["questions"])
@@ -129,7 +131,9 @@ async def _run(context: RunContext) -> dict[str, Any]:
     cache = load_keyword_cache(storage_dir)
     missing = [q["id"] for q in questions if q["question"] not in cache]
     if missing:
-        raise RuntimeError(f"Missing cached keywords for {len(missing)} questions; run ingest/cache first")
+        raise RuntimeError(
+            f"Missing cached keywords for {len(missing)} questions; run ingest/cache first"
+        )
     rag = find_rag()
     await rag.initialize_storages()
     rag.llm_response_cache.global_config["enable_llm_cache"] = False
@@ -201,7 +205,11 @@ async def _run(context: RunContext) -> dict[str, Any]:
                     ),
                 )
                 prefix, user = split_prompt(str(prompt))
-                retrieval[question["id"]] = (prefix, user, _extract_context(str(prompt)))
+                retrieval[question["id"]] = (
+                    prefix,
+                    user,
+                    _extract_context(str(prompt)),
+                )
             for num_ctx in NUM_CTX_GRID:
                 arm = f"top{top_k}_ctx{num_ctx}"
                 for question in questions:
@@ -242,7 +250,9 @@ async def _run(context: RunContext) -> dict[str, Any]:
                             "context_chars": len(retrieved),
                             "estimated_tokens": preflight["estimated_tokens"],
                             "context_overflow": preflight["overflow"],
-                            "retrieval_recall": (covered / total_facts) if total_facts else 1.0,
+                            "retrieval_recall": (covered / total_facts)
+                            if total_facts
+                            else 1.0,
                             "answer": answer,
                             "expected": question.get("answer", ""),
                             **scores,
@@ -257,7 +267,10 @@ async def _run(context: RunContext) -> dict[str, Any]:
                             total=grid_total,
                             phase=f"{arm} / {question['id']}",
                         )
-                        print(f"[{completed}/{grid_total}] {arm} {question['id']}", flush=True)
+                        print(
+                            f"[{completed}/{grid_total}] {arm} {question['id']}",
+                            flush=True,
+                        )
                     if completed % 36 == 0 or completed == grid_total:
                         save_partial("in_progress")
     finally:
@@ -272,7 +285,11 @@ async def _run(context: RunContext) -> dict[str, Any]:
                 {
                     "method": arm,
                     "label": f"Top-{top_k} / {num_ctx}",
-                    "params": {"top_k": top_k, "num_ctx": num_ctx, "num_predict": num_predict},
+                    "params": {
+                        "top_k": top_k,
+                        "num_ctx": num_ctx,
+                        "num_predict": num_predict,
+                    },
                     "summary": normalize_summary(_metrics(rows[arm]), "selector"),
                     "results": rows[arm],
                 }
