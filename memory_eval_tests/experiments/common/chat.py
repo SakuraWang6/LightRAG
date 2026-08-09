@@ -1,9 +1,22 @@
-"""Ollama chat wrapper with per-call decoding control (num_ctx, num_predict)."""
+"""Ollama chat wrapper with per-call decoding control and hard deadlines.
+
+The HTTP client reads the response body incrementally with a per-read socket
+timeout and an overall wall-clock deadline, so a stuck Ollama request surfaces
+as a ``TimeoutError`` within a bounded window instead of hanging the experiment
+for tens of minutes. A single retry covers transient model-load stalls.
+"""
 
 from __future__ import annotations
 
+import http.client
 import json
-import urllib.request
+import socket
+import time
+from urllib.parse import urlsplit
+
+
+class ChatTimeoutError(TimeoutError):
+    """Raised when an Ollama request exceeds the hard deadline."""
 
 
 def chat_ollama(
@@ -16,29 +29,57 @@ def chat_ollama(
     num_ctx: int = 16384,
     temperature: float = 0,
     timeout: int = 600,
+    read_timeout: int = 60,
+    retries: int = 1,
 ) -> str:
     """Call ``/api/chat`` with explicit context window and decoding options."""
-    request = urllib.request.Request(
-        f"{host.rstrip('/')}/api/chat",
-        data=json.dumps(
-            {
-                "model": model,
-                "stream": False,
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "options": {
-                    "temperature": temperature,
-                    "num_ctx": num_ctx,
-                    "num_predict": num_predict,
-                },
-                "think": False,
-            }
-        ).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = json.loads(response.read().decode("utf-8"))
-    return str((body.get("message") or {}).get("content") or "")
+    payload = {
+        "model": model,
+        "stream": False,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "options": {
+            "temperature": temperature,
+            "num_ctx": num_ctx,
+            "num_predict": num_predict,
+        },
+        "think": False,
+    }
+    parsed = urlsplit(host if "://" in host else f"http://{host}")
+    target_host = parsed.netloc or parsed.path
+    last_error: Exception | None = None
+    for attempt in range(retries + 1):
+        deadline = time.monotonic() + timeout
+        try:
+            conn = http.client.HTTPConnection(target_host, timeout=read_timeout)
+            try:
+                conn.request(
+                    "POST",
+                    "/api/chat",
+                    body=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                )
+                response = conn.getresponse()
+                chunks: list[bytes] = []
+                while True:
+                    if time.monotonic() > deadline:
+                        raise ChatTimeoutError(
+                            f"Ollama chat exceeded {timeout}s deadline (model={model}, num_ctx={num_ctx})"
+                        )
+                    chunk = response.read(8192)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                body = json.loads(b"".join(chunks).decode("utf-8"))
+            finally:
+                conn.close()
+            return str((body.get("message") or {}).get("content") or "")
+        except (socket.timeout, TimeoutError, http.client.HTTPException, ConnectionError, json.JSONDecodeError) as exc:
+            last_error = exc
+            if attempt < retries:
+                time.sleep(2)
+                continue
+            raise
+    raise last_error if last_error is not None else ChatTimeoutError("Ollama chat failed")
 
 
 def estimate_tokens(text: str) -> int:

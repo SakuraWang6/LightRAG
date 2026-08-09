@@ -70,6 +70,7 @@ export type EvalArtifact = {
 
 export type EvalRun = {
   id: string
+  run_dir?: string
   kind: EvalRunKind
   label: string
   dataset?: string | null
@@ -79,6 +80,7 @@ export type EvalRun = {
   description?: string
   variables: EvalVariable[]
   progress: EvalRunProgress
+  failed_checks?: string[]
   headline: Record<string, MetricItem>
   artifact_titles: string[]
 }
@@ -135,5 +137,17 @@ export async function refreshEvalIndex(): Promise<{
   run_count: number
 }> {
   const response = await evalApiClient.post('/eval/refresh')
+  return response.data
+}
+
+export async function analyzeEvalRun(
+  runId: string,
+  force = false
+): Promise<{ created_at: string; model: string; text: string }> {
+  const response = await evalApiClient.post(
+    `/eval/runs/${encodeURIComponent(runId)}/analyze`,
+    null,
+    { params: { force: force ? '1' : undefined } }
+  )
   return response.data
 }

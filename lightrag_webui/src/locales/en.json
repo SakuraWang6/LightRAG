@@ -532,7 +532,22 @@
     "noMethodsHint": "Usually an independent audit or diagnostic artifact",
     "toc": "Table of contents",
     "running": "Running",
-    "variables": "Variable axes"
+    "variables": "Variable axes",
+    "failed": "Failed",
+    "caseAll": "All results",
+    "casePass": "Passed",
+    "caseFail": "Failed",
+    "caseAllGroups": "All groups",
+    "caseQuestion": "Question",
+    "caseAnswer": "Answer",
+    "caseExpected": "Expected",
+    "caseResult": "Result",
+    "caseType": "Type / method",
+    "aiAnalysis": "AI result analysis",
+    "regenerate": "Regenerate",
+    "analyzing": "Generating analysis…",
+    "analyzeHint": "Ask the local LLM for a concise analysis of this run (conclusions, method differences, failure modes and suggestions).",
+    "generateAnalysis": "Generate AI analysis"
   },
   "pagination": {
     "showing": "Showing {{start}} to {{end}} of {{total}} entries",

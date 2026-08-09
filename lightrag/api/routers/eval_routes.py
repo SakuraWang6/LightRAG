@@ -7,6 +7,7 @@ keeps the WebUI refresh button meaningful.
 
 from __future__ import annotations
 
+import json
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from lightrag.utils import logger
 from ..eval_index import default_runs_root, load_run, scan_runs
+from memory_eval_tests.experiments.common.chat import chat_ollama
 from ..utils_api import get_combined_auth_dependency, internal_server_error
 
 
@@ -102,6 +104,105 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
             }
         except Exception as exc:
             logger.error(f"Error rebuilding eval index: {exc}")
+            logger.error(traceback.format_exc())
+            raise internal_server_error(exc)
+
+    @router.post("/runs/{run_id:path}/analyze", dependencies=[Depends(combined_auth)])
+    async def analyze_run(
+        run_id: str,
+        model: str = Query(default="qwen3:8b", description="Ollama model for the analysis"),
+        ollama_url: str = Query(default="http://127.0.0.1:11434"),
+        force: bool = Query(default=False, description="Regenerate instead of returning the cache"),
+    ) -> dict[str, Any]:
+        """Ask the local LLM to produce a concise analysis of one run."""
+        try:
+            detail = load_run(root, run_id)
+            if detail is None:
+                raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+            run_dir = Path(detail["run_dir"])
+            cache_path = run_dir / "analysis.json"
+            if force and cache_path.exists():
+                cache_path.unlink()
+            if cache_path.exists():
+                return json.loads(cache_path.read_text(encoding="utf-8"))
+
+            methods = detail.get("artifacts", [])
+            summary_methods = next(
+                (a for a in methods if a.get("table", {}).get("rows")),
+                None,
+            )
+            report = next(
+                (a for a in methods if a.get("report_md")),
+                None,
+            )
+            conditions = {
+                c["key"]: c["value"]
+                for c in detail.get("conditions", [])
+                if c["key"] in {"dataset", "pages", "tier", "model", "mode", "top_k", "num_ctx", "kg", "methods"}
+            }
+            rows = (summary_methods or {}).get("table", {}).get("rows", [])
+            snippet = []
+            for row in rows[:12]:
+                label = row.get("label") or row.get("method") or row.get("arm")
+                picked = {
+                    key: row.get(key)
+                    for key in (
+                        "answer_accuracy",
+                        "accuracy",
+                        "groundedness",
+                        "hallucination_rate",
+                        "abstention_accuracy",
+                        "average_recall",
+                        "mrr",
+                        "candidate_recall",
+                        "selected_recall",
+                        "selection_precision",
+                        "role_coverage",
+                        "retrieval_recall",
+                        "mean_context_chars",
+                        "mean_selected_context_chars",
+                        "cases",
+                    )
+                    if row.get(key) is not None
+                }
+                snippet.append({"method": label, **picked})
+            report_excerpt = (report or {}).get("report_md", "")[:2000]
+            prompt = (
+                f"实验：{detail.get('label')}\n"
+                f"说明：{detail.get('description') or ''}\n"
+                f"条件：{conditions}\n"
+                f"结果：{snippet}\n"
+                f"报告摘录：\n{report_excerpt}\n"
+            )
+            text = chat_ollama(
+                host=ollama_url,
+                model=model,
+                system=(
+                    "你是评测分析助手。用简洁的中文分析这段评测结果：先说结论，再指出方法间差异、"
+                    "可能的失败模式（如检索失败/选择失败/上下文过大/拒答问题）和可执行的改进建议。"
+                    "不要罗列参数，不要超过 300 字。"
+                ),
+                user=prompt,
+                num_predict=700,
+                num_ctx=8192,
+                timeout=300,
+                read_timeout=60,
+                retries=1,
+            )
+            payload = {
+                "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "model": model,
+                "text": text,
+            }
+            cache_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            return payload
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error analyzing eval run '{run_id}': {exc}")
             logger.error(traceback.format_exc())
             raise internal_server_error(exc)
 

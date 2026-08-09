@@ -222,8 +222,16 @@ def _run_record(
     )
     progress = _read_progress(run_dir)
     run_id = envelope.get("run_id") or run_dir.name
+    failed_checks: list[str] = []
+    if kind == "offline":
+        failed_checks = [
+            m.get("label") or m.get("method") or ""
+            for m in methods
+            if (m.get("summary") or {}).get("passed") is False
+        ]
     record: dict[str, Any] = {
         "id": run_id,
+        "run_dir": str(run_dir),
         "kind": kind,
         "label": experiment.get("label") or run_dir.name,
         "description": experiment.get("description") or "",
@@ -232,6 +240,7 @@ def _run_record(
         "status": envelope.get("status"),
         "conditions": conditions,
         "progress": progress,
+        "failed_checks": failed_checks,
         "headline": {} if kind == "experiment" else {
             metric["key"]: metric for metric in _summary_metrics(methods)
         },

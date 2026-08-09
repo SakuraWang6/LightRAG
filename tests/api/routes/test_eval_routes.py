@@ -104,6 +104,13 @@ def _offline_envelope() -> dict:
         "variables": [],
         "methods": [
             {
+                "method": "layout",
+                "label": "版式审计",
+                "params": {},
+                "summary": {"passed": False, "position_coverage": 0.0},
+                "results": [],
+            },
+            {
                 "method": "offline_summary",
                 "label": "离线审计汇总",
                 "params": {},
@@ -161,6 +168,7 @@ def test_scan_and_load_envelope(runs_tree: Path) -> None:
 
     offline = load_run(runs_tree, "rich-smoke-v1")
     assert offline["kind"] == "offline"
+    assert offline["failed_checks"] == ["版式审计"]
     summary = next(a for a in offline["artifacts"] if a["kind"] == "summary")
     assert {m["key"] for m in summary["metrics"]} >= {"passed", "chunk_sidecar_coverage"}
 
