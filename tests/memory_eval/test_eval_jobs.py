@@ -198,3 +198,48 @@ def test_serializer_consistency_cli_vs_api(tmp_path: Path) -> None:
         )
     )
     assert from_cli == from_api
+
+
+def test_job_id_validation_blocks_traversal(tmp_path: Path) -> None:
+    assert (
+        eval_jobs.get_job(
+            runs_root=tmp_path,
+            datasets_root=tmp_path / "generated",
+            job_id="../../etc",
+        )
+        is None
+    )
+    assert (
+        eval_jobs.cancel_job(
+            runs_root=tmp_path,
+            datasets_root=tmp_path / "generated",
+            job_id="..",
+        )
+        is None
+    )
+
+
+def test_dataset_job_exit_code_drives_status(tmp_path: Path) -> None:
+    generated = tmp_path / "generated"
+    manifest = generated / "d1" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}", encoding="utf-8")
+    base = {
+        "id": "dataset-x",
+        "kind": "dataset",
+        "dataset_id": "d1",
+        "output_dir": str(tmp_path),
+        "pid": 2**31 - 1,
+        "process_started_at": None,
+        "status": "running",
+    }
+    failed = dict(base, exit_code=1)
+    assert (
+        eval_jobs._derive_status(failed, runs_root=tmp_path, datasets_root=generated)
+        == "failed"
+    )
+    succeeded = dict(base, exit_code=0)
+    assert (
+        eval_jobs._derive_status(succeeded, runs_root=tmp_path, datasets_root=generated)
+        == "succeeded"
+    )

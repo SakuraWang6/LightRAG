@@ -100,6 +100,21 @@ _INFRA_PARAMS = {
     "runs_root",
 }
 _TEMPLATE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_DATASET_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
+
+def _validate_dataset_id(dataset_id: str) -> str:
+    """Reject traversal (``..``, slashes) before any filesystem access."""
+    if not _DATASET_ID_RE.fullmatch(dataset_id) or dataset_id in {".", ".."}:
+        raise HTTPException(status_code=400, detail="invalid dataset id")
+    return dataset_id
+
+
+def _validate_job_id(job_id: str) -> str:
+    if not _JOB_ID_RE.fullmatch(job_id) or job_id in {".", ".."}:
+        raise HTTPException(status_code=400, detail="invalid job id")
+    return job_id
 
 
 def _coerce(value: Any, value_type: str) -> Any:
@@ -445,6 +460,7 @@ def create_eval_routes(
     async def get_job(job_id: str) -> dict[str, Any]:
         try:
             require_eval()
+            _validate_job_id(job_id)
             job = eval_jobs.get_job(
                 runs_root=root, datasets_root=datasets, job_id=job_id
             )
@@ -462,6 +478,7 @@ def create_eval_routes(
     async def cancel_job(job_id: str) -> dict[str, Any]:
         try:
             require_eval()
+            _validate_job_id(job_id)
             job = eval_jobs.cancel_job(
                 runs_root=root, datasets_root=datasets, job_id=job_id
             )
@@ -499,6 +516,7 @@ def create_eval_routes(
     async def get_dataset(dataset_id: str) -> dict[str, Any]:
         try:
             require_eval()
+            _validate_dataset_id(dataset_id)
             path = datasets / dataset_id
             if not path.is_dir() or not (path / "manifest.json").exists():
                 raise HTTPException(status_code=404, detail="dataset not found")
@@ -513,7 +531,15 @@ def create_eval_routes(
     async def delete_dataset(dataset_id: str) -> dict[str, Any]:
         try:
             require_eval()
+            _validate_dataset_id(dataset_id)
+            root_resolved = datasets.resolve()
             path = datasets / dataset_id
+            path_resolved = path.resolve()
+            if (
+                path_resolved != root_resolved
+                and root_resolved not in path_resolved.parents
+            ):
+                raise HTTPException(status_code=400, detail="invalid dataset id")
             if not path.is_dir():
                 raise HTTPException(status_code=404, detail="dataset not found")
             active = eval_jobs.active_dataset_job(

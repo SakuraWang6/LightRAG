@@ -17,7 +17,8 @@
     "themeToggle": {
       "switchToLight": "Chuyển sang giao diện sáng",
       "switchToDark": "Chuyển sang giao diện tối"
-    }
+    },
+    "eval": "Đánh giá"
   },
   "login": {
     "description": "Vui lòng nhập tài khoản và mật khẩu để đăng nhập vào hệ thống",

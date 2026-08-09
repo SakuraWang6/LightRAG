@@ -34,6 +34,7 @@ from memory_eval_tests.experiments.supervise import (
 _JOBS_DIR = ".jobs"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATASET_PAGE_CAP = 1000
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 
 def _now_iso() -> str:
@@ -143,9 +144,12 @@ def _derive_status(
         return "stale"
     if liveness == "alive":
         return "running"
+    exit_code = job.get("exit_code")
     if job.get("kind") == "dataset":
         dataset_id = job.get("dataset_id")
         manifest = datasets_root / str(dataset_id) / "manifest.json"
+        if exit_code is not None:
+            return "succeeded" if exit_code == 0 and manifest.exists() else "failed"
         return "succeeded" if manifest.exists() else "failed"
     try:
         envelope = json.loads(
@@ -154,6 +158,8 @@ def _derive_status(
         status = envelope.get("status")
     except (OSError, ValueError):
         status = None
+    if exit_code is not None:
+        return "succeeded" if exit_code == 0 else "failed"
     return "succeeded" if status == "complete" else "failed"
 
 
@@ -187,6 +193,22 @@ def _params_to_json(params: RunParams) -> dict[str, Any]:
         else:
             payload[key] = value
     return payload
+
+
+def _valid_job_id(job_id: str) -> bool:
+    return bool(_JOB_ID_RE.fullmatch(job_id)) and job_id not in {".", ".."}
+
+
+def _record_exit(job_id: str, jobs_root: Path, proc: subprocess.Popen) -> None:
+    """Reap the child and persist its exit code for status derivation."""
+    try:
+        code = proc.wait()
+    except Exception:
+        return
+    job = _read_job(jobs_root, job_id)
+    if job is not None:
+        job["exit_code"] = code
+        _write_job(jobs_root, job)
 
 
 def _unique_run_dir(runs_root: Path, experiment: str) -> Path:
@@ -245,6 +267,11 @@ def start_run_job(
         "params": _params_to_json(params),
     }
     _write_job(jobs_root(runs_root), job)
+    threading.Thread(
+        target=_record_exit,
+        args=(job["id"], jobs_root(runs_root), proc),
+        daemon=True,
+    ).start()
     return job
 
 
@@ -328,6 +355,11 @@ def start_dataset_job(
         },
     }
     _write_job(jobs_root(runs_root), job)
+    threading.Thread(
+        target=_record_exit,
+        args=(job["id"], jobs_root(runs_root), proc),
+        daemon=True,
+    ).start()
     return job
 
 
@@ -342,6 +374,8 @@ def list_jobs(*, runs_root: Path, datasets_root: Path) -> list[dict[str, Any]]:
 def get_job(
     *, runs_root: Path, datasets_root: Path, job_id: str
 ) -> dict[str, Any] | None:
+    if not _valid_job_id(job_id):
+        return None
     job = _read_job(jobs_root(runs_root), job_id)
     if job is None:
         return None
@@ -376,6 +410,8 @@ def cancel_job(
     datasets_root: Path,
     job_id: str,
 ) -> dict[str, Any] | None:
+    if not _valid_job_id(job_id):
+        return None
     job = _read_job(jobs_root(runs_root), job_id)
     if job is None:
         return None

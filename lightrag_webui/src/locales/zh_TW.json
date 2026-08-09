@@ -17,7 +17,8 @@
     "themeToggle": {
       "switchToLight": "切換至淺色主題",
       "switchToDark": "切換至深色主題"
-    }
+    },
+    "eval": "評測"
   },
   "login": {
     "description": "請輸入您的帳號和密碼登入系統",

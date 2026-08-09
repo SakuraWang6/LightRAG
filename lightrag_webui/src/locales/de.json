@@ -17,7 +17,8 @@
     "themeToggle": {
       "switchToLight": "Zu hellem Design wechseln",
       "switchToDark": "Zu dunklem Design wechseln"
-    }
+    },
+    "eval": "Auswertung"
   },
   "login": {
     "description": "Bitte geben Sie Ihr Konto und Passwort ein, um sich im System anzumelden",

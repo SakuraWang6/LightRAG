@@ -17,7 +17,8 @@
     "themeToggle": {
       "switchToLight": "Passer au thème clair",
       "switchToDark": "Passer au thème sombre"
-    }
+    },
+    "eval": "Évaluation"
   },
   "login": {
     "description": "Veuillez entrer votre compte et mot de passe pour vous connecter au système",

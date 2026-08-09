@@ -17,7 +17,8 @@
     "themeToggle": {
       "switchToLight": "라이트 테마로 전환",
       "switchToDark": "다크 테마로 전환"
-    }
+    },
+    "eval": "評価"
   },
   "login": {
     "description": "시스템에 로그인하려면 계정과 비밀번호를 입력하세요",

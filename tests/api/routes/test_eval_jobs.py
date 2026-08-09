@@ -213,3 +213,22 @@ def test_templates_sanitize_and_crud(
     deleted = client.delete("/eval/templates?name=smoke-1")
     assert deleted.status_code == 200
     assert client.get("/eval/templates").json()["templates"] == []
+
+
+def test_delete_rejects_encoded_path_traversal(
+    runs_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    client = _client(runs_root, tmp_path)
+    victim = tmp_path.parent / "victim-dir"
+    victim.mkdir(exist_ok=True)
+    (victim / "keep.txt").write_text("keep", encoding="utf-8")
+
+    assert client.delete("/eval/datasets/%2e%2e").status_code == 400
+    assert client.get("/eval/datasets/%2e%2e").status_code == 400
+    assert (victim / "keep.txt").exists()
+    assert tmp_path.exists()
+
+    _write_dataset(tmp_path, "rich-smoke-v1")
+    assert client.delete("/eval/datasets/rich-smoke-v1").status_code == 200
+    assert not (tmp_path / "rich-smoke-v1").exists()

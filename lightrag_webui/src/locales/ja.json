@@ -17,7 +17,8 @@
     "themeToggle": {
       "switchToLight": "ライトテーマに切り替え",
       "switchToDark": "ダークテーマに切り替え"
-    }
+    },
+    "eval": "評価"
   },
   "login": {
     "description": "システムにログインするには、アカウントとパスワードを入力してください",
