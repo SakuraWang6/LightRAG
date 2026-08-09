@@ -197,7 +197,7 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "cases": total,
         "answer_accuracy": _metric_for(rows, "exact_match"),
         "groundedness": _metric_for(rows, "grounded"),
-        "hallucination_rate": _metric_for(rows, "hallucinated"),
+        "ungrounded_rate": _metric_for(rows, "ungrounded"),
         "abstention_accuracy": applicable_for(rows, "abstention_correct"),
         "numeric_unit_accuracy": applicable_for(rows, "numeric_unit_correct"),
         "formula_accuracy": applicable_for(rows, "formula_correct"),
@@ -222,7 +222,7 @@ def _render_report(payload: dict[str, Any]) -> str:
     if baseline:
         lines.append(
             f"| Select5 (saved baseline) | {baseline['answer_accuracy']:.4f} | {baseline['groundedness']:.4f} | "
-            f"{baseline['hallucination_rate']:.4f} | {_format(baseline['abstention_accuracy'])} | "
+            f"{baseline['ungrounded_rate']:.4f} | {_format(baseline['abstention_accuracy'])} | "
             f"{_format(baseline['numeric_unit_accuracy'])} | {_format(baseline['formula_accuracy'])} | "
             f"{_format(baseline['table_cell_accuracy'])} | {baseline['mean_selected_context_chars']:.0f} |"
         )
@@ -230,7 +230,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         summary = item["summary"]
         lines.append(
             f"| {item['label']} | {summary['answer_accuracy']:.4f} | {summary['groundedness']:.4f} | "
-            f"{summary['hallucination_rate']:.4f} | {_format(summary['abstention_accuracy'])} | "
+            f"{summary['ungrounded_rate']:.4f} | {_format(summary['abstention_accuracy'])} | "
             f"{_format(summary['numeric_unit_accuracy'])} | {_format(summary['formula_accuracy'])} | "
             f"{_format(summary['table_cell_accuracy'])} | {summary['mean_context_chars']:.0f} |"
         )
@@ -290,7 +290,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             for key in (
                 "answer_accuracy",
                 "groundedness",
-                "hallucination_rate",
+                "ungrounded_rate",
                 "abstention_accuracy",
                 "numeric_unit_accuracy",
                 "formula_accuracy",

@@ -1,3 +1,5 @@
+import json
+
 from memory_eval_tests.online.answer_eval import _canonical_formula, _formula_match, score_answer
 
 
@@ -53,5 +55,99 @@ def test_evidence_and_citation_metrics_are_not_conflated():
     assert no_citation["citation_presence"] is False
     assert no_citation["citation_correctness"] is None
     assert no_citation["grounded"] is True
+    assert no_citation["ungrounded"] is False
     assert cited["citation_presence"] is True
     assert cited["citation_correctness"] is True
+
+
+def test_ungrounded_reflects_answer_error_or_missing_evidence():
+    fact = {"fact_id": "FACT-00001", "answer": "9021 QMU", "expected_text": "9021 QMU"}
+    base = dict(
+        expected="9021 QMU",
+        question={"question_type": "direct_numeric", "expected_behavior": "answer"},
+        evidence_facts=[fact],
+        references_blob="Evidence: FACT-00001 = 9021 QMU",
+    )
+    wrong = score_answer(answer_text="The answer is 9999 XYZ.", **base)
+    assert wrong["grounded"] is False
+    assert wrong["ungrounded"] is True
+
+    missing_evidence = score_answer(
+        answer_text="The answer is 9021 QMU.",
+        expected="9021 QMU",
+        question={"question_type": "direct_numeric", "expected_behavior": "answer"},
+        evidence_facts=[fact],
+        references_blob="",
+    )
+    assert missing_evidence["grounded"] is False
+    assert missing_evidence["ungrounded"] is True
+
+
+def test_score_answer_no_longer_emits_legacy_alias_fields():
+    scored = score_answer(
+        answer_text="The answer is 9021 QMU (FACT-00001).",
+        expected="9021 QMU",
+        question={"question_type": "direct_numeric", "expected_behavior": "answer"},
+        evidence_facts=[{"fact_id": "FACT-00001", "answer": "9021 QMU", "expected_text": "9021 QMU"}],
+        references_blob="Evidence: FACT-00001 = 9021 QMU",
+    )
+    assert "citation_correct" not in scored
+    assert "hallucinated" not in scored
+    assert scored["ungrounded"] is False
+
+
+def test_evaluate_answers_emits_canonical_summary_keys(monkeypatch, tmp_path):
+    from memory_eval_tests.online.answer_eval import evaluate_answers
+
+    def fake_post_json(url: str, payload: dict) -> dict:
+        return {"response": "The answer is 9021 QMU (FACT-00001).", "references": []}
+
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "oracle.json").write_text(
+        json.dumps(
+            {
+                "questions": [
+                    {
+                        "id": "Q1",
+                        "question": "What is X?",
+                        "question_type": "direct_numeric",
+                        "expected_behavior": "answer",
+                        "answer": "9021 QMU",
+                        "evidence_fact_ids": ["FACT-1"],
+                    },
+                    {
+                        "id": "Q2",
+                        "question": "Y?",
+                        "question_type": "abstain",
+                        "expected_behavior": "abstain",
+                        "answer": "The document does not provide this information.",
+                        "evidence_fact_ids": [],
+                    },
+                    {
+                        "id": "Q3",
+                        "question": "Z?",
+                        "question_type": "direct_numeric",
+                        "expected_behavior": "answer",
+                        "answer": "9038 QMU",
+                        "evidence_fact_ids": ["FACT-2"],
+                    },
+                ],
+                "facts": [
+                    {"fact_id": "FACT-1", "answer": "9021 QMU", "expected_text": "9021 QMU"},
+                    {"fact_id": "FACT-2", "answer": "9038 QMU", "expected_text": "9038 QMU"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("memory_eval_tests.online.answer_eval._post_json", fake_post_json)
+    report = evaluate_answers(
+        dataset_source=str(dataset),
+        rag_api_url="http://127.0.0.1:9621",
+        max_cases=3,
+    )
+    assert "ungrounded_rate" in report
+    assert "hallucination_rate" not in report
+    assert "citation_accuracy" not in report
+    assert "evidence_available" in report

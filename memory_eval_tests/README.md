@@ -144,3 +144,27 @@ conda run -n lightrag-memory-eval python -m memory_eval_tests.online.answer_eval
 
 PDF parser paths (`docling` / `mineru`) require their normal LightRAG parser
 service environment variables.
+
+## 指标定义
+
+指标名与确定性实现严格对应；历史运行（`metric_semantics: legacy`）的旧字段
+`hallucination_rate` / `citation_accuracy` 在控制台读取时自动映射为
+`ungrounded_rate` / `evidence_available`，数字不变。
+
+| 指标 | 精确语义 |
+| --- | --- |
+| `answer_accuracy` | 答案与 oracle 期望值精确匹配（含数值/单位、公式、表格单元规则）的题数占比。 |
+| `groundedness` | 答案正确 **且** oracle 证据出现在 API references 中的题数占比。 |
+| `ungrounded_rate` | 未满足 grounded 的题数占比（答案错误或证据未进入上下文）；abstain 题按 `abstention_correct` 单独判定。历史名为 `hallucination_rate`，它测的是“答错/未支撑率”，不是真实幻觉内容判定。 |
+| `evidence_available` | oracle 证据是否全部出现在 API references 中（与回答是否引用无关）。历史 `citation_accuracy` 与该指标数值重复，已合并。 |
+| `citation_presence` | 回答中出现显式稳定 ID（`FACT-*` / `OBJ-*`）的题数占比。 |
+| `citation_correctness` | 仅在有稳定 ID 引用的题上定义：回答中出现的 ID 是否覆盖全部 oracle 证据 ID。 |
+| `abstention_accuracy` | abstain 题正确拒答的占比；abstain 不参与引用类指标。 |
+| `average_recall` | 检索类：命中的 oracle 证据数 / 期望证据数，在 top-K 排名内计算。 |
+| `mrr` | 检索类：首个命中证据位置的倒数均值（1/rank）。API 与 sidecar 后端同口径。 |
+| `context_precision` | 检索类：含至少一条证据的上下文数 / 返回上下文数。 |
+| `object_hit_rate` | 对象级命中率，仅 sidecar 后端可计算；API references 不暴露对象类型，输出 null。跨后端对比仅限 recall / MRR / context_precision。 |
+
+检索与回答评估使用同一套确定性等距抽样（`common/sampling.py::sample_evenly`）；
+检索侧先排除 abstain（其 `evidence_fact_ids` 为空，召回无意义），回答侧包含
+abstain 以计算拒答指标，两边的非 abstain 子集完全一致。

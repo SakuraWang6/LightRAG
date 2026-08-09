@@ -46,9 +46,22 @@ def _fmt(value: Any) -> str:
     return str(value)
 
 
-def _method_row(method: dict[str, Any], keys: list[str]) -> list[str]:
-    summary = method.get("summary") or {}
-    return [method.get("label") or method.get("method") or "?", *[_fmt(summary.get(key)) for key in keys]]
+def _metric(summary: dict[str, Any], *keys: str) -> Any:
+    """First non-None value among canonical/legacy metric keys."""
+    for key in keys:
+        value = summary.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _normalized_summary(method: dict[str, Any]) -> dict[str, Any]:
+    from memory_eval_tests.experiments.common.metrics import normalize_metric_key
+
+    return {
+        normalize_metric_key(key): value
+        for key, value in (method.get("summary") or {}).items()
+    }
 
 
 def render_markdown(runs_root: Path, envelopes: list[tuple[Path, dict[str, Any]]]) -> str:
@@ -89,9 +102,9 @@ def render_markdown(runs_root: Path, envelopes: list[tuple[Path, dict[str, Any]]
                     for key in (
                         "answer_accuracy",
                         "groundedness",
-                        "hallucination_rate",
+                        "ungrounded_rate",
                         "abstention_accuracy",
-                        "citation_accuracy",
+                        "evidence_available",
                         "candidate_recall",
                         "selected_recall",
                         "selection_precision",
@@ -101,13 +114,20 @@ def render_markdown(runs_root: Path, envelopes: list[tuple[Path, dict[str, Any]]
                         "mean_context_chars",
                         "cases",
                     )
-                    if any(key in (m.get("summary") or {}) for m in methods)
+                    if any(key in _normalized_summary(m) for m in methods)
                 ]
                 if keys:
                     lines.append("| 方法 | " + " | ".join(keys) + " |")
                     lines.append("|" + "---|" * (len(keys) + 1))
                     for method in methods:
-                        lines.append("| " + " | ".join(_method_row(method, keys)) + " |")
+                        summary = _normalized_summary(method)
+                        lines.append(
+                            "| "
+                            + " | ".join(
+                                [method.get("label") or method.get("method") or "?", *[_fmt(summary.get(key)) for key in keys]]
+                            )
+                            + " |"
+                        )
                     lines.append("")
 
     offline = by_kind.get("offline", [])
@@ -133,7 +153,7 @@ def render_markdown(runs_root: Path, envelopes: list[tuple[Path, dict[str, Any]]
 
     online = by_kind.get("online", [])
     if online:
-        lines.extend(["## 在线评测", "", "| 运行 | 数据集 | Recall@K | MRR | Accuracy | Groundedness | Hallucination |", "|---|---:|---:|---:|---:|---:|---:|"])
+        lines.extend(["## 在线评测", "", "| 运行 | 数据集 | Recall@K | MRR | Accuracy | Groundedness | 未支撑率 |", "|---|---:|---:|---:|---:|---:|---:|"])
         for run_dir, envelope in online:
             methods = {m.get("method"): m for m in (envelope.get("methods") or [])}
             retrieval = (methods.get("retrieval") or {}).get("summary") or {}
@@ -142,7 +162,7 @@ def render_markdown(runs_root: Path, envelopes: list[tuple[Path, dict[str, Any]]
                 f"| {run_dir.name} | {envelope.get('baseline', {}).get('dataset') or '-'} | "
                 f"{_fmt(retrieval.get('average_recall'))} | {_fmt(retrieval.get('mrr'))} | "
                 f"{_fmt(answer.get('answer_accuracy') or answer.get('accuracy'))} | {_fmt(answer.get('groundedness'))} | "
-                f"{_fmt(answer.get('hallucination_rate'))} |"
+                f"{_fmt(_metric(answer, 'ungrounded_rate', 'hallucination_rate'))} |"
             )
         lines.append("")
     return "\n".join(lines)

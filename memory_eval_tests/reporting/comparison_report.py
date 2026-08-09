@@ -30,7 +30,7 @@ def render_markdown(rows: list[dict[str, Any]]) -> str:
         "context_precision",
         "object_hit_rate",
         "answer_accuracy",
-        "citation_accuracy",
+        "evidence_available",
         "passed",
     ]
     lines = ["# LightRAG Parser / Mode Comparison Report", ""]
@@ -75,7 +75,11 @@ def _row_from_report(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
         "context_precision": payload.get("context_precision"),
         "object_hit_rate": payload.get("object_hit_rate"),
         "answer_accuracy": payload.get("answer_accuracy"),
-        "citation_accuracy": payload.get("citation_accuracy"),
+        "evidence_available": (
+            payload.get("evidence_available")
+            if payload.get("evidence_available") is not None
+            else payload.get("citation_accuracy")
+        ),
         "blocks": payload.get("blocks"),
         "chunks": payload.get("chunks"),
         "position_coverage": payload.get("position_coverage"),

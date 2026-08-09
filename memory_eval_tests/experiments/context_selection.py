@@ -98,7 +98,7 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "cases": total,
         "answer_accuracy": rate("exact_match"),
         "groundedness": rate("grounded"),
-        "hallucination_rate": rate("hallucinated"),
+        "ungrounded_rate": rate("ungrounded"),
         "abstention_accuracy": average("abstention_correct"),
         "numeric_unit_accuracy": average("numeric_unit_correct"),
         "formula_accuracy": average("formula_correct"),
@@ -135,7 +135,7 @@ def _render_report(description: str, methods: list[dict[str, Any]]) -> str:
         lines.append(
             f"| {item['label']} | {params.get('candidate_k', '-')} | {params.get('selected_limit', '-')} | "
             f"{'是' if params.get('selector') else '否'} | {s['answer_accuracy']:.4f} | {s['groundedness']:.4f} | "
-            f"{s['hallucination_rate']:.4f} | {s['mean_selected_context_chars'] or 0:.0f} | {overflow if overflow is not None else '-'} |"
+            f"{s['ungrounded_rate']:.4f} | {s['mean_selected_context_chars'] or 0:.0f} | {overflow if overflow is not None else '-'} |"
         )
     lines.extend(["", "## 分题型回答准确率", ""])
     lines.append("| 题型 | Cases | Direct-3 | Direct-20 | Select3 | Select5 | Role5 | Focus | Precision | Oracle |")

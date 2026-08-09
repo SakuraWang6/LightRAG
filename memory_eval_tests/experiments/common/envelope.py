@@ -211,6 +211,7 @@ def write_simple_envelope(
     methods: list[dict[str, Any]],
     status: str,
     report_rel_path: str | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> Path:
     """Envelope writer for non-registry runs (offline/online evaluators)."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -227,6 +228,8 @@ def write_simple_envelope(
         "methods": methods,
         "reports": {"report.md": report_rel_path} if report_rel_path else {},
     }
+    if extra:
+        envelope.update(extra)
     path = output_dir / "run.json"
     path.write_text(json.dumps(envelope, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path

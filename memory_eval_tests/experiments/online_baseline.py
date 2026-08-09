@@ -41,8 +41,8 @@ def _render_report(retrieval: dict[str, Any], answer: dict[str, Any]) -> str:
         "| Accuracy | Groundedness | Hallucination | Abstention | Citation |",
         "|---|---:|---:|---:|---:|",
         f"| {answer.get('answer_accuracy', 0):.4f} | {answer.get('groundedness', 0):.4f} | "
-        f"{answer.get('hallucination_rate', 0):.4f} | {answer.get('abstention_accuracy') or 0:.4f} | "
-        f"{answer.get('citation_accuracy') or 0:.4f} |",
+        f"{answer.get('ungrounded_rate', 0):.4f} | {answer.get('abstention_accuracy') or 0:.4f} | "
+        f"{answer.get('evidence_available') or 0:.4f} |",
         "",
     ]
     return "\n".join(lines)

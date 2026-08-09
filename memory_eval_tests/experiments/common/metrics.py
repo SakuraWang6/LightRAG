@@ -8,11 +8,12 @@ METRIC_LABELS: dict[str, str] = {
     "answer_accuracy": "回答准确率",
     "accuracy": "回答准确率",
     "groundedness": "证据支撑率",
-    "hallucination_rate": "幻觉率",
+    "ungrounded_rate": "未支撑率",
+    "hallucination_rate": "未支撑率",
     "abstention_accuracy": "拒答准确率",
-    "citation_accuracy": "引用准确率",
     "citation_presence": "引用出现率",
     "citation_correctness": "引用正确率",
+    "evidence_available": "证据可得率",
     "numeric_unit_accuracy": "数值/单位准确率",
     "formula_accuracy": "公式准确率",
     "table_cell_accuracy": "表格单元准确率",
@@ -44,20 +45,28 @@ METRIC_LABELS: dict[str, str] = {
     "chunk_top_k": "Chunk Top-K",
     "exact_match": "精确匹配",
     "grounded": "有证据支撑",
-    "hallucinated": "幻觉",
+    "ungrounded": "未支撑",
+    "hallucinated": "未支撑",
     "abstention_correct": "拒答正确",
     "numeric_unit_correct": "数值/单位正确",
     "formula_correct": "公式正确",
     "table_cell_correct": "表格单元正确",
     "citation_presence_bool": "引用出现",
     "citation_correct": "引用正确",
-    "evidence_available": "证据可得率",
 }
 
 # Alias normalization: legacy key -> canonical key.
 METRIC_ALIASES: dict[str, str] = {
     "accuracy": "answer_accuracy",
     "abstention_correct": "abstention_accuracy",
+    # ``hallucination_rate`` historically measured "not grounded" (answer wrong
+    # or evidence missing), i.e. an answer-error rate rather than actual
+    # hallucinated content. The canonical key now says what it measures.
+    "hallucination_rate": "ungrounded_rate",
+    # ``citation_accuracy`` historically measured whether oracle evidence was
+    # available in the API references at all, i.e. it duplicated
+    # ``evidence_available``. Canonical consumers use the latter.
+    "citation_accuracy": "evidence_available",
 }
 
 # Canonical metric sets per stage; missing values are filled with null so every
@@ -66,9 +75,9 @@ CANONICAL_SUMMARY_KEYS: dict[str, list[str]] = {
     "answer": [
         "answer_accuracy",
         "groundedness",
-        "hallucination_rate",
+        "ungrounded_rate",
         "abstention_accuracy",
-        "citation_accuracy",
+        "evidence_available",
         "citation_presence",
         "citation_correctness",
         "numeric_unit_accuracy",
@@ -87,9 +96,9 @@ CANONICAL_SUMMARY_KEYS: dict[str, list[str]] = {
     "selector": [
         "answer_accuracy",
         "groundedness",
-        "hallucination_rate",
+        "ungrounded_rate",
         "abstention_accuracy",
-        "citation_accuracy",
+        "evidence_available",
         "numeric_unit_accuracy",
         "formula_accuracy",
         "table_cell_accuracy",

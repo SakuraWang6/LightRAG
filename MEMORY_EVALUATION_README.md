@@ -264,9 +264,12 @@ NO_PROXY=127.0.0.1,localhost \
 | Object Hit Rate | 表/图/公式等目标对象是否被检索命中 |
 | Answer Accuracy | 最终答案是否与 oracle 正确答案匹配 |
 | Groundedness | 回答是否能由返回证据支持 |
-| Hallucination Rate | 回答中是否出现 oracle/证据不支持的内容；越低越好 |
+| Ungrounded Rate（原 Hallucination Rate） | 答案错误或证据未进入上下文的回答占比（确定性评分）；不判定真实幻觉内容 |
 | Abstention Accuracy | 文档没有答案时，是否明确且正确地拒答 |
-| Citation Accuracy | 引用是否指向正确来源；当前主要是文件级引用，尚非页/对象级严格 citation |
+| Evidence Available（原 Citation Accuracy） | oracle 证据是否出现在 API references 中；不等价于回答正确引用 |
+| Citation Presence / Correctness | 回答是否出现显式稳定 ID 引用；正确性仅在有 ID 引用时定义 |
+
+指标口径的权威定义见 `memory_eval_tests/README.md` 的“指标定义”一节；本文件保留历史语义说明。
 
 ## 7. 两个当前优先实验
 
@@ -276,7 +279,7 @@ NO_PROXY=127.0.0.1,localhost \
 
 正确做法是先从同一个已完成 KG 索引中导出每道题的检索结果，然后将完全相同的 context 与 prompt 分别发给 `qwen3:8b` 和外部 API LLM。不可重新检索，否则 query keyword 生成变化会让 context 不再固定。该严格 fixed-context runner 是下一项实现工作；在它完成前，重启服务器切换 LLM 只能算近似对照。
 
-记录：`answer_accuracy`、`groundedness`、`hallucination_rate`、`abstention_accuracy`、`citation_accuracy`，并保存每题的 context hash，证明输入一致。
+记录：`answer_accuracy`、`groundedness`、`ungrounded_rate`、`abstention_accuracy`、`evidence_available`，并保存每题的 context hash，证明输入一致。
 
 ### B. KG Top-K / Context Size 消融
 
@@ -284,7 +287,7 @@ NO_PROXY=127.0.0.1,localhost \
 
 ```text
 Evidence Recall@K + Context Precision + Answer Accuracy
-Groundedness + Hallucination Rate + Query latency
+Groundedness + Ungrounded Rate + Query latency
 ```
 
 若 Recall 在较小 K 已达饱和而 Accuracy 随 K 增大下降，说明更多召回结果稀释了关键证据，存在 context dilution；后续优先考虑 reranker、evidence selector 或结构化对象过滤，而不是盲目扩大 context。

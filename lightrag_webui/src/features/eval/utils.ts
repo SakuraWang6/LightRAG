@@ -54,7 +54,7 @@ export function statusLabel(run: {
   failed_checks?: string[]
 }): string {
   if (run.kind === 'offline' && run.status === 'failed') {
-    return run.failed_checks?.length ? '未通过' : '通过'
+    return '未通过'
   }
   return run.status ?? ''
 }
@@ -74,10 +74,10 @@ export const COMPARE_METRIC_ORDER = [
   'summary.answer_accuracy',
   'groundedness',
   'grounded_rate',
-  'hallucination_rate',
+  'ungrounded_rate',
   'hallucinated_rate',
   'abstention_accuracy',
-  'citation_accuracy',
+  'evidence_available',
   'citation_presence',
   'citation_correctness',
   'citation_rate',

@@ -22,6 +22,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from memory_eval_tests.experiments.common.envelope import build_conditions
+from memory_eval_tests.experiments.common.metrics import normalize_metric_key
 
 _OFFLINE_LABELS = {
     "integrity": "完整性校验",
@@ -72,6 +73,7 @@ def _scalar_rows(methods: list[dict[str, Any]]) -> dict[str, Any]:
         }
         for key, value in (method.get("summary") or {}).items():
             if isinstance(value, (int, float, bool, str)) and value is not None:
+                key = normalize_metric_key(key)
                 row[key] = value
                 if key not in {c["key"] for c in columns}:
                     columns.append({"key": key, "label": _humanize(key)})
@@ -108,9 +110,9 @@ def _summary_metrics(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "answer_accuracy",
         "accuracy",
         "groundedness",
-        "hallucination_rate",
+        "ungrounded_rate",
         "abstention_accuracy",
-        "citation_accuracy",
+        "evidence_available",
         "citation_presence",
         "citation_correctness",
         "numeric_unit_accuracy",
@@ -135,8 +137,10 @@ def _summary_metrics(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
     values: dict[str, Any] = {}
     for method in methods:
         for key, value in (method.get("summary") or {}).items():
-            if isinstance(value, (int, float, bool)) and key not in values:
-                values[key] = value
+            if isinstance(value, (int, float, bool)):
+                normalized = normalize_metric_key(key)
+                if normalized not in values:
+                    values[normalized] = value
     metrics = []
     for key in ordered:
         if key in values:

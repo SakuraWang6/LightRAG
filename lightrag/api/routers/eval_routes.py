@@ -108,22 +108,25 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
             raise internal_server_error(exc)
 
     @router.post("/runs/{run_id:path}/analyze", dependencies=[Depends(combined_auth)])
-    async def analyze_run(
+    def analyze_run(
         run_id: str,
         model: str = Query(default="qwen3:8b", description="Ollama model for the analysis"),
         ollama_url: str = Query(default="http://127.0.0.1:11434"),
         force: bool = Query(default=False, description="Regenerate instead of returning the cache"),
     ) -> dict[str, Any]:
-        """Ask the local LLM to produce a concise analysis of one run."""
+        """Ask the local LLM to produce a concise analysis of one run.
+
+        Implemented as a sync endpoint so FastAPI runs it in the threadpool:
+        the long Ollama call no longer blocks the event loop, keeping the
+        WebUI polling responsive while an analysis is in flight.
+        """
         try:
             detail = load_run(root, run_id)
             if detail is None:
                 raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
             run_dir = Path(detail["run_dir"])
             cache_path = run_dir / "analysis.json"
-            if force and cache_path.exists():
-                cache_path.unlink()
-            if cache_path.exists():
+            if cache_path.exists() and not force:
                 return json.loads(cache_path.read_text(encoding="utf-8"))
 
             methods = detail.get("artifacts", [])
@@ -150,7 +153,7 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
                         "answer_accuracy",
                         "accuracy",
                         "groundedness",
-                        "hallucination_rate",
+                        "ungrounded_rate",
                         "abstention_accuracy",
                         "average_recall",
                         "mrr",
@@ -194,10 +197,14 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
                 "model": model,
                 "text": text,
             }
-            cache_path.write_text(
+            # Write atomically so a failed regeneration never destroys the
+            # previous analysis.
+            tmp_path = run_dir / "analysis.json.tmp"
+            tmp_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
+            tmp_path.replace(cache_path)
             return payload
         except HTTPException:
             raise

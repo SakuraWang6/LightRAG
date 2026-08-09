@@ -198,7 +198,7 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "cases": total,
         "answer_accuracy": metric("exact_match"),
         "groundedness": metric("grounded"),
-        "hallucination_rate": metric("hallucinated"),
+        "ungrounded_rate": metric("ungrounded"),
         "abstention_accuracy": _average(rows, "abstention_correct"),
         "numeric_unit_accuracy": _average(rows, "numeric_unit_correct"),
         "formula_accuracy": _average(rows, "formula_correct"),
@@ -237,7 +237,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         selected_k = "≤" + str(item["selected_limit"]) if item["selector"] else str(item["selected_limit"])
         lines.append(
             f"| {item['label']} | {item['candidate_k']} | {selected_k} | {summary['candidate_recall']:.4f} | {summary['selected_recall']:.4f} | "
-            f"{_format(summary['selection_precision'])} | {summary['mean_selected_context_chars']:.0f} | {summary['answer_accuracy']:.4f} | {summary['groundedness']:.4f} | {summary['hallucination_rate']:.4f} |"
+            f"{_format(summary['selection_precision'])} | {summary['mean_selected_context_chars']:.0f} | {summary['answer_accuracy']:.4f} | {summary['groundedness']:.4f} | {summary['ungrounded_rate']:.4f} |"
         )
     lines.extend(["", "## Per-type answer metrics", ""])
     for item in payload["methods"]:

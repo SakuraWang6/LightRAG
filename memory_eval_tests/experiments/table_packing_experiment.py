@@ -142,7 +142,7 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "cases": total,
         "answer_accuracy": rate("exact_match"),
         "groundedness": rate("grounded"),
-        "hallucination_rate": rate("hallucinated"),
+        "ungrounded_rate": rate("ungrounded"),
         "table_cell_accuracy": _average(rows, "table_cell_correct"),
         "numeric_unit_accuracy": _average(rows, "numeric_unit_correct"),
         "mean_selected_context_chars": sum(row["selected_context_chars"] for row in rows) / total if total else 0.0,
@@ -171,7 +171,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         summary = item["summary"]
         lines.append(
             f"| {item['label']} | {summary['answer_accuracy']:.4f} | {summary['groundedness']:.4f} | "
-            f"{summary['hallucination_rate']:.4f} | {_format(summary['table_cell_accuracy'])} | "
+            f"{summary['ungrounded_rate']:.4f} | {_format(summary['table_cell_accuracy'])} | "
             f"{_format(summary['numeric_unit_accuracy'])} | {summary['mean_selected_context_chars']:.0f} | "
             f"{summary['changed_cases']} |"
         )
@@ -261,7 +261,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                         "selected_context": base["selected_context"],
                         "answer": base["answer"],
                         "expected": question.get("answer", ""),
-                        "metrics": {key: base[key] for key in ("exact_match", "grounded", "hallucinated", "table_cell_correct", "numeric_unit_correct") if key in base},
+                        "metrics": {key: base[key] for key in ("exact_match", "grounded", "ungrounded", "table_cell_correct", "numeric_unit_correct") if key in base},
                     }
                 )
                 continue
@@ -276,7 +276,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                         "selected_context": base["selected_context"],
                         "answer": base["answer"],
                         "expected": question.get("answer", ""),
-                        "metrics": {key: base[key] for key in ("exact_match", "grounded", "hallucinated", "table_cell_correct", "numeric_unit_correct") if key in base},
+                        "metrics": {key: base[key] for key in ("exact_match", "grounded", "ungrounded", "table_cell_correct", "numeric_unit_correct") if key in base},
                     }
                 )
                 continue

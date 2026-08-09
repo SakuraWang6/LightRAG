@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from memory_eval_tests.common.dataset_client import DatasetClient
+from memory_eval_tests.common.sampling import sample_evenly
 
 
 def evaluate_answers(
@@ -23,9 +24,7 @@ def evaluate_answers(
     oracle = DatasetClient(dataset_source).oracle()
     facts_by_id = {fact["fact_id"]: fact for fact in oracle.get("facts", [])}
     results = []
-    questions = oracle.get("questions", [])
-    if max_cases is not None and max_cases > 0:
-        questions = questions[:max_cases]
+    questions = sample_evenly(oracle.get("questions", []), max_cases)
     for question in questions:
         payload = {
             "query": question["question"],
@@ -77,9 +76,8 @@ def evaluate_answers(
         "evidence_available": _average(results, "evidence_available"),
         "citation_presence": _average(results, "citation_presence"),
         "citation_correctness": _average(results, "citation_correctness"),
-        "citation_accuracy": sum(r["citation_correct"] for r in results) / total if total else 0.0,
         "groundedness": sum(r["grounded"] for r in results) / total if total else 0.0,
-        "hallucination_rate": sum(r["hallucinated"] for r in results) / total if total else 0.0,
+        "ungrounded_rate": sum(r["ungrounded"] for r in results) / total if total else 0.0,
         "results": results,
     }
 
@@ -126,9 +124,9 @@ def score_answer(
     # supplied to the model.  It deliberately does not conflate availability
     # with an explicit citation in the generated prose.
     grounded = bool(exact and evidence_available)
-    hallucinated = bool(expected_behavior == "abstain" and not abstention_correct)
+    ungrounded = bool(expected_behavior == "abstain" and not abstention_correct)
     if expected_behavior != "abstain":
-        hallucinated = not grounded
+        ungrounded = not grounded
 
     return {
         "exact_match": bool(exact),
@@ -139,12 +137,8 @@ def score_answer(
         "evidence_available": bool(evidence_available),
         "citation_presence": bool(citation_presence),
         "citation_correctness": citation_correctness,
-        # Backward-compatible alias used by older runners.  Historically this
-        # field measured evidence availability in the supplied references, not
-        # whether the answer made a correct citation.
-        "citation_correct": bool(evidence_available),
         "grounded": grounded,
-        "hallucinated": hallucinated,
+        "ungrounded": ungrounded,
     }
 
 

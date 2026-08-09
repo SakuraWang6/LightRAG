@@ -71,11 +71,13 @@ export default function EvalConsole() {
   }, [loadRuns])
 
   const loadDetail = useCallback(
-    async (id: string) => {
-      const cached = detailCache.get(id)
-      if (cached) {
-        setDetail(cached)
-        return
+    async (id: string, force = false) => {
+      if (!force) {
+        const cached = detailCache.get(id)
+        if (cached) {
+          setDetail(cached)
+          return
+        }
       }
       setDetailLoading(true)
       try {
@@ -144,7 +146,7 @@ export default function EvalConsole() {
     if (!hasActiveRuns) return
     const timer = window.setInterval(() => {
       void loadRuns()
-      if (selectedId) void loadDetail(selectedId)
+      if (selectedId) void loadDetail(selectedId, true)
     }, 5000)
     return () => window.clearInterval(timer)
   }, [hasActiveRuns, loadRuns, loadDetail, selectedId])

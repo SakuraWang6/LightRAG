@@ -28,10 +28,10 @@ const HEADLINE_ORDER = [
   'passed',
   'answer_accuracy',
   'groundedness',
-  'hallucination_rate',
+  'ungrounded_rate',
   'average_recall',
   'mrr',
-  'citation_accuracy',
+  'evidence_available',
   'retrieval_recall'
 ]
 

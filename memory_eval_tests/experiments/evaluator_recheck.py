@@ -63,7 +63,9 @@ def recheck_one(
             references_blob="",
             # Saved reports store this legacy field as reference/context evidence
             # availability.  The raw per-query reference payload was not kept.
-            evidence_available_override=old_row.get("citation_correct"),
+            evidence_available_override=old_row.get(
+                "evidence_available", old_row.get("citation_correct")
+            ),
         )
         old_exact = bool(old_row.get("exact_match"))
         rows.append(

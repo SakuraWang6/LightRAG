@@ -217,8 +217,8 @@ def _report_from_rows(rows: list[dict[str, Any]], *, top_k: int) -> dict[str, An
         "retrieval_recall": sum(row["retrieval_recall"] for row in rows) / total if total else 0.0,
         "answer_accuracy": sum(row["exact_match"] for row in rows) / total if total else 0.0,
         "groundedness": sum(row["grounded"] for row in rows) / total if total else 0.0,
-        "hallucination_rate": sum(row["hallucinated"] for row in rows) / total if total else 0.0,
-        "citation_accuracy": sum(row["citation_correct"] for row in rows) / total if total else 0.0,
+        "ungrounded_rate": sum(row["ungrounded"] for row in rows) / total if total else 0.0,
+        "evidence_available": sum(row["evidence_available"] for row in rows) / total if total else 0.0,
         "abstention_accuracy": (
             sum(bool(row["abstention_correct"]) for row in rows if row["abstention_correct"] is not None)
             / abstention_total

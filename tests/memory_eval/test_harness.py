@@ -26,8 +26,43 @@ def test_metric_alias_normalization() -> None:
     assert "accuracy" not in summary
     assert "abstention_correct" not in summary
     # Canonical padding: missing keys are null, so all selector runs share columns.
-    assert summary["hallucination_rate"] is None
+    assert summary["ungrounded_rate"] is None
     assert summary["candidate_recall"] is None
+
+
+def test_legacy_metric_aliases_map_to_canonical_names() -> None:
+    from memory_eval_tests.experiments.common.metrics import normalize_metric_key
+
+    summary = normalize_summary(
+        {
+            "hallucination_rate": 0.25,
+            "citation_accuracy": 0.9,
+            "answer_accuracy": 0.75,
+        },
+        "answer",
+    )
+    assert summary["ungrounded_rate"] == 0.25
+    assert summary["evidence_available"] == 0.9
+    assert "hallucination_rate" not in summary
+    assert "citation_accuracy" not in summary
+    # Direct key normalization mirrors what the console applies at read time.
+    assert normalize_metric_key("hallucination_rate") == "ungrounded_rate"
+    assert normalize_metric_key("citation_accuracy") == "evidence_available"
+    assert normalize_metric_key("ungrounded_rate") == "ungrounded_rate"
+
+
+def test_sample_evenly_is_deterministic_and_spread() -> None:
+    from memory_eval_tests.common.sampling import sample_evenly
+
+    items = list(range(36))
+    sampled = sample_evenly(items, 4)
+    assert sampled == sample_evenly(items, 4)
+    assert sampled == [0, 12, 23, 35]
+    # No cap returns everything; a cap at least as large as the input too.
+    assert sample_evenly(items, None) == items
+    assert sample_evenly(items, 0) == items
+    assert sample_evenly(items, 36) == items
+    assert sample_evenly(items, 1) == [0]
 
 
 def test_context_preflight_overflow() -> None:

@@ -38,9 +38,9 @@ def render_markdown(reports: list[dict[str, Any]]) -> str:
             "formula_accuracy",
             "table_cell_accuracy",
             "abstention_accuracy",
-            "citation_accuracy",
+            "evidence_available",
             "groundedness",
-            "hallucination_rate",
+            "ungrounded_rate",
             "blocks",
             "chunks",
             "objects",
@@ -98,9 +98,9 @@ def summarize_reports(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "formula_accuracy",
         "table_cell_accuracy",
         "abstention_accuracy",
-        "citation_accuracy",
+        "evidence_available",
         "groundedness",
-        "hallucination_rate",
+        "ungrounded_rate",
         "blocks",
         "chunks",
         "objects",
@@ -139,7 +139,9 @@ def summarize_reports(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _report_display_values(report: dict[str, Any]) -> dict[str, Any]:
-    values = dict(report)
+    from memory_eval_tests.experiments.common.metrics import normalize_metric_key
+
+    values = {normalize_metric_key(key): value for key, value in report.items()}
     complex_layout = report.get("complex_layout_text_preservation")
     if isinstance(complex_layout, dict):
         values["complex_layout_hit_rate"] = complex_layout.get("hit_rate")

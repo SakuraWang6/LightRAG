@@ -66,9 +66,9 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "cases": total,
         "answer_accuracy": rate("exact_match"),
         "groundedness": rate("grounded"),
-        "hallucination_rate": rate("hallucinated"),
+        "ungrounded_rate": rate("ungrounded"),
         "abstention_accuracy": average("abstention_correct"),
-        "citation_accuracy": average("citation_correct"),
+        "evidence_available": average("evidence_available"),
         "retrieval_recall": average("retrieval_recall"),
         "mean_context_chars": average("context_chars"),
         "mean_estimated_tokens": average("estimated_tokens"),
@@ -93,7 +93,7 @@ def _render_report(description: str, methods: list[dict[str, Any]]) -> str:
         fmt = lambda v: "n/a" if v is None else f"{v:.4f}"
         lines.append(
             f"| {p['top_k']} | {p['num_ctx']} | {fmt(s.get('retrieval_recall'))} | {fmt(s.get('answer_accuracy'))} | "
-            f"{fmt(s.get('groundedness'))} | {fmt(s.get('hallucination_rate'))} | "
+            f"{fmt(s.get('groundedness'))} | {fmt(s.get('ungrounded_rate'))} | "
             f"{s.get('mean_context_chars') or 0:.0f} | {s.get('mean_estimated_tokens') or 0:.0f} | "
             f"{s.get('overflow_cases') or 0} |"
         )

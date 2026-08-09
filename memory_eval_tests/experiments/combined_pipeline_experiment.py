@@ -97,7 +97,7 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "cases": total,
         "answer_accuracy": rate("exact_match"),
         "groundedness": rate("grounded"),
-        "hallucination_rate": rate("hallucinated"),
+        "ungrounded_rate": rate("ungrounded"),
         "table_cell_accuracy": _average(rows, "table_cell_correct"),
         "mean_selected_context_chars": sum(row["selected_context_chars"] for row in rows) / total if total else 0.0,
         "changed_cases": sum(bool(row.get("changed")) for row in rows),
@@ -123,7 +123,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         s = item["summary"]
         lines.append(
             f"| {item['label']} | {s['answer_accuracy']:.4f} | {s['groundedness']:.4f} | "
-            f"{s['hallucination_rate']:.4f} | {_format(s['table_cell_accuracy'])} | "
+            f"{s['ungrounded_rate']:.4f} | {_format(s['table_cell_accuracy'])} | "
             f"{s['mean_selected_context_chars']:.0f} | {s['changed_cases']} |"
         )
     lines.extend(["", "## Per-type accuracy", ""])
@@ -217,7 +217,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                         "selected_context_chars": len(base["selected_context"]),
                         "answer": base["answer"],
                         "expected": question.get("answer", ""),
-                        "metrics": {key: base[key] for key in ("exact_match", "grounded", "hallucinated", "table_cell_correct") if key in base},
+                        "metrics": {key: base[key] for key in ("exact_match", "grounded", "ungrounded", "table_cell_correct") if key in base},
                     }
                 )
                 continue
@@ -248,7 +248,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                         "chunks": chunks,
                         "answer": base["answer"],
                         "expected": question.get("answer", ""),
-                        "metrics": {key: base[key] for key in ("exact_match", "grounded", "hallucinated", "table_cell_correct") if key in base},
+                        "metrics": {key: base[key] for key in ("exact_match", "grounded", "ungrounded", "table_cell_correct") if key in base},
                     }
                 )
                 continue

@@ -80,7 +80,7 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         subset = [row for row in rows if row["question_group"] == name]
         if subset:
             by_type[name] = {"cases": len(subset), "accuracy": sum(bool(r["metrics"]["exact_match"]) for r in subset) / len(subset)}
-    return {"cases": total, "accuracy": rate("exact_match"), "groundedness": rate("grounded"), "hallucination_rate": rate("hallucinated"), "by_question_type": by_type}
+    return {"cases": total, "accuracy": rate("exact_match"), "groundedness": rate("grounded"), "ungrounded_rate": rate("ungrounded"), "by_question_type": by_type}
 
 
 async def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -181,7 +181,7 @@ def _spec_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "cases": total,
         "answer_accuracy": rate("exact_match"),
         "groundedness": rate("grounded"),
-        "hallucination_rate": rate("hallucinated"),
+        "ungrounded_rate": rate("ungrounded"),
         "abstention_accuracy": average("abstention_correct"),
         "numeric_unit_accuracy": average("numeric_unit_correct"),
         "formula_accuracy": average("formula_correct"),
@@ -204,7 +204,7 @@ def _render_spec_report(methods: list[dict[str, Any]]) -> str:
         fmt = lambda v: "n/a" if v is None else f"{v:.4f}"
         lines.append(
             f"| {item['label']} | {fmt(s.get('answer_accuracy'))} | {fmt(s.get('groundedness'))} | "
-            f"{fmt(s.get('hallucination_rate'))} | {fmt(s.get('table_cell_accuracy'))} |"
+            f"{fmt(s.get('ungrounded_rate'))} | {fmt(s.get('table_cell_accuracy'))} |"
         )
     lines.extend(
         [

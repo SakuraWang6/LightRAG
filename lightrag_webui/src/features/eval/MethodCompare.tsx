@@ -9,8 +9,8 @@ import { formatMetricValue } from '@/features/eval/utils'
 const CHART_METRICS = [
   'answer_accuracy',
   'groundedness',
-  'hallucination_rate',
-  'citation_accuracy',
+  'ungrounded_rate',
+  'evidence_available',
   'average_recall',
   'candidate_recall',
   'selected_recall',

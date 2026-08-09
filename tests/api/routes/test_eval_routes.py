@@ -161,6 +161,9 @@ def test_scan_and_load_envelope(runs_tree: Path) -> None:
     assert detail["id"] == "context-selection-v1"
     method_artifact = next(a for a in detail["artifacts"] if a["kind"] == "experiment")
     assert method_artifact["table"]["rows"][0]["answer_accuracy"] == pytest.approx(0.8333)
+    # Legacy key ``hallucination_rate`` is normalized to ``ungrounded_rate``
+    # when the console reads the envelope.
+    assert method_artifact["table"]["rows"][0]["ungrounded_rate"] == pytest.approx(0.25)
     assert method_artifact["meta"]["cases"]["rows"][0]["question_id"] == "Q-FACT-00001"
     report = next(a for a in detail["artifacts"] if a["kind"] == "markdown_report")
     assert report["toc"][0]["title"] == "上下文选择消融"

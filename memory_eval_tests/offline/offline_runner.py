@@ -218,16 +218,25 @@ def _write_envelope(args, summary: dict) -> None:
             payload = json.loads(audit_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        method_summary = {
+            key: value
+            for key, value in payload.items()
+            if isinstance(value, (int, float, bool))
+        }
+        if name == "retrieval_sidecar":
+            # The lexical retrieval report has no ``passed`` field of its own;
+            # mirror the top-level pass rule so the console can attribute a
+            # failed run to the retrieval check.
+            method_summary["passed"] = (
+                payload.get("cases", 0) > 0
+                and payload.get("average_recall", 0.0) > 0.0
+            )
         methods.append(
             {
                 "method": name,
                 "label": name,
                 "params": {},
-                "summary": {
-                    key: value
-                    for key, value in payload.items()
-                    if isinstance(value, (int, float, bool))
-                },
+                "summary": method_summary,
                 "results": [],
             }
         )

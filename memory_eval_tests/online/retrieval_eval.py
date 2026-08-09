@@ -5,22 +5,13 @@ import json
 import math
 import re
 import urllib.request
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from memory_data_service.schemas import OraclePayload
 from memory_eval_tests.common.dataset_client import DatasetClient
+from memory_eval_tests.common.sampling import sample_evenly
 from memory_eval_tests.offline.object_traceability import _normalize_evidence
-
-
-@dataclass
-class RetrievalCaseResult:
-    question_id: str
-    recall_at_k: float
-    reciprocal_rank: float
-    expected: list[str]
-    ranked_hits: list[str]
 
 
 def evaluate_api(
@@ -32,43 +23,78 @@ def evaluate_api(
     max_cases: int | None = None,
 ) -> dict[str, Any]:
     oracle = DatasetClient(dataset_source).oracle()
-    results: list[RetrievalCaseResult] = []
     questions = [
         question
         for question in oracle.get("questions", [])
         if question.get("expected_behavior") != "abstain"
     ]
-    for question in _limit_cases(questions, max_cases):
+    results: list[dict[str, Any]] = []
+    for question in sample_evenly(questions, max_cases):
         payload = {
             "query": question["question"],
             "mode": mode,
             "top_k": top_k,
             "chunk_top_k": top_k,
+            # The references carry ranked chunk content only when requested;
+            # MRR/Recall are computed from those ranks, not from the whole
+            # serialized response.
+            "include_chunk_content": True,
         }
         response = _post_json(f"{rag_api_url.rstrip('/')}/query/data", payload)
-        search_space = json.dumps(response, ensure_ascii=False)
         expected_facts = [
             fact
             for fact in oracle.get("facts", [])
             if fact["fact_id"] in question.get("evidence_fact_ids", [])
         ]
-        ranked_hits = [
-            fact["fact_id"]
-            for fact in expected_facts
-            if _api_response_contains_fact(search_space, fact)
-        ]
-        recall = len(ranked_hits) / len(expected_facts) if expected_facts else 0.0
-        rr = 1.0 if ranked_hits else 0.0
+        references = _ranked_references(response)
+        ranked_chunks: list[tuple[int, int, str]] = []
+        rank = 0
+        for ref_index, ref in enumerate(references):
+            for chunk in ref.get("content") or []:
+                rank += 1
+                ranked_chunks.append((rank, ref_index, chunk))
+        hits_by_fact: dict[str, int] = {}
+        hit_context_indexes: set[int] = set()
+        for rank, ref_index, chunk in ranked_chunks:
+            context_hit = False
+            for fact in expected_facts:
+                if _content_contains_fact(chunk, fact):
+                    hits_by_fact.setdefault(fact["fact_id"], rank)
+                    context_hit = True
+            if context_hit:
+                hit_context_indexes.add(ref_index)
+
+        expected_count = len(expected_facts)
+        recall = len(hits_by_fact) / expected_count if expected_count else 0.0
+        first_rank = min(hits_by_fact.values()) if hits_by_fact else 0
         results.append(
-            RetrievalCaseResult(
-                question_id=question["id"],
-                recall_at_k=recall,
-                reciprocal_rank=rr,
-                expected=[fact["fact_id"] for fact in expected_facts],
-                ranked_hits=ranked_hits,
-            )
+            {
+                "question_id": question["id"],
+                "question_type": question.get("question_type", ""),
+                "recall_at_k": recall,
+                "reciprocal_rank": 1 / first_rank if first_rank else 0.0,
+                "context_precision": (
+                    len(hit_context_indexes) / len(references) if references else 0.0
+                ),
+                # The API references expose file paths and chunk text only, not
+                # the parsed object kind, so object-level hits are unavailable.
+                "object_hit_rate": None,
+                "expected_fact_ids": [fact["fact_id"] for fact in expected_facts],
+                "hit_fact_ids": [
+                    fact_id
+                    for fact_id, _ in sorted(hits_by_fact.items(), key=lambda item: item[1])
+                ],
+                "top_contexts": [
+                    {
+                        "rank": ref_index + 1,
+                        "file_path": ref.get("file_path", ""),
+                        "chunk_count": len(ref.get("content") or []),
+                    }
+                    for ref_index, ref in enumerate(references)
+                ],
+            }
         )
-    report = summarize(results, mode=mode, top_k=top_k)
+    report = _summarize_dict_results(results, mode=mode, top_k=top_k, backend="api")
     report["max_cases"] = max_cases
     return report
 
@@ -91,7 +117,7 @@ def evaluate_sidecar(
         for question in oracle.questions
         if question.expected_behavior != "abstain"
     ]
-    for question in _limit_cases(questions, max_cases):
+    for question in sample_evenly(questions, max_cases):
         ranked = _rank_contexts(question.question, contexts)
         top_contexts = ranked[:top_k]
         expected_facts = [
@@ -153,20 +179,6 @@ def evaluate_sidecar(
     return report
 
 
-def summarize(results: list[RetrievalCaseResult], *, mode: str, top_k: int) -> dict[str, Any]:
-    if not results:
-        return {"mode": mode, "top_k": top_k, "cases": 0, "average_recall": 0.0, "mrr": 0.0}
-    return {
-        "mode": mode,
-        "top_k": top_k,
-        "cases": len(results),
-        "average_recall": sum(r.recall_at_k for r in results) / len(results),
-        "mrr": sum(r.reciprocal_rank for r in results) / len(results),
-        "full_recall_cases": sum(r.recall_at_k == 1.0 for r in results),
-        "results": [r.__dict__ for r in results],
-    }
-
-
 def _summarize_dict_results(
     results: list[dict[str, Any]],
     *,
@@ -183,9 +195,14 @@ def _summarize_dict_results(
             "average_recall": 0.0,
             "mrr": 0.0,
             "context_precision": 0.0,
-            "object_hit_rate": 0.0,
+            "object_hit_rate": None,
             "results": [],
         }
+    object_rates = [
+        r["object_hit_rate"]
+        for r in results
+        if r.get("object_hit_rate") is not None
+    ]
     return {
         "backend": backend,
         "mode": mode,
@@ -194,7 +211,7 @@ def _summarize_dict_results(
         "average_recall": sum(r["recall_at_k"] for r in results) / len(results),
         "mrr": sum(r["reciprocal_rank"] for r in results) / len(results),
         "context_precision": sum(r["context_precision"] for r in results) / len(results),
-        "object_hit_rate": sum(r["object_hit_rate"] for r in results) / len(results),
+        "object_hit_rate": sum(object_rates) / len(object_rates) if object_rates else None,
         "full_recall_cases": sum(r["recall_at_k"] == 1.0 for r in results),
         "results": results,
     }
@@ -274,14 +291,31 @@ def _terms(text: str) -> set[str]:
     return set(re.findall(r"[A-Za-z0-9_]+", text.lower()))
 
 
-def _limit_cases(cases: list[Any], max_cases: int | None) -> list[Any]:
-    if max_cases is None or max_cases <= 0 or len(cases) <= max_cases:
-        return cases
-    if max_cases == 1:
-        return [cases[0]]
-    step = (len(cases) - 1) / (max_cases - 1)
-    indexes = sorted({round(index * step) for index in range(max_cases)})
-    return [cases[index] for index in indexes]
+def _ranked_references(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract the ranked reference list from a ``/query/data`` response.
+
+    The server returns references in retrieval order; each item lists the chunk
+    contents from one source file when ``include_chunk_content`` is requested.
+    Rank semantics require that content, so a response without it fails loudly
+    instead of silently degrading to whole-payload substring matching.
+    """
+    data = response.get("data") if isinstance(response.get("data"), dict) else {}
+    references = data.get("references")
+    if references is None:
+        references = response.get("references")
+    if not isinstance(references, list):
+        raise ValueError(
+            "/query/data response contains no ranked references list; "
+            "cannot compute API retrieval metrics."
+        )
+    for index, ref in enumerate(references):
+        if not isinstance(ref, dict) or not isinstance(ref.get("content"), list):
+            raise ValueError(
+                "Reference item at index "
+                f"{index} has no chunk content array; set "
+                "include_chunk_content=true on the /query/data request."
+            )
+    return references
 
 
 def _context_contains_fact(context: dict[str, Any], fact: Any) -> bool:
@@ -296,6 +330,17 @@ def _context_contains_fact(context: dict[str, Any], fact: Any) -> bool:
     )
 
 
+def _content_contains_fact(content: str, fact: dict[str, Any]) -> bool:
+    normalized_content = _normalize_evidence(content)
+    return (
+        fact.get("fact_id", "") in content
+        or fact.get("answer", "") in content
+        or fact.get("expected_text", "") in content
+        or _normalize_evidence(str(fact.get("answer", ""))) in normalized_content
+        or _normalize_evidence(str(fact.get("expected_text", ""))) in normalized_content
+    )
+
+
 def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     request = urllib.request.Request(
         url,
@@ -305,23 +350,6 @@ def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     )
     with urllib.request.urlopen(request, timeout=180) as response:
         return json.loads(response.read().decode("utf-8"))
-
-
-def _api_response_contains_fact(search_space: str, fact: dict[str, Any]) -> bool:
-    normalized = _normalize_evidence(search_space)
-    candidates = (
-        fact.get("fact_id", ""),
-        fact.get("answer", ""),
-        fact.get("expected_text", ""),
-    )
-    return any(
-        candidate
-        and (
-            candidate in search_space
-            or _normalize_evidence(str(candidate)) in normalized
-        )
-        for candidate in candidates
-    )
 
 
 def main(argv: list[str] | None = None) -> int:

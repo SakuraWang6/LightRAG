@@ -108,7 +108,7 @@ def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "cases": total,
         "answer_accuracy": rate("exact_match"),
         "groundedness": rate("grounded"),
-        "hallucination_rate": rate("hallucinated"),
+        "ungrounded_rate": rate("ungrounded"),
         "candidate_recall": sum(row["candidate_recall"] for row in rows) / total if total else 0.0,
         "role_coverage": sum(row["role_coverage"] for row in rows) / total if total else 0.0,
         "full_role_coverage_rate": sum(row["role_coverage"] >= 1.0 for row in rows) / total if total else 0.0,
@@ -137,7 +137,7 @@ def _render_report(payload: dict[str, Any]) -> str:
             f"| {item['label']} | {summary['candidate_recall']:.4f} | {summary['role_coverage']:.4f} | "
             f"{summary['full_role_coverage_rate']:.4f} | {summary['selection_precision']:.4f} | "
             f"{summary['answer_accuracy']:.4f} | {summary['groundedness']:.4f} | "
-            f"{summary['hallucination_rate']:.4f} | {multi.get('answer_accuracy', float('nan')):.4f} | "
+            f"{summary['ungrounded_rate']:.4f} | {multi.get('answer_accuracy', float('nan')):.4f} | "
             f"{summary['mean_selected_context_chars']:.0f} |"
         )
     lines.extend(["", "## MULTIHOP per-question detail", ""])
