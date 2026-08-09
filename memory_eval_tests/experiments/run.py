@@ -173,6 +173,12 @@ def main() -> None:
         action="store_true",
         help="Touch output_dir/.heartbeat every 30s so a supervisor can detect liveness.",
     )
+    parser.add_argument(
+        "--restart-mode",
+        choices=("none", "resume", "fresh"),
+        default="none",
+        help="How the last supervisor restart behaved (display metadata only).",
+    )
     parser.add_argument("--storage-dir", type=Path, default=None)
     parser.add_argument("--engine", default=None)
     parser.add_argument("--max-cases", type=int, default=0)
@@ -239,6 +245,9 @@ def main() -> None:
         run_id=run_id,
         extra=extra,
         restarts=args.restart_count,
+        last_restart_resume=(
+            None if args.restart_mode == "none" else args.restart_mode == "resume"
+        ),
         started_at=args.original_started_at
         or datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )

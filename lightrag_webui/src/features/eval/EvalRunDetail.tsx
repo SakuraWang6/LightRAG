@@ -65,6 +65,11 @@ function RunHeader({ run }: { run: EvalRunDetail }) {
         {(run.restarts ?? 0) > 0 ? (
           <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
             {t('eval.restarts', { count: run.restarts ?? 0 })}
+            {run.last_restart_resume != null
+              ? run.last_restart_resume
+                ? t('eval.restartResume')
+                : t('eval.restartFresh')
+              : ''}
           </Badge>
         ) : null}
         {run.status ? <Badge variant="outline" className={statusBadgeClass(run.status)}>{statusLabel(run)}</Badge> : null}

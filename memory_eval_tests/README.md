@@ -204,8 +204,15 @@ conda run -n lightrag-memory-eval python -m memory_eval_tests.experiments.superv
   SIGKILL，避免孙进程变孤儿继续写 output 目录。
 - supervisor 事件与子进程输出统一写入 `run.log`；每次重启会把
   `progress.json.message` 置为“第 N 次重启（续跑/重试）”作为瞬时提示，
-  envelope 的 `restarts` 字段与 run.log 事件是权威记录。
+  envelope 的 `restarts` / `last_restart_resume` 字段与 run.log 事件是权威记录
+  （console 徽标显示重启次数与最后一次是续跑还是从头重试）。
 - `output_dir/.supervise.lock` 保证同一 output-dir 只允许一个看护进程；重复启动
   直接报错退出。
+- 默认会剥离 `http(s)_proxy` 等代理环境变量（避免本地 Ollama 被代理干扰）；
+  包装走外部 API 的实验（如 `frozen_prompt_llm_eval`）且网络需要代理时，加
+  `--keep-proxy` 保留代理变量（本地地址仍走 `NO_PROXY`）。
+- `run.py` 单独直跑（不经 supervise）收到 SIGTERM 时只做优雅收尾（写
+  progress、中断 runner 走 finally），**不会**清理它 spawn 的子进程；需要整棵
+  进程树清理时请通过 supervise 接收信号（`start_new_session` + `killpg`）。
 - launchctl 示例：`KeepAlive` 配合 `SuccessfulExit: false`，进程退出即由系统拉起，
   supervisor 启动时会继承旧 `run.json` 的 `started_at`/`restarts`。

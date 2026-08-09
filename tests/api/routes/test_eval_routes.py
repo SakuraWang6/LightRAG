@@ -424,6 +424,7 @@ def test_run_record_surfaces_legacy_and_timing(runs_tree: Path) -> None:
             "started_at": "2026-08-09T00:00:00+00:00",
             "finished_at": "2026-08-09T00:05:00+00:00",
             "restarts": 2,
+            "last_restart_resume": True,
             "status": "complete",
             "legacy": True,
             "experiment": {"id": "legacy_online", "label": "Legacy", "description": ""},
@@ -438,6 +439,7 @@ def test_run_record_surfaces_legacy_and_timing(runs_tree: Path) -> None:
     assert detail is not None
     assert detail["legacy"] is True
     assert detail["restarts"] == 2
+    assert detail["last_restart_resume"] is True
     assert detail["duration_seconds"] == pytest.approx(300.0)
 
 

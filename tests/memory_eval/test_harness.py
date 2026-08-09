@@ -158,12 +158,14 @@ def test_envelope_records_started_and_finished(tmp_path: Path) -> None:
         run_id="r",
         started_at=started,
         restarts=2,
+        last_restart_resume=True,
     )
     write_envelope(tmp_path / "run", context=context, status="complete", methods=[])
     envelope = json.loads((tmp_path / "run" / "run.json").read_text(encoding="utf-8"))
     assert envelope["started_at"] == started
     assert envelope["finished_at"]
     assert envelope["restarts"] == 2
+    assert envelope["last_restart_resume"] is True
 
     path = write_simple_envelope(
         tmp_path / "simple",

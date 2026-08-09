@@ -74,6 +74,7 @@ export type EvalRun = {
   kind: EvalRunKind
   legacy?: boolean
   restarts?: number
+  last_restart_resume?: boolean | null
   label: string
   dataset?: string | null
   updated_at?: string | null

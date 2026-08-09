@@ -90,6 +90,7 @@ class RunContext:
     run_id: str
     extra: dict[str, Any] = field(default_factory=dict)
     restarts: int = 0
+    last_restart_resume: bool | None = None
     started_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
     )
@@ -251,6 +252,8 @@ def write_envelope(
     }
     if status in {"complete", "failed"}:
         envelope["finished_at"] = now
+    if context.last_restart_resume is not None:
+        envelope["last_restart_resume"] = context.last_restart_resume
     if extra:
         envelope.update(extra)
     path = output_dir / "run.json"

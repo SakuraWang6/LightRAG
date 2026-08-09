@@ -44,6 +44,7 @@ def _args(**overrides) -> argparse.Namespace:
         supervision="auto",
         stale_minutes=60,
         poll_seconds=30,
+        keep_proxy=False,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -79,6 +80,41 @@ def test_build_command_forwards_new_args() -> None:
     assert "--heartbeat" not in plain
     assert "--restart-count" not in plain
     assert "--original-started-at" not in plain
+
+
+def test_build_command_forwards_restart_mode() -> None:
+    cmd = supervise._build_command(
+        _args(),
+        heartbeat=False,
+        restart_count=1,
+        original_started_at=None,
+        restart_mode="resume",
+    )
+    assert cmd[cmd.index("--restart-mode") + 1] == "resume"
+
+
+def test_activity_mtime_takes_max_of_heartbeat_and_log(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    assert supervise._activity_mtime(run_dir) is None
+    heartbeat = run_dir / ".heartbeat"
+    log = run_dir / "run.log"
+    heartbeat.write_text("a", encoding="utf-8")
+    log.write_text("b" * 100, encoding="utf-8")
+    # Force the heartbeat to be older than the log.
+    old = heartbeat.stat().st_mtime - 10
+    os.utime(heartbeat, (old, old))
+    assert supervise._activity_mtime(run_dir) == pytest.approx(log.stat().st_mtime)
+
+
+def test_child_env_keeps_proxy_when_requested(monkeypatch) -> None:
+    monkeypatch.setenv("http_proxy", "http://proxy.test:3128")
+    monkeypatch.setenv("https_proxy", "http://proxy.test:3128")
+    stripped = supervise._child_env(_args())
+    assert "http_proxy" not in stripped
+    kept = supervise._child_env(_args(keep_proxy=True))
+    assert kept["http_proxy"] == "http://proxy.test:3128"
+    assert kept["NO_PROXY"] == "127.0.0.1,localhost"
 
 
 def test_stale_and_supervision_helpers() -> None:
@@ -216,6 +252,7 @@ def test_restart_inherits_state_and_counts(monkeypatch, tmp_path: Path) -> None:
     assert (
         second[second.index("--original-started-at") + 1] == "2026-08-09T00:00:00+00:00"
     )
+    assert second[second.index("--restart-mode") + 1] == "resume"
     log = (output_dir / "run.log").read_text(encoding="utf-8")
     assert "resume from partial.json" in log
     progress = json.loads((output_dir / "progress.json").read_text(encoding="utf-8"))

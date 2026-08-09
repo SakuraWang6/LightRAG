@@ -70,13 +70,19 @@ def _log(output_dir: Path, message: str) -> None:
 
 
 def _activity_mtime(output_dir: Path) -> float | None:
-    """Liveness signal: ``.heartbeat`` first, ``run.log`` growth as fallback."""
+    """Liveness signal: max of ``.heartbeat`` and ``run.log`` mtimes.
+
+    ``.heartbeat`` is the primary interpreter-alive signal; ``run.log`` growth
+    is a real auxiliary signal (both are considered, so a child that emits
+    output without touching the heartbeat still counts as alive).
+    """
+    mtimes: list[float] = []
     for name in (".heartbeat", "run.log"):
         try:
-            return (output_dir / name).stat().st_mtime
+            mtimes.append((output_dir / name).stat().st_mtime)
         except OSError:
             continue
-    return None
+    return max(mtimes) if mtimes else None
 
 
 def _stale(last_activity: float | None, now: float, stale_seconds: int) -> bool:
@@ -111,6 +117,7 @@ def _build_command(
     heartbeat: bool,
     restart_count: int,
     original_started_at: str | None,
+    restart_mode: str = "none",
 ) -> list[str]:
     cmd = [
         sys.executable,
@@ -158,6 +165,9 @@ def _build_command(
     if original_started_at:
         cmd.append("--original-started-at")
         cmd.append(original_started_at)
+    if restart_mode != "none":
+        cmd.append("--restart-mode")
+        cmd.append(restart_mode)
     if args.skip_kg:
         cmd.append("--skip-kg")
     for extra in args.extra:
@@ -167,6 +177,10 @@ def _build_command(
 
 def _child_env(args: argparse.Namespace) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in _PROXY_KEYS}
+    if getattr(args, "keep_proxy", False):
+        for key in _PROXY_KEYS:
+            if key in os.environ:
+                env[key] = os.environ[key]
     env["NO_PROXY"] = "127.0.0.1,localhost"
     env["no_proxy"] = "127.0.0.1,localhost"
     if args.storage_dir is not None:
@@ -267,6 +281,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Bearer access token for the LightRAG API.",
     )
     parser.add_argument("--runs-root", type=Path, default=None)
+    parser.add_argument(
+        "--keep-proxy",
+        action="store_true",
+        help="Keep http(s)/all proxy env vars for the child (needed by "
+        "experiments calling external APIs, e.g. frozen_prompt_llm_eval).",
+    )
     parser.add_argument("--storage-dir", type=Path, default=None)
     parser.add_argument("--engine", default=None)
     parser.add_argument("--max-cases", type=int, default=0)
@@ -313,6 +333,11 @@ def main(argv: list[str] | None = None) -> int:
         heartbeat=forward_heartbeat,
         restart_count=restart_count,
         original_started_at=original_started_at,
+        restart_mode="resume"
+        if spec.supports_resume
+        else "fresh"
+        if restart_count > 0
+        else "none",
     )
     env = _child_env(args)
     attempts = 0
@@ -379,6 +404,7 @@ def main(argv: list[str] | None = None) -> int:
             heartbeat=forward_heartbeat,
             restart_count=restart_count,
             original_started_at=original_started_at,
+            restart_mode="resume" if spec.supports_resume else "fresh",
         )
         _log(output_dir, "restarting in 10s")
         time.sleep(10)

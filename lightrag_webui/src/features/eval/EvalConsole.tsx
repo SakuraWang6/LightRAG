@@ -326,6 +326,11 @@ export default function EvalConsole() {
                           {(run.restarts ?? 0) > 0 ? (
                             <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
                               {t('eval.restarts', { count: run.restarts ?? 0 })}
+                              {run.last_restart_resume != null
+                                ? run.last_restart_resume
+                                  ? t('eval.restartResume')
+                                  : t('eval.restartFresh')
+                                : ''}
                             </Badge>
                           ) : null}
                         </div>

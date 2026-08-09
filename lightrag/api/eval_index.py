@@ -319,6 +319,7 @@ def _run_record(
         "kind": kind,
         "legacy": bool(envelope.get("legacy", False)),
         "restarts": int(envelope.get("restarts") or 0),
+        "last_restart_resume": envelope.get("last_restart_resume"),
         "label": experiment.get("label") or run_dir.name,
         "description": experiment.get("description") or "",
         "dataset": dataset or dataset_meta.get("dataset"),
