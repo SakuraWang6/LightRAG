@@ -48,6 +48,17 @@ export function statusBadgeClass(status?: string | null): string {
   return 'border-zinc-300 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'
 }
 
+export function statusLabel(run: {
+  kind?: string
+  status?: string | null
+  failed_checks?: string[]
+}): string {
+  if (run.kind === 'offline' && run.status === 'failed') {
+    return run.failed_checks?.length ? '未通过' : '通过'
+  }
+  return run.status ?? ''
+}
+
 export function formatDate(iso?: string | null): string {
   if (!iso) return '—'
   const date = new Date(iso)

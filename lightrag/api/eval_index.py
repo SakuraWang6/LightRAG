@@ -23,6 +23,17 @@ if str(_REPO_ROOT) not in sys.path:
 
 from memory_eval_tests.experiments.common.envelope import build_conditions
 
+_OFFLINE_LABELS = {
+    "integrity": "完整性校验",
+    "sidecar": "Sidecar 解析",
+    "layout": "版式审计",
+    "cross_reference": "交叉引用",
+    "object_traceability": "对象可追溯性",
+    "chunk_traceability": "Chunk 可追溯性",
+    "performance": "性能基线",
+    "retrieval_sidecar": "词法检索",
+}
+
 
 def default_runs_root() -> Path:
     return Path(__file__).resolve().parents[2] / "memory_eval_tests" / "runs"
@@ -225,7 +236,7 @@ def _run_record(
     failed_checks: list[str] = []
     if kind == "offline":
         failed_checks = [
-            m.get("label") or m.get("method") or ""
+            _OFFLINE_LABELS.get(m.get("method") or "", m.get("label") or m.get("method") or "")
             for m in methods
             if m.get("method") != "offline_summary"
             and (m.get("summary") or {}).get("passed") is False

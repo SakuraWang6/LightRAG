@@ -22,7 +22,7 @@ import MetricCards from '@/features/eval/MetricCards'
 import MethodCompare from '@/features/eval/MethodCompare'
 import ProgressBar from '@/features/eval/ProgressBar'
 import ReportDocument from '@/features/eval/ReportDocument'
-import { formatDate, runKindClass, statusBadgeClass } from '@/features/eval/utils'
+import { formatDate, runKindClass, statusBadgeClass, statusLabel } from '@/features/eval/utils'
 
 const HEADLINE_ORDER = [
   'passed',
@@ -56,7 +56,7 @@ function RunHeader({ run }: { run: EvalRunDetail }) {
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-lg font-semibold">{run.label}</h2>
         <Badge variant="outline" className={runKindClass(run.kind)}>{run.kind}</Badge>
-        {run.status ? <Badge variant="outline" className={statusBadgeClass(run.status)}>{run.status}</Badge> : null}
+        {run.status ? <Badge variant="outline" className={statusBadgeClass(run.status)}>{statusLabel(run)}</Badge> : null}
         {(run.failed_checks ?? []).map((check) => (
           <Badge key={check} className="border-red-300 bg-red-50 text-red-700 dark:border-red-700 dark:bg-red-950 dark:text-red-300">
             {t('eval.failed')}: {check}

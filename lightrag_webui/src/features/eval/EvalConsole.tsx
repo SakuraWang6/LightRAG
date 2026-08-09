@@ -25,7 +25,7 @@ import {
 import EvalRunDetailView from '@/features/eval/EvalRunDetail'
 import EvalCompare from '@/features/eval/EvalCompare'
 import ConditionChips from '@/features/eval/ConditionChips'
-import { formatDate, runKindClass, statusBadgeClass } from '@/features/eval/utils'
+import { formatDate, runKindClass, statusBadgeClass, statusLabel } from '@/features/eval/utils'
 
 const KIND_OPTIONS: { value: EvalRunKind | 'all'; labelKey: string }[] = [
   { value: 'all', labelKey: 'eval.kindAll' },
@@ -321,7 +321,7 @@ export default function EvalConsole() {
                           {run.dataset ? <span className="truncate">{run.dataset}</span> : null}
                           {run.status ? (
                             <Badge variant="outline" className={`text-[10px] ${statusBadgeClass(run.status)}`}>
-                              {run.status}
+                              {statusLabel(run)}
                             </Badge>
                           ) : null}
                           <span>{formatDate(run.updated_at)}</span>
