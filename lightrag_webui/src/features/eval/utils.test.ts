@@ -5,6 +5,7 @@ import {
   buildCasesCsv,
   caseFieldLabel,
   formatDelta,
+  hasRunningJobs,
   metricStats,
   metricRank,
   statusLabel
@@ -81,5 +82,11 @@ describe('eval utils', () => {
     const stats = metricStats([0.8, 0.9, 0.85])
     expect(stats.n).toBe(3)
     expect(stats.sigma).toBeCloseTo(0.05, 5)
+  })
+
+  test('hasRunningJobs detects running jobs only', () => {
+    expect(hasRunningJobs([{ status: 'running' }, { status: 'succeeded' }])).toBe(true)
+    expect(hasRunningJobs([{ status: 'succeeded' }, { status: 'failed' }])).toBe(false)
+    expect(hasRunningJobs([])).toBe(false)
   })
 })

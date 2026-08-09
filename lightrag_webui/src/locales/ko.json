@@ -612,6 +612,7 @@
     "selectReport": "보고서 선택",
     "toc": "목차",
     "compareMetrics": "지표 비교",
-    "backToDetail": "상세로 돌아가기"
+    "backToDetail": "상세로 돌아가기",
+    "activeJobWarning": "실행 중인 작업이 있습니다. 동시 실행은 시간 관련 지표에 영향을 줄 수 있습니다. 계속할까요?"
   }
 }

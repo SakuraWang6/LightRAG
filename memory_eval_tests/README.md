@@ -6,11 +6,12 @@ reports remain in `runs/` and are deliberately outside the Python packages.
 
 ```text
 memory_eval_tests/
-├── common/       # shared DatasetClient
+├── common/       # DatasetClient, deterministic sampling, evidence normalization, auth HTTP helpers
 ├── offline/      # parser, integrity, provenance, layout and performance audits
 ├── online/       # API preflight, ingestion, retrieval and answer evaluation
-├── experiments/  # KG, evaluator, selector and structure ablations
-├── reporting/    # single-run, comparison, scale and readiness reports
+├── experiments/  # 14 registered experiments + unified harness (run.py) and supervise watchdog
+├── reporting/    # single-run, comparison, scale, readiness and baseline reports
+├── tools/        # legacy run/report migration
 └── runs/         # generated artifacts; never move or edit by framework cleanup
 ```
 
@@ -31,6 +32,15 @@ new automation.
 conda env create -f memory_eval_env.yml
 conda run -n lightrag-memory-eval python -m memory_data_service.cli generate --profile rich --tier smoke --formats docx
 ```
+
+Useful environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `MEMORY_EVAL_DATASETS_ROOT` | Dataset generation/read root; **required for wheel installs** (site-packages is usually read-only) |
+| `MEMORY_EVAL_RUNS_ROOT` | Runs root shared by envelope invalidation and the console scan |
+| `LIGHTRAG_API_KEY` / `LIGHTRAG_ACCESS_TOKEN` | `X-API-Key` / Bearer auth for online evaluation; persisted envelopes redact these to `configured` |
+| `OLLAMA_URL` / `OLLAMA_MODEL` | Server-side model endpoint/name for the console "AI analysis" |
 
 ## Offline Suite
 
@@ -145,6 +155,10 @@ conda run -n lightrag-memory-eval python -m memory_eval_tests.online.answer_eval
 PDF parser paths (`docling` / `mineru`) require their normal LightRAG parser
 service environment variables.
 
+When the LightRAG API enforces auth, pass `--api-key` / `--access-token` to
+`api_preflight`, `index_runner`, `retrieval_eval` and `answer_eval` (both default
+to the `LIGHTRAG_API_KEY` / `LIGHTRAG_ACCESS_TOKEN` environment variables).
+
 ## 指标定义
 
 指标名与确定性实现严格对应；历史运行（`metric_semantics: legacy`）的旧字段
@@ -232,6 +246,12 @@ conda run -n lightrag-memory-eval python -m memory_eval_tests.experiments.superv
 /eval/jobs/{id}/cancel`、`GET/POST/DELETE /eval/datasets`、
 `GET/POST/DELETE /eval/templates`。作业状态以 `runs/.jobs/<job_id>/job.json`
 （pid + 进程启动时间）为准，API 重启后可恢复取消；job.json 不存凭据。
+数据集生成走同一 job 通道（`kind=dataset`），默认 pages 上限 1000，
+`allow_oversized_generation` 可放开；`/eval` 依赖随 wheel 打包的
+`memory_eval_tests` / `memory_data_service` 包，包缺失时返回 503。
+
+当前并发限制：多个 job 可同时启动，未做硬限制；Ollama 单并行，并发实验会
+互相影响耗时类指标（计划中的 `MEMORY_EVAL_MAX_ACTIVE_JOBS` 尚未实现）。
 
 ### 数据集根目录
 

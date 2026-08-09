@@ -26,7 +26,9 @@ place by code cleanup.
 ## Generate Locally
 
 ```bash
-conda run -n lightrag-memory-eval python -m memory_data_service.cli generate --profile rich --tier smoke --formats docx
+conda run -n lightrag-memory-eval python -m memory_data_service.cli generate \
+  --profile rich --tier smoke --formats docx \
+  --dataset-id rich-smoke-v1 --output-root "$PWD/memory_data_service/generated"
 conda run -n lightrag-memory-eval python -m memory_data_service.cli list
 ```
 
@@ -36,6 +38,11 @@ Generation has a default 3000-page safety guard because DOCX writing uses
 ```bash
 conda run -n lightrag-memory-eval python -m memory_data_service.cli generate --profile rich --pages 3001 --allow-oversized-generation
 ```
+
+An existing `dataset_id` is **not overwritten by default**; pass `--force` to
+replace it. The dataset root defaults to `memory_data_service/generated` and can
+be overridden with `MEMORY_EVAL_DATASETS_ROOT` (required for wheel installs,
+where the in-package directory is usually read-only).
 
 `manifest.json` records `generation_peak_memory_mb` and a
 `generation_resource_estimate` so large-run resource behavior is auditable.
@@ -66,11 +73,20 @@ conda run -n lightrag-memory-eval python -m memory_data_service.cli serve --host
 
 Endpoints:
 
-- `POST /datasets`
-- `GET /datasets`
-- `GET /datasets/{dataset_id}`
-- `GET /datasets/{dataset_id}/oracle`
-- `GET /datasets/{dataset_id}/files/{name}`
+- `POST /datasets?force=` — generate a dataset (force overwrites an existing id)
+- `GET /datasets?limit=&offset=` — paginated list
+- `GET /datasets/{dataset_id}` — manifest
+- `GET /datasets/{dataset_id}/oracle` — unified oracle
+- `GET /datasets/{dataset_id}/files/{name}` — download DOCX/PDF/JSON/images
+- `DELETE /datasets/{dataset_id}` — delete a dataset (path validation; the workbench proxy returns 409 while it is being generated)
+
+Set `MEMORY_DATA_SERVICE_API_KEY` to require an `X-API-Key` header on every
+endpoint.
+
+The evaluation workbench (`lightrag-server` → `/eval/datasets`) proxies these
+capabilities (paginated list, form-driven creation through its job channel, and
+delete with a 409 guard while a dataset is being generated), so you usually do
+not need to run this service separately.
 
 PDF output uses `/opt/homebrew/bin/soffice` when available. If conversion fails,
 the PDF file is marked as `skipped` in `manifest.json`.

@@ -612,6 +612,7 @@
     "selectReport": "Bericht wählen",
     "toc": "Inhaltsverzeichnis",
     "compareMetrics": "Metrikvergleich",
-    "backToDetail": "Zurück zum Detail"
+    "backToDetail": "Zurück zum Detail",
+    "activeJobWarning": "Es laufen aktive Aufträge. Parallele Läufe können zeitkritische Metriken beeinflussen. Trotzdem starten?"
   }
 }

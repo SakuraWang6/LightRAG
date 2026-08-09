@@ -232,3 +232,38 @@ def test_delete_rejects_encoded_path_traversal(
     _write_dataset(tmp_path, "rich-smoke-v1")
     assert client.delete("/eval/datasets/rich-smoke-v1").status_code == 200
     assert not (tmp_path / "rich-smoke-v1").exists()
+
+
+def test_max_active_jobs_limit(runs_root: Path, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    _write_dataset(tmp_path, "rich-smoke-v1")
+    client = _client(runs_root, tmp_path)
+    started = eval_jobs._probe_process_start(os.getpid())
+    monkeypatch.setattr(
+        eval_jobs,
+        "start_run_job",
+        lambda **kwargs: {
+            "id": "run-fake",
+            "kind": "run",
+            "status": "running",
+            "pid": os.getpid(),
+            "process_started_at": started,
+            "output_dir": str(runs_root / "out"),
+            "params": {},
+        },
+    )
+    payload = {
+        "kind": "run",
+        "experiment": "context_size",
+        "dataset": "rich-smoke-v1",
+        "params": {},
+    }
+
+    monkeypatch.setenv("MEMORY_EVAL_MAX_ACTIVE_JOBS", "1")
+    _live_job(runs_root, job_id="run-active", kind="run")
+    blocked = client.post("/eval/jobs", json=payload)
+    assert blocked.status_code == 409
+    assert "active job limit reached" in blocked.json()["detail"]
+
+    monkeypatch.delenv("MEMORY_EVAL_MAX_ACTIVE_JOBS")
+    assert client.post("/eval/jobs", json=payload).status_code == 200

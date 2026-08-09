@@ -390,6 +390,25 @@ def create_eval_routes(
     async def create_job(request: CreateJobRequest) -> dict[str, Any]:
         try:
             require_eval()
+            max_active_raw = os.getenv("MEMORY_EVAL_MAX_ACTIVE_JOBS")
+            if max_active_raw and max_active_raw.strip().isdigit():
+                max_active = int(max_active_raw)
+                active = [
+                    job
+                    for job in eval_jobs.list_jobs(
+                        runs_root=root, datasets_root=datasets
+                    )
+                    if job.get("status") == "running"
+                ]
+                if len(active) >= max_active:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"active job limit reached ({len(active)} >= "
+                            f"{max_active}); cancel a running job or raise "
+                            "MEMORY_EVAL_MAX_ACTIVE_JOBS"
+                        ),
+                    )
             if request.kind == "run":
                 if not request.experiment or not request.dataset:
                     raise HTTPException(

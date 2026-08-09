@@ -7,12 +7,14 @@ import {
   createEvalJob,
   listDatasets,
   listEvalExperiments,
+  listEvalJobs,
   listEvalTemplates,
   saveEvalTemplate,
   type DatasetSummary,
   type EvalExperiment,
   type EvalTemplate
 } from '@/api/eval'
+import { hasRunningJobs } from '@/features/eval/utils'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
@@ -118,6 +120,10 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
     }
     setSubmitting(true)
     try {
+      const jobs = await listEvalJobs()
+      if (hasRunningJobs(jobs) && !window.confirm(t('eval.activeJobWarning'))) {
+        return
+      }
       const extra = extraText
         .split(',')
         .map((item) => item.trim())

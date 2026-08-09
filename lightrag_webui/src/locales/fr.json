@@ -612,6 +612,7 @@
     "selectReport": "Choisir un rapport",
     "toc": "Sommaire",
     "compareMetrics": "Comparaison de métriques",
-    "backToDetail": "Retour au détail"
+    "backToDetail": "Retour au détail",
+    "activeJobWarning": "Des tâches sont en cours. L'exécution simultanée peut fausser les métriques de temps. Démarrer quand même ?"
   }
 }

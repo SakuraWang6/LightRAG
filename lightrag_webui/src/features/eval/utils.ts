@@ -129,6 +129,12 @@ export function metricStats(
   return { n: numbers.length, sigma }
 }
 
+export function hasRunningJobs(
+  jobs: Array<{ status?: string | null }>
+): boolean {
+  return jobs.some((job) => job.status === 'running')
+}
+
 export function runKindClass(kind: EvalRunKind): string {
   switch (kind) {
     case 'offline':

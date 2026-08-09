@@ -612,6 +612,7 @@
     "regenerate": "重新生成",
     "analyzing": "正在生成分析，請稍候…",
     "analyzeHint": "调用本地大模型對本次测評结果做简洁分析（结论、方法差异、失败模式与改进建议）。",
-    "generateAnalysis": "生成 AI 分析"
+    "generateAnalysis": "生成 AI 分析",
+    "activeJobWarning": "存在進行中的任務。並行執行可能影響耗時類指標。仍要啟動嗎？"
   }
 }

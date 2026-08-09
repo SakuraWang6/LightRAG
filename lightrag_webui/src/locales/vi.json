@@ -612,6 +612,7 @@
     "selectReport": "Chọn báo cáo",
     "toc": "Mục lục",
     "compareMetrics": "So sánh chỉ số",
-    "backToDetail": "Quay lại chi tiết"
+    "backToDetail": "Quay lại chi tiết",
+    "activeJobWarning": "Đang có công việc đang chạy. Chạy song song có thể ảnh hưởng đến chỉ số thời gian. Vẫn bắt đầu?"
   }
 }
