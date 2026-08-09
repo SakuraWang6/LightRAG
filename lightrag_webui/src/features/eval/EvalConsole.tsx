@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { RefreshCwIcon, Columns3Icon, SearchIcon, CheckSquareIcon } from 'lucide-react'
+import {
+  CheckSquareIcon,
+  Columns3Icon,
+  DatabaseIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  SearchIcon
+} from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
@@ -25,6 +32,9 @@ import {
 import EvalRunDetailView from '@/features/eval/EvalRunDetail'
 import EvalCompare from '@/features/eval/EvalCompare'
 import ConditionChips from '@/features/eval/ConditionChips'
+import DatasetsView from '@/features/eval/DatasetsView'
+import NewRunWizard from '@/features/eval/NewRunWizard'
+import type { EvalRun, EvalTemplate } from '@/api/eval'
 import { formatDate, runKindClass, statusBadgeClass, statusLabel } from '@/features/eval/utils'
 
 const KIND_OPTIONS: { value: EvalRunKind | 'all'; labelKey: string }[] = [
@@ -53,6 +63,29 @@ export default function EvalConsole() {
   const [comparing, setComparing] = useState(false)
   const [compareRuns, setCompareRuns] = useState<EvalRunDetail[]>([])
   const [compareLoading, setCompareLoading] = useState(false)
+  const [view, setView] = useState<'runs' | 'new' | 'datasets'>('runs')
+  const [wizardDraft, setWizardDraft] = useState<EvalTemplate | null>(null)
+
+  const handleReproduce = useCallback((run: EvalRun) => {
+    const params: Record<string, unknown> = {}
+    for (const condition of run.conditions) {
+      if (
+        ['model', 'top_k', 'chunk_top_k', 'num_ctx', 'num_predict', 'temperature', 'mode'].includes(
+          condition.key
+        )
+      ) {
+        params[condition.key] = condition.value
+      }
+    }
+    setWizardDraft({
+      name: '',
+      experiment: run.experiment ?? '',
+      dataset: run.dataset ?? '',
+      params,
+      supervise: false
+    })
+    setView('new')
+  }, [])
 
   const loadRuns = useCallback(async () => {
     setLoading(true)
@@ -212,6 +245,23 @@ export default function EvalConsole() {
     )
   }
 
+  if (view === 'new') {
+    return (
+      <NewRunWizard
+        initial={wizardDraft}
+        onBack={() => setView('runs')}
+        onStarted={() => {
+          setView('runs')
+          void loadRuns()
+        }}
+      />
+    )
+  }
+
+  if (view === 'datasets') {
+    return <DatasetsView onBack={() => setView('runs')} />
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
@@ -222,6 +272,14 @@ export default function EvalConsole() {
           </Badge>
         ))}
         <div className="ml-auto flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => { setWizardDraft(null); setView('new') }}>
+            <PlusIcon className="mr-1 size-4" />
+            {t('eval.newRun')}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setView('datasets')}>
+            <DatabaseIcon className="mr-1 size-4" />
+            {t('eval.datasets')}
+          </Button>
           {compareIds.size > 0 && (
             <Button size="sm" onClick={startCompare} disabled={compareLoading}>
               <Columns3Icon className="mr-1 size-4" />
@@ -338,7 +396,7 @@ export default function EvalConsole() {
                           {run.dataset ? <span className="truncate">{run.dataset}</span> : null}
                           {run.status ? (
                             <Badge variant="outline" className={`text-[10px] ${statusBadgeClass(run.status)}`}>
-                              {statusLabel(run)}
+                              {t(statusLabel(run))}
                             </Badge>
                           ) : null}
                           <span>{formatDate(run.updated_at)}</span>
@@ -364,7 +422,7 @@ export default function EvalConsole() {
           {detailLoading && !detail ? (
             <div className="flex h-full items-center justify-center text-sm">{t('eval.loading')}</div>
           ) : detail ? (
-            <EvalRunDetailView run={detail} />
+            <EvalRunDetailView run={detail} onReproduce={handleReproduce} />
           ) : (
             <EmptyCard
               title={t('eval.noSelection')}

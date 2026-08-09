@@ -259,4 +259,6 @@ spec = ExperimentSpec(
     runner=_run_frozen,
     default_baseline={"model": "gpt-4o-mini"},
     kind="experiment",
+    extra_schema={"base_url": "str", "prompts": "str"},
+    env_required=["LIGHTRAG_PROJECT_OPENAI_API_KEY"],
 )

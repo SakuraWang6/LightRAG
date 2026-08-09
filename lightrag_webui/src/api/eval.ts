@@ -76,6 +76,7 @@ export type EvalRun = {
   restarts?: number
   last_restart_resume?: boolean | null
   label: string
+  experiment?: string | null
   dataset?: string | null
   updated_at?: string | null
   started_at?: string | null
@@ -93,6 +94,53 @@ export type EvalRun = {
 
 export type EvalRunDetail = EvalRun & {
   artifacts: EvalArtifact[]
+}
+
+export type EvalExperiment = {
+  id: string
+  label: string
+  description: string
+  supervision: string
+  supports_resume: boolean
+  default_baseline: Record<string, unknown>
+  variables: EvalVariable[]
+  extra_schema: Record<string, string>
+  env_required: string[]
+  env_ready: boolean
+}
+
+export type EvalJob = {
+  id: string
+  kind: 'run' | 'dataset'
+  experiment?: string | null
+  dataset?: string | null
+  dataset_id?: string | null
+  output_dir: string
+  supervise?: boolean
+  status: string
+  created_at?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  log?: string[]
+  params?: Record<string, unknown>
+}
+
+export type DatasetSummary = {
+  dataset_id: string
+  tier: string
+  profile: string
+  pages: number
+  path: string
+  created_at: string
+  files: string[]
+}
+
+export type EvalTemplate = {
+  name: string
+  experiment: string
+  dataset: string
+  params: Record<string, unknown>
+  supervise: boolean
 }
 
 const evalApiClient = axios.create({
@@ -140,6 +188,86 @@ export async function getEvalRunLog(
     `/eval/runs/${encodeURIComponent(runId)}/log`,
     { params: { lines } }
   )
+  return response.data
+}
+
+export async function listEvalExperiments(): Promise<EvalExperiment[]> {
+  const response = await evalApiClient.get('/eval/experiments')
+  return response.data.experiments
+}
+
+export async function createEvalJob(payload: {
+  kind: 'run' | 'dataset'
+  experiment?: string
+  dataset?: string
+  params?: Record<string, unknown>
+  supervise?: boolean
+  supervision?: string
+  stale_minutes?: number
+  max_restarts?: number
+  poll_seconds?: number
+  dataset_create?: {
+    dataset_id: string
+    tier?: string
+    profile?: string
+    pages?: number | null
+    formats?: string[]
+    modalities?: string[]
+    force?: boolean
+    allow_oversized_generation?: boolean
+  } | null
+}): Promise<EvalJob> {
+  const response = await evalApiClient.post('/eval/jobs', payload)
+  return response.data
+}
+
+export async function listEvalJobs(): Promise<EvalJob[]> {
+  const response = await evalApiClient.get('/eval/jobs')
+  return response.data.jobs
+}
+
+export async function getEvalJob(jobId: string): Promise<EvalJob> {
+  const response = await evalApiClient.get(`/eval/jobs/${encodeURIComponent(jobId)}`)
+  return response.data
+}
+
+export async function cancelEvalJob(jobId: string): Promise<EvalJob> {
+  const response = await evalApiClient.post(
+    `/eval/jobs/${encodeURIComponent(jobId)}/cancel`
+  )
+  return response.data
+}
+
+export async function listDatasets(
+  params?: { limit?: number; offset?: number }
+): Promise<{ datasets: DatasetSummary[]; total: number }> {
+  const response = await evalApiClient.get('/eval/datasets', { params })
+  return response.data
+}
+
+export async function deleteDataset(datasetId: string): Promise<unknown> {
+  const response = await evalApiClient.delete(
+    `/eval/datasets/${encodeURIComponent(datasetId)}`
+  )
+  return response.data
+}
+
+export async function listEvalTemplates(): Promise<EvalTemplate[]> {
+  const response = await evalApiClient.get('/eval/templates')
+  return response.data.templates
+}
+
+export async function saveEvalTemplate(
+  template: EvalTemplate
+): Promise<{ saved: string }> {
+  const response = await evalApiClient.post('/eval/templates', template)
+  return response.data
+}
+
+export async function deleteEvalTemplate(name: string): Promise<{ deleted: string }> {
+  const response = await evalApiClient.delete('/eval/templates', {
+    params: { name }
+  })
   return response.data
 }
 

@@ -494,4 +494,5 @@ spec = ExperimentSpec(
     ],
     kind="experiment",
     supports_resume=True,
+    extra_schema={"top_k": "str", "per_query_timeout": "int"},
 )

@@ -1,8 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, FileTextIcon, ListIcon, BarChart3Icon, BeakerIcon } from 'lucide-react'
+import { toast } from 'sonner'
 
-import type { EvalArtifact, EvalRunDetail, MetricItem } from '@/api/eval'
+import {
+  cancelEvalJob,
+  listEvalJobs,
+  type EvalArtifact,
+  type EvalJob,
+  type EvalRunDetail,
+  type MetricItem
+} from '@/api/eval'
 import Badge from '@/components/ui/Badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
 import {
@@ -48,10 +56,43 @@ function headlineMetrics(run: EvalRunDetail): MetricItem[] {
 
 interface EvalRunDetailProps {
   run: EvalRunDetail
+  onReproduce?: (run: EvalRunDetail) => void
 }
 
-function RunHeader({ run }: { run: EvalRunDetail }) {
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—'
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${minutes}m ${Math.floor(seconds % 60)}s`
+}
+
+function RunHeader({
+  run,
+  activeJob,
+  onCancel,
+  onReproduce
+}: {
+  run: EvalRunDetail
+  activeJob?: EvalJob | null
+  onCancel?: () => void
+  onReproduce?: () => void
+}) {
   const { t } = useTranslation()
+  const elapsedSeconds = useMemo(() => {
+    if (!run.started_at) return null
+    const started = new Date(run.started_at).getTime()
+    if (Number.isNaN(started)) return null
+    return Math.max(0, (Date.now() - started) / 1000)
+  }, [run.started_at])
+  const etaSeconds = useMemo(() => {
+    const done = run.progress?.done ?? 0
+    const total = run.progress?.total ?? 0
+    if (!run.started_at || elapsedSeconds == null || done <= 0 || total <= 1) return null
+    const rate = done / elapsedSeconds
+    if (rate <= 0) return null
+    return (total - done) / rate
+  }, [run.started_at, elapsedSeconds, run.progress?.done, run.progress?.total])
   return (
     <div className="border-b px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -72,15 +113,37 @@ function RunHeader({ run }: { run: EvalRunDetail }) {
               : ''}
           </Badge>
         ) : null}
-        {run.status ? <Badge variant="outline" className={statusBadgeClass(run.status)}>{statusLabel(run)}</Badge> : null}
+        {run.status ? <Badge variant="outline" className={statusBadgeClass(run.status)}>{t(statusLabel(run))}</Badge> : null}
         {(run.failed_checks ?? []).map((check) => (
           <Badge key={check} className="border-red-300 bg-red-50 text-red-700 dark:border-red-700 dark:bg-red-950 dark:text-red-300">
             {t('eval.failed')}: {check}
           </Badge>
         ))}
+        {activeJob ? (
+          <Button size="sm" variant="outline" onClick={onCancel} className="ml-auto">
+            {t('eval.cancelRun')}
+          </Button>
+        ) : null}
+        {onReproduce ? (
+          <Button size="sm" variant="outline" onClick={onReproduce}>
+            {t('eval.reproduce')}
+          </Button>
+        ) : null}
       </div>
       <p className="text-muted-foreground mt-1 text-xs">
         {t('eval.updatedAt')}: {formatDate(run.updated_at)}
+        {elapsedSeconds != null ? (
+          <>
+            {' · '}
+            {t('eval.elapsed')}: {formatDuration(elapsedSeconds)}
+          </>
+        ) : null}
+        {etaSeconds != null ? (
+          <>
+            {' · '}
+            {t('eval.eta')}: {formatDuration(etaSeconds)}
+          </>
+        ) : null}
         {run.duration_seconds != null ? (
           <>
             {' · '}
@@ -111,13 +174,14 @@ function RunHeader({ run }: { run: EvalRunDetail }) {
 }
 
 function MetricsTable({ metrics }: { metrics: MetricItem[] }) {
+  const { t } = useTranslation()
   return (
     <div className="overflow-auto rounded-md border">
       <table className="min-w-full text-left text-sm">
         <thead className="bg-muted/50">
           <tr>
-            <th className="px-3 py-2 font-medium">{'指标'}</th>
-            <th className="px-3 py-2 font-medium">{'值'}</th>
+            <th className="px-3 py-2 font-medium">{t('eval.metric')}</th>
+            <th className="px-3 py-2 font-medium">{t('eval.value')}</th>
           </tr>
         </thead>
         <tbody>
@@ -367,12 +431,57 @@ function ExperimentView({ run }: { run: EvalRunDetail }) {
   )
 }
 
-export default function EvalRunDetail({ run }: EvalRunDetailProps) {
+export default function EvalRunDetail({ run, onReproduce }: EvalRunDetailProps) {
+  const { t } = useTranslation()
+  const [activeJob, setActiveJob] = useState<EvalJob | null>(null)
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const jobs = await listEvalJobs()
+        const match = jobs.find(
+          (job) =>
+            job.kind === 'run' &&
+            job.status === 'running' &&
+            job.output_dir === (run.run_dir ?? '')
+        )
+        setActiveJob(match ?? null)
+      } catch {
+        setActiveJob(null)
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run.run_dir])
+
+  const cancel = async () => {
+    if (!activeJob) return
+    try {
+      const result = await cancelEvalJob(activeJob.id)
+      setActiveJob(null)
+      toast.success(
+        result.status === 'canceled'
+          ? activeJob.supervise
+            ? t('eval.canceledNoRestart')
+            : t('eval.jobCanceled')
+          : t('eval.jobCanceled')
+      )
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const headerProps = {
+    run,
+    activeJob,
+    onCancel: cancel,
+    onReproduce: onReproduce ? () => onReproduce(run) : undefined
+  }
+
   if (run.kind === 'report') {
     const report = run.artifacts.find((artifact) => artifact.report_md) ?? run.artifacts[0]
     return (
       <div className="flex h-full flex-col overflow-hidden">
-        <RunHeader run={run} />
+        <RunHeader {...headerProps} />
         <div className="min-h-0 flex-1 overflow-auto p-4">
           <AiAnalysis runId={run.id} />
           <div className="mt-3">
@@ -385,7 +494,7 @@ export default function EvalRunDetail({ run }: EvalRunDetailProps) {
   if (run.kind === 'experiment') {
     return (
       <div className="flex h-full flex-col overflow-hidden">
-        <RunHeader run={run} />
+        <RunHeader {...headerProps} />
         <div className="min-h-0 flex-1 overflow-auto">
           <ExperimentView run={run} />
         </div>
@@ -394,7 +503,7 @@ export default function EvalRunDetail({ run }: EvalRunDetailProps) {
   }
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <RunHeader run={run} />
+      <RunHeader {...headerProps} />
       <div className="min-h-0 flex-1 overflow-auto">
         <StandardRunView run={run} />
       </div>

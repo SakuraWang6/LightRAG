@@ -12,31 +12,25 @@ import shutil
 import sqlite3
 import tempfile
 import time
-from dataclasses import dataclass
-from enum import Enum
-from uuid import uuid4
-from lightrag.utils import (
-    logger,
-    get_pinyin_sort_key,
-    performance_timing_log,
-    safe_log_value,
-    validate_workspace,
-)
-import aiofiles
 import traceback
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 from typing import (
     Annotated,
+    Any,
     Dict,
     Iterator,
     List,
+    Literal,
     NamedTuple,
     Optional,
-    Any,
-    Literal,
     Sequence,
 )
+from uuid import uuid4
+
+import aiofiles
 from fastapi import (
     APIRouter,
     Depends,
@@ -57,7 +51,8 @@ from pydantic import (
 )
 
 from lightrag import LightRAG
-from lightrag.api.utils_api import internal_server_error
+from lightrag.api.admission import adopt_admission_ticket
+from lightrag.api.utils_api import get_combined_auth_dependency, internal_server_error
 from lightrag.base import (
     CURSOR_START,
     CursorAfter,
@@ -67,14 +62,6 @@ from lightrag.base import (
     SourceAbsent,
     SourceConflict,
     SourceUnique,
-)
-from lightrag.exceptions import (
-    PipelineBackpressureError,
-    SourceConflictPrimaryUnusableError,
-    SourceConflictRepairCASError,
-    StorageCapabilityError,
-    StorageControlPlaneError,
-    StorageNotInitializedError,
 )
 from lightrag.constants import (
     DEFAULT_SCAN_ENQUEUE_BATCH_SIZE,
@@ -89,10 +76,13 @@ from lightrag.constants import (
     PROCESS_OPTION_CHUNK_RECURSIVE,
     PROCESS_OPTION_CHUNK_VECTOR,
 )
-from lightrag.tools.source_conflict_repair import (
-    refuse_an_unusable_primary,
-    source_conflict_repair_lock,
-    verify_repair_outcome,
+from lightrag.exceptions import (
+    PipelineBackpressureError,
+    SourceConflictPrimaryUnusableError,
+    SourceConflictRepairCASError,
+    StorageCapabilityError,
+    StorageControlPlaneError,
+    StorageNotInitializedError,
 )
 from lightrag.kg.scan_job_store import (
     SAMPLE_BUCKETS,
@@ -102,6 +92,7 @@ from lightrag.kg.scan_job_store import (
     ScanJobStatus,
     ScanJobUpdateConflict,
 )
+from lightrag.kg.shared_storage import append_pipeline_history
 from lightrag.parser.routing import (
     FilenameParserHintError,
     canonicalize_parser_hinted_basename,
@@ -111,14 +102,22 @@ from lightrag.parser.routing import (
     resolve_chunk_options,
     resolve_parser_directives,
 )
+from lightrag.tools.source_conflict_repair import (
+    refuse_an_unusable_primary,
+    source_conflict_repair_lock,
+    verify_repair_outcome,
+)
 from lightrag.utils import (
     generate_track_id,
+    get_pinyin_sort_key,
+    logger,
     move_file_to_parsed_dir,
+    performance_timing_log,
+    safe_log_value,
+    validate_workspace,
 )
-from lightrag.kg.shared_storage import append_pipeline_history
 from lightrag.utils_pipeline import count_active_documents, read_source_file_basename
-from lightrag.api.admission import adopt_admission_ticket
-from lightrag.api.utils_api import get_combined_auth_dependency
+
 from ..config import global_args
 
 
@@ -5809,9 +5808,9 @@ def create_document_routes(
         """
         try:
             from lightrag.kg.shared_storage import (
+                get_all_update_flags_status,
                 get_namespace_data,
                 get_namespace_lock,
-                get_all_update_flags_status,
             )
 
             pipeline_status = await get_namespace_data(

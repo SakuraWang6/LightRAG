@@ -4,8 +4,9 @@ Start LightRAG server with Gunicorn
 """
 
 import os
-import sys
 import platform
+import sys
+
 import pipmaster as pm
 
 # Capture this before importing LightRAG modules, because those imports load .env.
@@ -60,14 +61,14 @@ def _build_global_concurrency_limits(args) -> dict:
 
 
 def main():
-    from lightrag.api.utils_api import display_splash_screen, check_env_file
     from lightrag.api.config import global_args, initialize_config
-    from lightrag.utils import get_env_value
-    from lightrag.kg.shared_storage import initialize_share_data
+    from lightrag.api.utils_api import check_env_file, display_splash_screen
     from lightrag.constants import (
-        DEFAULT_WOKERS,
         DEFAULT_TIMEOUT,
+        DEFAULT_WOKERS,
     )
+    from lightrag.kg.shared_storage import initialize_share_data
+    from lightrag.utils import get_env_value
 
     # Explicitly initialize configuration for Gunicorn mode
     initialize_config()

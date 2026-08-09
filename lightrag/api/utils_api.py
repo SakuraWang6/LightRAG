@@ -2,31 +2,34 @@
 Utility functions for the LightRAG API.
 """
 
-import os
 import argparse
-from collections import OrderedDict
-from typing import Any, Mapping, Optional, List, Tuple
+import logging
+import os
 import sys
 import time
 import uuid
-import logging
+from collections import OrderedDict
+from typing import Any, List, Mapping, Optional, Tuple
+
 from ascii_colors import ASCIIColors
-from .._version import __api_version__ as api_version
-from .._version import __version__ as core_version
+from fastapi import HTTPException, Request, Response, Security, status
+from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
+from starlette.status import HTTP_403_FORBIDDEN
+
+from lightrag.api.runtime_validation import validate_runtime_target_from_env_file
 from lightrag.constants import (
     DEFAULT_FORCE_LLM_SUMMARY_ON_MERGE,
 )
-from lightrag.api.runtime_validation import validate_runtime_target_from_env_file
-from fastapi import HTTPException, Security, Request, Response, status
-from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
-from starlette.status import HTTP_403_FORBIDDEN
+
+from .._version import __api_version__ as api_version
+from .._version import __version__ as core_version
 from ..utils import safe_log_value
 from .auth import auth_handler
 from .config import (
-    ollama_server_infos,
-    global_args,
     get_env_value,
+    global_args,
     normalize_api_prefix,
+    ollama_server_infos,
 )
 
 logger = logging.getLogger("lightrag")
@@ -136,8 +139,9 @@ def _renew_token_if_needed(path: str, response: Response, token_info: dict) -> N
     of ``combined_dependency`` -- rather than next to token validation -- is what
     makes that unreachable, so do not hoist it back up.
     """
-    from lightrag.api.config import global_args
     from datetime import datetime, timezone
+
+    from lightrag.api.config import global_args
 
     if not global_args.token_auto_renew:
         return

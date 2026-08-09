@@ -50,19 +50,21 @@ def _args(**overrides) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
-def test_build_command_forwards_new_args() -> None:
-    args = _args(
+def test_build_run_command_forwards_params() -> None:
+    params = supervise.RunParams(
+        experiment="context_size",
+        dataset=Path("memory_data_service/generated/rich-smoke-v1"),
+        output_dir=Path("memory_eval_tests/runs/x"),
+        run_id="r1",
         api_key="k",
         access_token="t",
         runs_root=Path("/tmp/runs"),
-        run_id="r1",
+        max_cases=7,
     )
-    cmd = supervise._build_command(
-        args,
-        heartbeat=True,
-        restart_count=2,
-        original_started_at="2026-08-09T00:00:00+00:00",
-    )
+    params.heartbeat = True
+    params.restart_count = 2
+    params.original_started_at = "2026-08-09T00:00:00+00:00"
+    cmd = supervise.build_run_command(params)
     assert cmd[cmd.index("--api-key") + 1] == "k"
     assert cmd[cmd.index("--access-token") + 1] == "t"
     assert cmd[cmd.index("--runs-root") + 1] == "/tmp/runs"
@@ -70,26 +72,29 @@ def test_build_command_forwards_new_args() -> None:
     assert "--heartbeat" in cmd
     assert cmd[cmd.index("--restart-count") + 1] == "2"
     assert "--original-started-at" in cmd
+    assert cmd[cmd.index("--max-cases") + 1] == "7"
 
-    plain = supervise._build_command(
-        _args(),
-        heartbeat=False,
-        restart_count=0,
-        original_started_at=None,
+    plain = supervise.build_run_command(
+        supervise.RunParams(
+            experiment="context_size",
+            dataset=Path("d"),
+            output_dir=Path("out"),
+        )
     )
     assert "--heartbeat" not in plain
     assert "--restart-count" not in plain
     assert "--original-started-at" not in plain
 
 
-def test_build_command_forwards_restart_mode() -> None:
-    cmd = supervise._build_command(
-        _args(),
-        heartbeat=False,
+def test_build_run_command_forwards_restart_mode() -> None:
+    params = supervise.RunParams(
+        experiment="context_size",
+        dataset=Path("d"),
+        output_dir=Path("out"),
         restart_count=1,
-        original_started_at=None,
         restart_mode="resume",
     )
+    cmd = supervise.build_run_command(params)
     assert cmd[cmd.index("--restart-mode") + 1] == "resume"
 
 
@@ -205,14 +210,13 @@ def test_spawns_child_in_new_session(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_restart_inherits_state_and_counts(monkeypatch, tmp_path: Path) -> None:
-    calls: list[list[str]] = []
+    supervise_calls: list[tuple] = []
     attempt = {"n": 0}
     output_dir = tmp_path / "run"
 
     class FakeProc:
         def __init__(self, cmd, **kwargs):
             attempt["n"] += 1
-            calls.append(cmd)
 
         def poll(self):
             return 1 if attempt["n"] == 1 else 0
@@ -234,6 +238,15 @@ def test_restart_inherits_state_and_counts(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(supervise.subprocess, "Popen", FakeProc)
     monkeypatch.setattr(supervise.signal, "signal", lambda *a, **k: None)
     monkeypatch.setattr(supervise.time, "sleep", lambda *a: None)
+    original_build = supervise.build_supervise_command
+
+    def spy(params, **kwargs):
+        supervise_calls.append(
+            (params.restart_count, params.original_started_at, params.restart_mode)
+        )
+        return original_build(params, **kwargs)
+
+    monkeypatch.setattr(supervise, "build_supervise_command", spy)
 
     rc = supervise.main(
         [
@@ -246,13 +259,11 @@ def test_restart_inherits_state_and_counts(monkeypatch, tmp_path: Path) -> None:
         ]
     )
     assert rc == 0
-    assert len(calls) == 2
-    second = calls[1]
-    assert second[second.index("--restart-count") + 1] == "1"
-    assert (
-        second[second.index("--original-started-at") + 1] == "2026-08-09T00:00:00+00:00"
-    )
-    assert second[second.index("--restart-mode") + 1] == "resume"
+    assert attempt["n"] == 2
+    assert supervise_calls == [
+        (0, None, "none"),
+        (1, "2026-08-09T00:00:00+00:00", "resume"),
+    ]
     log = (output_dir / "run.log").read_text(encoding="utf-8")
     assert "resume from partial.json" in log
     progress = json.loads((output_dir / "progress.json").read_text(encoding="utf-8"))

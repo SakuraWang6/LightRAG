@@ -32,6 +32,7 @@ import signal
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -111,24 +112,75 @@ def _existing_run_state(output_dir: Path) -> tuple[str, int] | None:
     return str(started_at), int(payload.get("restarts") or 0)
 
 
-def _build_command(
-    args: argparse.Namespace,
-    *,
-    heartbeat: bool,
-    restart_count: int,
-    original_started_at: str | None,
-    restart_mode: str = "none",
-) -> list[str]:
+@dataclass
+class RunParams:
+    """Single source of truth for run parameters shared by CLI and API."""
+
+    experiment: str
+    dataset: Path
+    output_dir: Path
+    run_id: str | None = None
+    model: str | None = None
+    mode: str | None = None
+    top_k: int | None = None
+    chunk_top_k: int | None = None
+    num_ctx: int | None = None
+    num_predict: int | None = None
+    temperature: float | None = None
+    ollama_url: str = "http://127.0.0.1:11434"
+    rag_api_url: str = "http://127.0.0.1:9621"
+    api_key: str | None = None
+    access_token: str | None = None
+    runs_root: Path | None = None
+    storage_dir: Path | None = None
+    engine: str | None = None
+    max_cases: int = 0
+    skip_kg: bool = False
+    extra: list[str] = field(default_factory=list)
+    heartbeat: bool = False
+    restart_count: int = 0
+    original_started_at: str | None = None
+    restart_mode: str = "none"
+
+
+def params_from_args(args: argparse.Namespace) -> RunParams:
+    return RunParams(
+        experiment=args.experiment,
+        dataset=args.dataset,
+        output_dir=args.output_dir,
+        run_id=args.run_id,
+        model=args.model,
+        mode=args.mode,
+        top_k=args.top_k,
+        chunk_top_k=args.chunk_top_k,
+        num_ctx=args.num_ctx,
+        num_predict=args.num_predict,
+        temperature=args.temperature,
+        ollama_url=args.ollama_url,
+        rag_api_url=args.rag_api_url,
+        api_key=args.api_key,
+        access_token=args.access_token,
+        runs_root=args.runs_root,
+        storage_dir=args.storage_dir,
+        engine=args.engine,
+        max_cases=args.max_cases,
+        skip_kg=args.skip_kg,
+        extra=list(args.extra),
+    )
+
+
+def build_run_command(params: RunParams) -> list[str]:
+    """Serialise RunParams into a ``run.py`` argv (single implementation)."""
     cmd = [
         sys.executable,
         "-m",
         "memory_eval_tests.experiments.run",
         "--experiment",
-        args.experiment,
+        params.experiment,
         "--dataset",
-        str(args.dataset),
+        str(params.dataset),
         "--output-dir",
-        str(args.output_dir),
+        str(params.output_dir),
     ]
     for key in (
         "model",
@@ -144,33 +196,101 @@ def _build_command(
         "engine",
         "max_cases",
     ):
-        value = getattr(args, key, None)
+        value = getattr(params, key)
         if value is not None:
             cmd.append(f"--{key.replace('_', '-')}")
             cmd.append(str(value))
     for flag, value in (
-        ("--api-key", args.api_key),
-        ("--access-token", args.access_token),
-        ("--runs-root", str(args.runs_root) if args.runs_root is not None else None),
-        ("--run-id", args.run_id),
+        ("--api-key", params.api_key),
+        ("--access-token", params.access_token),
+        (
+            "--runs-root",
+            str(params.runs_root) if params.runs_root is not None else None,
+        ),
+        ("--run-id", params.run_id),
     ):
         if value is not None:
             cmd.append(flag)
             cmd.append(value)
-    if heartbeat:
-        cmd.append("--heartbeat")
-    if restart_count > 0:
-        cmd.append("--restart-count")
-        cmd.append(str(restart_count))
-    if original_started_at:
-        cmd.append("--original-started-at")
-        cmd.append(original_started_at)
-    if restart_mode != "none":
-        cmd.append("--restart-mode")
-        cmd.append(restart_mode)
-    if args.skip_kg:
+    if params.skip_kg:
         cmd.append("--skip-kg")
-    for extra in args.extra:
+    if params.heartbeat:
+        cmd.append("--heartbeat")
+    if params.restart_count > 0:
+        cmd.append("--restart-count")
+        cmd.append(str(params.restart_count))
+    if params.original_started_at:
+        cmd.append("--original-started-at")
+        cmd.append(params.original_started_at)
+    if params.restart_mode != "none":
+        cmd.append("--restart-mode")
+        cmd.append(params.restart_mode)
+    for extra in params.extra:
+        cmd.extend(["--extra", extra])
+    return cmd
+
+
+def build_supervise_command(
+    params: RunParams,
+    *,
+    supervision: str,
+    stale_minutes: int,
+    max_restarts: int,
+    poll_seconds: int,
+) -> list[str]:
+    """Serialise RunParams into a ``supervise.py`` argv."""
+    cmd = [
+        sys.executable,
+        "-m",
+        "memory_eval_tests.experiments.supervise",
+        "--experiment",
+        params.experiment,
+        "--dataset",
+        str(params.dataset),
+        "--output-dir",
+        str(params.output_dir),
+        "--supervision",
+        supervision,
+        "--stale-minutes",
+        str(stale_minutes),
+        "--max-restarts",
+        str(max_restarts),
+        "--poll-seconds",
+        str(poll_seconds),
+    ]
+    for key in (
+        "model",
+        "mode",
+        "top_k",
+        "chunk_top_k",
+        "num_ctx",
+        "num_predict",
+        "temperature",
+        "ollama_url",
+        "rag_api_url",
+        "storage_dir",
+        "engine",
+        "max_cases",
+    ):
+        value = getattr(params, key)
+        if value is not None:
+            cmd.append(f"--{key.replace('_', '-')}")
+            cmd.append(str(value))
+    for flag, value in (
+        ("--api-key", params.api_key),
+        ("--access-token", params.access_token),
+        (
+            "--runs-root",
+            str(params.runs_root) if params.runs_root is not None else None,
+        ),
+        ("--run-id", params.run_id),
+    ):
+        if value is not None:
+            cmd.append(flag)
+            cmd.append(value)
+    if params.skip_kg:
+        cmd.append("--skip-kg")
+    for extra in params.extra:
         cmd.extend(["--extra", extra])
     return cmd
 
@@ -328,17 +448,25 @@ def main(argv: list[str] | None = None) -> int:
     existing = _existing_run_state(output_dir)
     restart_count = existing[1] if existing else 0
     original_started_at = existing[0] if existing else None
-    cmd = _build_command(
-        args,
-        heartbeat=forward_heartbeat,
-        restart_count=restart_count,
-        original_started_at=original_started_at,
-        restart_mode="resume"
-        if spec.supports_resume
-        else "fresh"
-        if restart_count > 0
-        else "none",
-    )
+    params = params_from_args(args)
+    params.heartbeat = forward_heartbeat
+    params.restart_count = restart_count
+    params.original_started_at = original_started_at
+    if restart_count > 0:
+        params.restart_mode = "resume" if spec.supports_resume else "fresh"
+    else:
+        params.restart_mode = "none"
+
+    def _cmd() -> list[str]:
+        return build_supervise_command(
+            params,
+            supervision=supervision,
+            stale_minutes=args.stale_minutes,
+            max_restarts=args.max_restarts,
+            poll_seconds=args.poll_seconds,
+        )
+
+    cmd = _cmd()
     env = _child_env(args)
     attempts = 0
     while True:
@@ -399,13 +527,10 @@ def main(argv: list[str] | None = None) -> int:
                 original_started_at = state[0]
             restart_count = state[1]
         restart_count += 1
-        cmd = _build_command(
-            args,
-            heartbeat=forward_heartbeat,
-            restart_count=restart_count,
-            original_started_at=original_started_at,
-            restart_mode="resume" if spec.supports_resume else "fresh",
-        )
+        params.restart_count = restart_count
+        params.original_started_at = original_started_at
+        params.restart_mode = "resume" if spec.supports_resume else "fresh"
+        cmd = _cmd()
         _log(output_dir, "restarting in 10s")
         time.sleep(10)
 

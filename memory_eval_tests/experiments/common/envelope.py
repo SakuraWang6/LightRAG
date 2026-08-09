@@ -77,6 +77,8 @@ class ExperimentSpec:
     kind: str = "experiment"
     supervision: str = "none"
     supports_resume: bool = False
+    extra_schema: dict[str, str] = field(default_factory=dict)
+    env_required: list[str] = field(default_factory=list)
 
 
 @dataclass

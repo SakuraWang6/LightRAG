@@ -162,7 +162,7 @@ export function statusLabel(run: {
   failed_checks?: string[]
 }): string {
   if (run.kind === 'offline' && run.status === 'failed') {
-    return '未通过'
+    return 'eval.statusFailed'
   }
   return run.status ?? ''
 }

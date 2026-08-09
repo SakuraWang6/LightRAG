@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from memory_data_service.schemas import DatasetManifest, DatasetSummary, OraclePayload
 
 PACKAGE_DIR = Path(__file__).resolve().parent
-DEFAULT_GENERATED_ROOT = PACKAGE_DIR / "generated"
+DEFAULT_GENERATED_ROOT = Path(
+    os.getenv("MEMORY_EVAL_DATASETS_ROOT", str(PACKAGE_DIR / "generated"))
+)
 
 
 def ensure_root(root: Path = DEFAULT_GENERATED_ROOT) -> Path:

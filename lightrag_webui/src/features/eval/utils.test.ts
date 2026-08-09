@@ -12,8 +12,8 @@ import {
 
 describe('eval utils', () => {
   test('offline failed always renders as 未通过 even without failed_checks', () => {
-    expect(statusLabel({ kind: 'offline', status: 'failed', failed_checks: [] })).toBe('未通过')
-    expect(statusLabel({ kind: 'offline', status: 'failed', failed_checks: ['词法检索'] })).toBe('未通过')
+    expect(statusLabel({ kind: 'offline', status: 'failed', failed_checks: [] })).toBe('eval.statusFailed')
+    expect(statusLabel({ kind: 'offline', status: 'failed', failed_checks: ['词法检索'] })).toBe('eval.statusFailed')
   })
 
   test('other statuses pass through unchanged', () => {

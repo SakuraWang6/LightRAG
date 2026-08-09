@@ -67,14 +67,19 @@ def _runner(context: RunContext) -> dict[str, Any]:
     baseline = context.baseline
     stage = context.extra.get("stage", "eval")
     if stage not in ("ingest", "cache", "eval"):
-        raise ValueError(f"scale --extra stage must be ingest|cache|eval, got {stage!r}")
+        raise ValueError(
+            f"scale --extra stage must be ingest|cache|eval, got {stage!r}"
+        )
     output_json = context.output_dir / "scale_eval.json"
     output_md = context.output_dir / "scale_report.md"
     sidecar_tables = context.extra.get("sidecar_tables")
     args = SimpleNamespace(
         stage=stage,
         dataset=dataset,
-        storage_dir=Path(context.environment.get("storage_dir") or (context.output_dir / "rag_storage")),
+        storage_dir=Path(
+            context.environment.get("storage_dir")
+            or (context.output_dir / "rag_storage")
+        ),
         ollama_url=context.environment["ollama_url"],
         model=baseline["model"],
         output_json=output_json if stage == "eval" else None,
@@ -87,7 +92,12 @@ def _runner(context: RunContext) -> dict[str, Any]:
     )
     asyncio.run(amain(args))
     if stage != "eval":
-        return {"methods": [], "report": "", "status": "complete", "extra": {"stage": stage}}
+        return {
+            "methods": [],
+            "report": "",
+            "status": "complete",
+            "extra": {"stage": stage},
+        }
     payload = json.loads(output_json.read_text(encoding="utf-8"))
     rows = _flatten_results(payload.get("results", []))
     by_method: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -97,7 +107,10 @@ def _runner(context: RunContext) -> dict[str, Any]:
         {
             "method": method,
             "label": method,
-            "params": {"dataset": dataset.name, "skip_kg": not baseline.get("kg", True)},
+            "params": {
+                "dataset": dataset.name,
+                "skip_kg": not baseline.get("kg", True),
+            },
             "summary": normalize_summary(_aggregate(method_rows), "selector"),
             "results": method_rows,
         }
@@ -140,4 +153,5 @@ spec = ExperimentSpec(
         }
     ],
     runner=_runner,
+    extra_schema={"stage": "str"},
 )

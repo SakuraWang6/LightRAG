@@ -212,7 +212,9 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
                             {run.label}
                           </span>
                           <Badge variant="outline" className={`w-fit text-[10px] ${runKindClass(run.kind)}`}>
-                            {runs.indexOf(run) === baselineIndex ? `${run.kind} · 基线` : run.kind}
+                            {runs.indexOf(run) === baselineIndex
+                              ? `${run.kind} · ${t('eval.baselineSuffix')}`
+                              : run.kind}
                           </Badge>
                         </span>
                       </TableHead>

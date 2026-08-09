@@ -2,90 +2,95 @@
 LightRAG FastAPI Server
 """
 
-from fastapi import FastAPI, Depends, HTTPException, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, Response
-from fastapi.openapi.docs import (
-    get_swagger_ui_html,
-    get_swagger_ui_oauth2_redirect_html,
-)
 import asyncio
 import json
-import os
-import re
 import logging
 import logging.config
+import os
+import re
 import sys
 import textwrap
 import time
 import uuid
-import uvicorn
-import pipmaster as pm
-from typing import Any
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
-from pathlib import Path
-from ascii_colors import ASCIIColors
-from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+
+import pipmaster as pm
+import uvicorn
+from ascii_colors import ASCIIColors
 from dotenv import load_dotenv
-from lightrag.api.utils_api import (
-    get_combined_auth_dependency,
-    get_auth_status_dependency,
-    display_splash_screen,
-    check_env_file,
-    internal_server_error,
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import (
+    get_swagger_ui_html,
+    get_swagger_ui_oauth2_redirect_html,
 )
-from lightrag.api.admission_middleware import AdmissionMiddleware
-from lightrag.api.body_limit_middleware import BodyLimitMiddleware, resolve_body_limits
-from .config import (
-    global_args,
-    normalize_api_prefix,
-    update_uvicorn_mode_config,
-    get_default_host,
-    resolve_asymmetric_embedding_opt_in,
-    PREFIX_ASYMMETRIC_EMBEDDING_BINDINGS,
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
 )
-from lightrag.utils import get_env_value
-from lightrag import LightRAG, ROLES, RoleLLMConfig, __version__ as core_version
+from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.staticfiles import StaticFiles
+
+from lightrag import ROLES, LightRAG, RoleLLMConfig, pipeline_metrics
+from lightrag import __version__ as core_version
 from lightrag.api import __api_version__
-from lightrag.utils import EmbeddingFunc
-from lightrag.constants import (
-    DEFAULT_LOG_MAX_BYTES,
-    DEFAULT_LOG_BACKUP_COUNT,
-    DEFAULT_LOG_FILENAME,
-)
+from lightrag.api.admission_middleware import AdmissionMiddleware
+from lightrag.api.auth import auth_handler
+from lightrag.api.body_limit_middleware import BodyLimitMiddleware, resolve_body_limits
+from lightrag.api.login_rate_limit import LoginRateLimiter
 from lightrag.api.routers.document_routes import (
     DocumentManager,
     create_document_routes,
 )
+from lightrag.api.routers.eval_routes import create_eval_routes
+from lightrag.api.routers.graph_routes import create_graph_routes
+from lightrag.api.routers.ollama_api import OllamaAPI
+from lightrag.api.routers.query_routes import create_query_routes
+from lightrag.api.utils_api import (
+    check_env_file,
+    display_splash_screen,
+    get_auth_status_dependency,
+    get_combined_auth_dependency,
+    internal_server_error,
+)
+from lightrag.constants import (
+    DEFAULT_LOG_BACKUP_COUNT,
+    DEFAULT_LOG_FILENAME,
+    DEFAULT_LOG_MAX_BYTES,
+)
+from lightrag.kg.shared_storage import (
+    # set_default_workspace,
+    cleanup_keyed_lock,
+    drain_reserved_background_tasks,
+    finalize_share_data,
+    get_default_workspace,
+    get_namespace_data,
+    get_pipeline_ingress,
+)
+from lightrag.parser.external.mineru.cache import MinerUParserOptions
 from lightrag.parser.plugins import load_third_party_parsers
 from lightrag.parser.routing import (
     parser_rules_from_env,
     validate_parser_routing_config,
     validate_smart_heading_dependencies,
 )
-from lightrag.parser.external.mineru.cache import MinerUParserOptions
-from lightrag.api.routers.query_routes import create_query_routes
-from lightrag.api.routers.graph_routes import create_graph_routes
-from lightrag.api.routers.eval_routes import create_eval_routes
-from lightrag.api.routers.ollama_api import OllamaAPI
-
-from lightrag.utils import logger, set_verbose_debug
-from lightrag.kg.shared_storage import (
-    get_namespace_data,
-    get_default_workspace,
-    # set_default_workspace,
-    cleanup_keyed_lock,
-    drain_reserved_background_tasks,
-    finalize_share_data,
-    get_pipeline_ingress,
-)
-from lightrag import pipeline_metrics
+from lightrag.utils import EmbeddingFunc, get_env_value, logger, set_verbose_debug
 from lightrag.utils_pipeline import describe_doc_status_capabilities
-from fastapi.security import OAuth2PasswordRequestForm
-from lightrag.api.auth import auth_handler
-from lightrag.api.login_rate_limit import LoginRateLimiter
+
+from .config import (
+    PREFIX_ASYMMETRIC_EMBEDDING_BINDINGS,
+    get_default_host,
+    global_args,
+    normalize_api_prefix,
+    resolve_asymmetric_embedding_opt_in,
+    update_uvicorn_mode_config,
+)
 
 # use the .env that is inside the current folder
 # allows to use different .env file for each lightrag instance
@@ -2093,11 +2098,11 @@ def create_app(args):
     rerank_model_func = None
     if args.rerank_binding != "null":
         from lightrag.rerank import (
-            cohere_rerank,
-            jina_rerank,
-            ali_rerank,
             DEFAULT_RERANK_MAX_TOKENS_PER_DOC,
             MIN_PRACTICAL_RERANK_MAX_TOKENS,
+            ali_rerank,
+            cohere_rerank,
+            jina_rerank,
         )
 
         # Map rerank binding to corresponding function

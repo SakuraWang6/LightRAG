@@ -216,3 +216,25 @@ conda run -n lightrag-memory-eval python -m memory_eval_tests.experiments.superv
   进程树清理时请通过 supervise 接收信号（`start_new_session` + `killpg`）。
 - launchctl 示例：`KeepAlive` 配合 `SuccessfulExit: false`，进程退出即由系统拉起，
   supervisor 启动时会继承旧 `run.json` 的 `started_at`/`restarts`。
+
+## WebUI 评测工作台
+
+评测控制台包含三个子视图：
+
+- **运行**：runs 列表、详情（指标/逐题/报告/日志）、对比与导出、取消活跃运行、
+  一键复现。
+- **新建运行**：选数据集 → 选实验（显示看护/续跑能力与环境变量就绪状态）→
+  填参数（通用字段 + 实验 `extra_schema` 高级参数）→ 启动（可选看护）。
+- **数据集**：列表（tier/页数/模态/文件数/生成时间）、表单化生成（含资源预估与
+  pages 上限提示）、删除（生成中的数据集拒绝删除，返回 409）。
+
+后端接口：`GET /eval/experiments`、`POST/GET /eval/jobs`、`POST
+/eval/jobs/{id}/cancel`、`GET/POST/DELETE /eval/datasets`、
+`GET/POST/DELETE /eval/templates`。作业状态以 `runs/.jobs/<job_id>/job.json`
+（pid + 进程启动时间）为准，API 重启后可恢复取消；job.json 不存凭据。
+
+### 数据集根目录
+
+数据集的生成与读取统一走 `MEMORY_EVAL_DATASETS_ROOT` 环境变量（未设置时回落包内
+`memory_data_service/generated`）。**打包安装（wheel）后该目录位于 site-packages，
+通常只读，必须显式设置 `MEMORY_EVAL_DATASETS_ROOT`**；本地开发可不设置。

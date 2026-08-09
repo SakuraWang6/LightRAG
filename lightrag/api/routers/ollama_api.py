@@ -1,16 +1,18 @@
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field, ValidationError, model_validator
-from typing import List, Dict, Any, Optional, Type
-from lightrag.utils import logger
-import threading
-import time
+import asyncio
 import json
 import re
+import threading
+import time
 from enum import Enum
+from typing import Any, Dict, List, Optional, Type
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-import asyncio
+from pydantic import BaseModel, Field, ValidationError, model_validator
+
 from lightrag import LightRAG, QueryParam
 from lightrag.api.input_limits import count_conversation_input_chars
+from lightrag.api.utils_api import get_combined_auth_dependency, internal_server_error
 from lightrag.constants import (
     DEFAULT_QUERY_PRIORITY,
     MAX_IMAGES_PER_MESSAGE,
@@ -21,9 +23,7 @@ from lightrag.constants import (
     MAX_REQUEST_TEXT_CHARS,
     MAX_ROLE_CHARS,
 )
-from lightrag.utils import TiktokenTokenizer, acount_tokens
-from lightrag.api.utils_api import get_combined_auth_dependency, internal_server_error
-from fastapi import Depends
+from lightrag.utils import TiktokenTokenizer, acount_tokens, logger
 
 
 # query mode according to query prefix (bypass is not LightRAG quer mode)

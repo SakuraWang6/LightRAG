@@ -6,10 +6,13 @@ import asyncio
 import json
 import time
 from typing import Any, Dict, List, Literal, Optional
+
 from fastapi import APIRouter, Depends
-from lightrag.base import QueryParam
+from pydantic import BaseModel, Field, field_validator, model_validator
+
 from lightrag.api.input_limits import count_conversation_input_chars
 from lightrag.api.utils_api import get_combined_auth_dependency, internal_server_error
+from lightrag.base import QueryParam
 from lightrag.constants import (
     MAX_KEYWORD_CHARS,
     MAX_KEYWORDS_PER_LIST,
@@ -23,7 +26,6 @@ from lightrag.constants import (
     MAX_ROLE_CHARS,
 )
 from lightrag.utils import logger
-from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class QueryRequest(BaseModel):
