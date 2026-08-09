@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -36,11 +37,15 @@ _SCAN_SKIP_DIRS = {
     "__pycache__",
 }
 
-# In-process scan cache: runs_root -> (mtime signature, list records).  The
-# signature covers every envelope dir's run.json/progress.json mtimes, so the
-# list is refreshed automatically whenever a run starts, progresses or finishes
-# without an explicit invalidation step.
-_scan_cache: dict[Path, tuple[tuple[tuple[str, int, int], ...], list[dict[str, Any]]]] = {}
+# In-process scan cache: runs_root -> (timestamp, mtime signature, records).
+# Within the TTL the cached list is served without walking the tree again; on
+# expiry the mtime signature is re-checked so new/changed runs appear
+# automatically, and POST /eval/refresh forces an immediate rebuild.
+_SCAN_TTL_SECONDS = 15.0
+_scan_cache: dict[
+    Path,
+    tuple[float, tuple[tuple[str, int, int], ...], list[dict[str, Any]]],
+] = {}
 
 
 def default_runs_root() -> Path:
@@ -54,19 +59,26 @@ def _read_json(path: Path) -> dict[str, Any]:
 def _dataset_meta(runs_root: Path, dataset: str | None) -> dict[str, Any]:
     if not dataset:
         return {}
-    manifest = Path(runs_root).parent.parent / "memory_data_service" / "generated" / dataset / "manifest.json"
-    try:
-        payload = _read_json(manifest)
-    except (OSError, ValueError):
-        return {}
-    return {
-        "dataset": payload.get("dataset_id") or dataset,
-        "pages": payload.get("pages"),
-        "tier": payload.get("tier"),
-        "profile": payload.get("profile"),
-        "formats": payload.get("formats"),
-        "title": payload.get("title"),
-    }
+    candidates: list[Path] = []
+    env_root = os.getenv("MEMORY_EVAL_DATASETS_ROOT")
+    if env_root:
+        candidates.append(Path(env_root))
+    candidates.append(Path(runs_root).parent.parent / "memory_data_service" / "generated")
+    candidates.append(Path.cwd() / "memory_data_service" / "generated")
+    for root in dict.fromkeys(candidates):
+        try:
+            payload = _read_json(root / dataset / "manifest.json")
+        except (OSError, ValueError):
+            continue
+        return {
+            "dataset": payload.get("dataset_id") or dataset,
+            "pages": payload.get("pages"),
+            "tier": payload.get("tier"),
+            "profile": payload.get("profile"),
+            "formats": payload.get("formats"),
+            "title": payload.get("title"),
+        }
+    return {}
 
 
 def _scalar_rows(methods: list[dict[str, Any]]) -> dict[str, Any]:
@@ -96,15 +108,25 @@ def _flatten_cases(methods: list[dict[str, Any]]) -> dict[str, Any]:
             if not isinstance(case, dict):
                 continue
             row: dict[str, Any] = {}
+            detail: dict[str, Any] = {}
             for key, value in case.items():
                 if isinstance(value, (int, float, bool, str, list)) and value is not None:
+                    cell_value: Any = value
                     if isinstance(value, list):
-                        value = ", ".join(str(item) for item in value[:5])
+                        # Structured retrieval evidence stays fully available
+                        # for the per-case detail view; only the table cell is
+                        # capped to keep payloads small.
+                        if key in {"hit_fact_ids", "expected_fact_ids", "top_contexts"}:
+                            detail[key] = value
+                        cell_value = ", ".join(str(item) for item in value[:5])
                     elif isinstance(value, str) and len(value) > 300:
-                        value = value[:300]
-                    row[key] = value
+                        detail[key] = value
+                        cell_value = value[:300]
+                    row[key] = cell_value
                     if key not in {c["key"] for c in columns}:
                         columns.append({"key": key, "label": _humanize(key)})
+            if detail:
+                row["detail"] = detail
             if "method" not in row:
                 row["method"] = method.get("method")
             rows.append(row)
@@ -146,7 +168,9 @@ def _summary_metrics(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for key, value in (method.get("summary") or {}).items():
             if isinstance(value, (int, float, bool)):
                 normalized = normalize_metric_key(key)
-                if normalized not in values:
+                # A canonical key always wins over a legacy alias when both
+                # exist, regardless of dict iteration order.
+                if normalized not in values or key == normalized:
                     values[normalized] = value
     metrics = []
     for key in ordered:
@@ -378,11 +402,17 @@ def clear_scan_cache(runs_root: Path | None = None) -> None:
         _scan_cache.pop(runs_root, None)
 
 
-def scan_runs(runs_root: Path) -> list[dict[str, Any]]:
-    signature = _envelope_signature(runs_root)
+def scan_runs(runs_root: Path, *, force: bool = False) -> list[dict[str, Any]]:
+    now = time.monotonic()
     cached = _scan_cache.get(runs_root)
-    if cached is not None and cached[0] == signature:
-        return cached[1]
+    if cached is not None and not force:
+        cached_at, signature, records = cached
+        if now - cached_at < _SCAN_TTL_SECONDS:
+            return records
+        if signature == _envelope_signature(runs_root):
+            _scan_cache[runs_root] = (now, signature, records)
+            return records
+    signature = _envelope_signature(runs_root)
     records = []
     for run_dir in _iter_envelope_dirs(runs_root):
         try:
@@ -391,7 +421,7 @@ def scan_runs(runs_root: Path) -> list[dict[str, Any]]:
             continue
         records.append(_run_record(runs_root, run_dir, envelope, with_artifacts=False))
     records.sort(key=lambda r: r["updated_at"] or "", reverse=True)
-    _scan_cache[runs_root] = (signature, records)
+    _scan_cache[runs_root] = (now, signature, records)
     return records
 
 

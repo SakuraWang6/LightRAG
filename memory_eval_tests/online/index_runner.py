@@ -3,11 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import time
-import urllib.request
 from pathlib import Path
 from typing import Any
 
 from memory_eval_tests.common.dataset_client import DatasetClient
+from memory_eval_tests.common.http import get_json as _http_get_json
+from memory_eval_tests.common.http import upload_file as _http_upload_file
 
 
 def upload_dataset_files(
@@ -18,6 +19,8 @@ def upload_dataset_files(
     wait: bool = False,
     timeout_seconds: int = 900,
     poll_seconds: float = 5.0,
+    api_key: str | None = None,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
     client = DatasetClient(dataset_source)
     manifest = client.manifest()
@@ -30,13 +33,20 @@ def upload_dataset_files(
             skipped.append(file_info.get("name"))
             continue
         path = client.local_file(file_info["name"])
-        upload_result = _upload_file(path, rag_api_url)
+        upload_result = _upload_file(
+            path,
+            rag_api_url,
+            api_key=api_key,
+            access_token=access_token,
+        )
         if wait and upload_result.get("track_id"):
             upload_result["track_status"] = _wait_track_status(
                 str(upload_result["track_id"]),
                 rag_api_url,
                 timeout_seconds=timeout_seconds,
                 poll_seconds=poll_seconds,
+                api_key=api_key,
+                access_token=access_token,
             )
         uploaded.append(upload_result)
     elapsed = time.perf_counter() - started
@@ -49,21 +59,19 @@ def upload_dataset_files(
     }
 
 
-def _upload_file(path: Path, rag_api_url: str) -> dict[str, Any]:
-    boundary = "----lightragMemoryEvalBoundary"
-    body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="file"; filename="{path.name}"\r\n'
-        "Content-Type: application/octet-stream\r\n\r\n"
-    ).encode("utf-8") + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode("utf-8")
-    request = urllib.request.Request(
+def _upload_file(
+    path: Path,
+    rag_api_url: str,
+    *,
+    api_key: str | None = None,
+    access_token: str | None = None,
+) -> dict[str, Any]:
+    return _http_upload_file(
+        path,
         f"{rag_api_url.rstrip('/')}/documents/upload",
-        data=body,
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-        method="POST",
+        api_key=api_key,
+        access_token=access_token,
     )
-    with urllib.request.urlopen(request, timeout=600) as response:
-        return json.loads(response.read().decode("utf-8"))
 
 
 def _wait_track_status(
@@ -72,12 +80,18 @@ def _wait_track_status(
     *,
     timeout_seconds: int,
     poll_seconds: float,
+    api_key: str | None = None,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_seconds
     last_payload: dict[str, Any] = {}
     terminal_statuses = {"processed", "failed"}
     while time.monotonic() < deadline:
-        last_payload = _get_json(f"{rag_api_url.rstrip('/')}/documents/track_status/{track_id}")
+        last_payload = _get_json(
+            f"{rag_api_url.rstrip('/')}/documents/track_status/{track_id}",
+            api_key=api_key,
+            access_token=access_token,
+        )
         documents = last_payload.get("documents") or []
         statuses = {str(doc.get("status", "")).lower() for doc in documents}
         if documents and statuses <= terminal_statuses:
@@ -91,9 +105,13 @@ def _wait_track_status(
     return last_payload
 
 
-def _get_json(url: str) -> dict[str, Any]:
-    with urllib.request.urlopen(url, timeout=60) as response:
-        return json.loads(response.read().decode("utf-8"))
+def _get_json(
+    url: str,
+    *,
+    api_key: str | None = None,
+    access_token: str | None = None,
+) -> dict[str, Any]:
+    return _http_get_json(url, api_key=api_key, access_token=access_token)
 
 
 def _uploads_passed(uploaded: list[dict[str, Any]], *, wait: bool) -> bool:
@@ -116,6 +134,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wait", action="store_true", help="Wait until uploaded tracks reach terminal status.")
     parser.add_argument("--timeout-seconds", type=int, default=900)
     parser.add_argument("--poll-seconds", type=float, default=5.0)
+    parser.add_argument("--api-key", default=None, help="X-API-Key header for authenticated servers.")
+    parser.add_argument(
+        "--access-token",
+        default=None,
+        help="Bearer access token (Authorization header) for authenticated servers.",
+    )
     args = parser.parse_args(argv)
     report = upload_dataset_files(
         dataset_source=args.dataset,
@@ -124,6 +148,8 @@ def main(argv: list[str] | None = None) -> int:
         wait=args.wait,
         timeout_seconds=args.timeout_seconds,
         poll_seconds=args.poll_seconds,
+        api_key=args.api_key,
+        access_token=args.access_token,
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0

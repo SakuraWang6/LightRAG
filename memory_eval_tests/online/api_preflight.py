@@ -9,11 +9,15 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from memory_eval_tests.common.http import auth_headers
+
 
 def run_api_preflight(
     *,
     rag_api_url: str = "http://127.0.0.1:9621",
     ollama_url: str = "http://127.0.0.1:11434",
+    api_key: str | None = None,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
     _load_project_env()
     env = {
@@ -24,9 +28,22 @@ def run_api_preflight(
         "EMBEDDING_BINDING_API_KEY": _is_set("EMBEDDING_BINDING_API_KEY"),
     }
     ollama = _probe_json(f"{ollama_url.rstrip('/')}/api/tags")
-    api_health = _probe_url(f"{rag_api_url.rstrip('/')}/health")
-    api_docs = _probe_url(f"{rag_api_url.rstrip('/')}/docs")
-    api_query_data = _probe_url(f"{rag_api_url.rstrip('/')}/query/data", method="POST")
+    api_health = _probe_url(
+        f"{rag_api_url.rstrip('/')}/health",
+        api_key=api_key,
+        access_token=access_token,
+    )
+    api_docs = _probe_url(
+        f"{rag_api_url.rstrip('/')}/docs",
+        api_key=api_key,
+        access_token=access_token,
+    )
+    api_query_data = _probe_url(
+        f"{rag_api_url.rstrip('/')}/query/data",
+        method="POST",
+        api_key=api_key,
+        access_token=access_token,
+    )
 
     llm_ready = bool(env["OPENAI_API_KEY"]) or bool(env["LLM_BINDING_API_KEY"]) or ollama["reachable"]
     embedding_ready = (
@@ -77,12 +94,21 @@ def _is_set(name: str) -> bool:
     return bool(os.getenv(name))
 
 
-def _probe_json(url: str) -> dict[str, Any]:
-    result = _probe_url(url)
+def _probe_json(
+    url: str,
+    *,
+    api_key: str | None = None,
+    access_token: str | None = None,
+) -> dict[str, Any]:
+    result = _probe_url(url, api_key=api_key, access_token=access_token)
     if not result["reachable"]:
         return result
     try:
-        with urllib.request.urlopen(url, timeout=5) as response:
+        request = urllib.request.Request(
+            url,
+            headers=auth_headers(api_key=api_key, access_token=access_token),
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
             payload = json.loads(response.read().decode("utf-8"))
         result["json"] = payload
     except Exception as exc:
@@ -90,8 +116,18 @@ def _probe_json(url: str) -> dict[str, Any]:
     return result
 
 
-def _probe_url(url: str, *, method: str = "GET") -> dict[str, Any]:
-    request = urllib.request.Request(url, method=method)
+def _probe_url(
+    url: str,
+    *,
+    method: str = "GET",
+    api_key: str | None = None,
+    access_token: str | None = None,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        method=method,
+        headers=auth_headers(api_key=api_key, access_token=access_token),
+    )
     try:
         with urllib.request.urlopen(request, timeout=5) as response:
             return {
@@ -121,11 +157,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check prerequisites for online LightRAG evaluation.")
     parser.add_argument("--rag-api-url", default="http://127.0.0.1:9621")
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
+    parser.add_argument("--api-key", default=None, help="X-API-Key header for authenticated servers.")
+    parser.add_argument(
+        "--access-token",
+        default=None,
+        help="Bearer access token (Authorization header) for authenticated servers.",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--fail-on-blocker", action="store_true")
     args = parser.parse_args(argv)
 
-    report = run_api_preflight(rag_api_url=args.rag_api_url, ollama_url=args.ollama_url)
+    report = run_api_preflight(
+        rag_api_url=args.rag_api_url,
+        ollama_url=args.ollama_url,
+        api_key=args.api_key,
+        access_token=args.access_token,
+    )
     rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

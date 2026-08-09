@@ -284,6 +284,7 @@ def test_scan_cache_refreshes_and_ignores_parsed_inputs(runs_tree: Path) -> None
             "reports": {},
         },
     )
+    clear_scan_cache()
     assert len(scan_runs(runs_tree)) == 3
     # Anything under inputs/__parsed__ must never be indexed as a run.
     _write(
@@ -302,6 +303,66 @@ def test_scan_cache_refreshes_and_ignores_parsed_inputs(runs_tree: Path) -> None
             "reports": {},
         },
     )
+    clear_scan_cache()
     ids = {run["id"] for run in scan_runs(runs_tree)}
     assert "should-not-appear" not in ids
     assert "new-run" in ids
+
+
+def test_scan_cache_ttl_serves_records_without_walking(monkeypatch, runs_tree: Path) -> None:
+    import lightrag.api.eval_index as eval_index
+    from lightrag.api.eval_index import clear_scan_cache, scan_runs
+
+    clear_scan_cache()
+    calls = {"count": 0}
+    original = eval_index._envelope_signature
+
+    def counting(runs_root: Path):
+        calls["count"] += 1
+        return original(runs_root)
+
+    monkeypatch.setattr(eval_index, "_envelope_signature", counting)
+    assert len(scan_runs(runs_tree)) == 2
+    assert len(scan_runs(runs_tree)) == 2
+    assert len(scan_runs(runs_tree)) == 2
+    assert calls["count"] == 1
+    assert len(scan_runs(runs_tree, force=True)) == 2
+    assert calls["count"] == 2
+
+
+def test_flatten_cases_keeps_full_retrieval_evidence() -> None:
+    from lightrag.api.eval_index import _flatten_cases
+
+    methods = [
+        {
+            "method": "retrieval",
+            "results": [
+                {
+                    "question_id": "Q1",
+                    "recall_at_k": 0.5,
+                    "hit_fact_ids": [f"FACT-{i}" for i in range(1, 7)],
+                    "top_contexts": [{"rank": 1, "file_path": "a.docx", "chunk_count": 2}],
+                    "answer": "x" * 500,
+                }
+            ],
+        }
+    ]
+    payload = _flatten_cases(methods)
+    row = payload["rows"][0]
+    assert row["detail"]["hit_fact_ids"] == [f"FACT-{i}" for i in range(1, 7)]
+    assert row["detail"]["top_contexts"][0]["rank"] == 1
+    assert row["detail"]["answer"] == "x" * 500
+    # The table cell stays capped while the detail keeps the full evidence.
+    assert row["hit_fact_ids"] != row["detail"]["hit_fact_ids"]
+    assert len(row["hit_fact_ids"].split(", ")) == 5
+
+
+def test_summary_metrics_prefers_canonical_over_legacy_key() -> None:
+    from lightrag.api.eval_index import _summary_metrics
+
+    metrics = _summary_metrics(
+        [{"method": "m", "summary": {"hallucination_rate": 0.9, "ungrounded_rate": 0.2}}]
+    )
+    by_key = {metric["key"]: metric["value"] for metric in metrics}
+    assert by_key["ungrounded_rate"] == 0.2
+    assert "hallucination_rate" not in by_key

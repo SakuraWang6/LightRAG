@@ -135,7 +135,7 @@ def test_abstain_excludes_evidence_available_but_counts_as_grounded():
 def test_evaluate_answers_emits_canonical_summary_keys(monkeypatch, tmp_path):
     from memory_eval_tests.online.answer_eval import evaluate_answers
 
-    def fake_post_json(url: str, payload: dict) -> dict:
+    def fake_post_json(url: str, payload: dict, **kwargs) -> dict:
         return {"response": "The answer is 9021 QMU (FACT-00001).", "references": []}
 
     dataset = tmp_path / "dataset"

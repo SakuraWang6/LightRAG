@@ -4,13 +4,13 @@ import argparse
 import json
 import math
 import re
-import urllib.request
 from pathlib import Path
 from typing import Any
 
 from memory_data_service.schemas import OraclePayload
 from memory_eval_tests.common.dataset_client import DatasetClient
 from memory_eval_tests.common.evidence import normalize_evidence
+from memory_eval_tests.common.http import post_json as _http_post_json
 from memory_eval_tests.common.sampling import sample_evenly
 
 
@@ -21,6 +21,8 @@ def evaluate_api(
     mode: str = "mix",
     top_k: int = 10,
     max_cases: int | None = None,
+    api_key: str | None = None,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
     oracle = DatasetClient(dataset_source).oracle()
     questions = sample_evenly(list(oracle.get("questions", [])), max_cases)
@@ -41,7 +43,12 @@ def evaluate_api(
             # serialized response.
             "include_chunk_content": True,
         }
-        response = _post_json(f"{rag_api_url.rstrip('/')}/query/data", payload)
+        response = _post_json(
+            f"{rag_api_url.rstrip('/')}/query/data",
+            payload,
+            api_key=api_key,
+            access_token=access_token,
+        )
         expected_facts = [
             fact
             for fact in oracle.get("facts", [])
@@ -343,15 +350,21 @@ def _content_contains_fact(content: str, fact: dict[str, Any]) -> bool:
     )
 
 
-def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    request = urllib.request.Request(
+def _post_json(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    api_key: str | None = None,
+    access_token: str | None = None,
+    timeout: int = 180,
+) -> dict[str, Any]:
+    return _http_post_json(
         url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
+        payload,
+        api_key=api_key,
+        access_token=access_token,
+        timeout=timeout,
     )
-    with urllib.request.urlopen(request, timeout=180) as response:
-        return json.loads(response.read().decode("utf-8"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -363,6 +376,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", default="mix")
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--max-cases", type=int)
+    parser.add_argument("--api-key", default=None, help="X-API-Key header for authenticated servers.")
+    parser.add_argument(
+        "--access-token",
+        default=None,
+        help="Bearer access token (Authorization header) for authenticated servers.",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     if args.backend == "sidecar":
@@ -382,6 +401,8 @@ def main(argv: list[str] | None = None) -> int:
             mode=args.mode,
             top_k=args.top_k,
             max_cases=args.max_cases,
+            api_key=args.api_key,
+            access_token=args.access_token,
         )
     output = json.dumps(report, ensure_ascii=False, indent=2)
     if args.output:

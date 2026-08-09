@@ -8,6 +8,7 @@ keeps the WebUI refresh button meaningful.
 from __future__ import annotations
 
 import json
+import os
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -136,7 +137,7 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
     async def refresh_index() -> dict[str, Any]:
         try:
             require_eval()
-            runs = scan_runs(root)
+            runs = scan_runs(root, force=True)
             return {
                 "indexed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "file_count": sum(len(run.get("artifact_titles", [])) for run in runs),
@@ -150,15 +151,16 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
     @router.post("/runs/{run_id:path}/analyze", dependencies=[Depends(combined_auth)])
     def analyze_run(
         run_id: str,
-        model: str = Query(default="qwen3:8b", description="Ollama model for the analysis"),
-        ollama_url: str = Query(default="http://127.0.0.1:11434"),
         force: bool = Query(default=False, description="Regenerate instead of returning the cache"),
     ) -> dict[str, Any]:
         """Ask the local LLM to produce a concise analysis of one run.
 
         Implemented as a sync endpoint so FastAPI runs it in the threadpool:
         the long Ollama call no longer blocks the event loop, keeping the
-        WebUI polling responsive while an analysis is in flight.
+        WebUI polling responsive while an analysis is in flight.  The Ollama
+        endpoint and model are fixed to server-side configuration
+        (``OLLAMA_URL`` / ``OLLAMA_MODEL``) instead of trusting client-supplied
+        values.
         """
         try:
             require_eval()
@@ -219,8 +221,8 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
                 f"报告摘录：\n{report_excerpt}\n"
             )
             text = chat_ollama(
-                host=ollama_url,
-                model=model,
+                host=os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
+                model=os.getenv("OLLAMA_MODEL", "qwen3:8b"),
                 system=(
                     "你是评测分析助手。用简洁的中文分析这段评测结果：先说结论，再指出方法间差异、"
                     "可能的失败模式（如检索失败/选择失败/上下文过大/拒答问题）和可执行的改进建议。"
@@ -235,7 +237,7 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
             )
             payload = {
                 "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "model": model,
+                "model": os.getenv("OLLAMA_MODEL", "qwen3:8b"),
                 "text": text,
             }
             # Write atomically so a failed regeneration never destroys the

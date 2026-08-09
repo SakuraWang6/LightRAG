@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import urllib.request
 from pathlib import Path
 from typing import Any
 
 from memory_eval_tests.common.dataset_client import DatasetClient
+from memory_eval_tests.common.http import post_json as _http_post_json
 from memory_eval_tests.common.sampling import sample_evenly
 
 
@@ -20,6 +20,8 @@ def evaluate_answers(
     chunk_top_k: int | None = None,
     max_total_tokens: int | None = None,
     max_cases: int | None = None,
+    api_key: str | None = None,
+    access_token: str | None = None,
 ) -> dict[str, Any]:
     oracle = DatasetClient(dataset_source).oracle()
     facts_by_id = {fact["fact_id"]: fact for fact in oracle.get("facts", [])}
@@ -39,7 +41,12 @@ def evaluate_answers(
             payload["chunk_top_k"] = chunk_top_k
         if max_total_tokens is not None:
             payload["max_total_tokens"] = max_total_tokens
-        response = _post_json(f"{rag_api_url.rstrip('/')}/query", payload)
+        response = _post_json(
+            f"{rag_api_url.rstrip('/')}/query",
+            payload,
+            api_key=api_key,
+            access_token=access_token,
+        )
         answer_text = str(response.get("response") or response.get("content") or "")
         references_blob = json.dumps(response.get("references", []), ensure_ascii=False)
         expected = question.get("answer", "")
@@ -340,15 +347,21 @@ def _replace_latex_fractions(text: str) -> str:
 
 
 
-def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    request = urllib.request.Request(
+def _post_json(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    api_key: str | None = None,
+    access_token: str | None = None,
+    timeout: int = 300,
+) -> dict[str, Any]:
+    return _http_post_json(
         url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
+        payload,
+        api_key=api_key,
+        access_token=access_token,
+        timeout=timeout,
     )
-    with urllib.request.urlopen(request, timeout=300) as response:
-        return json.loads(response.read().decode("utf-8"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -360,6 +373,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--chunk-top-k", type=int)
     parser.add_argument("--max-total-tokens", type=int)
     parser.add_argument("--max-cases", type=int)
+    parser.add_argument("--api-key", default=None, help="X-API-Key header for authenticated servers.")
+    parser.add_argument(
+        "--access-token",
+        default=None,
+        help="Bearer access token (Authorization header) for authenticated servers.",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     report = evaluate_answers(
@@ -370,6 +389,8 @@ def main(argv: list[str] | None = None) -> int:
         chunk_top_k=args.chunk_top_k,
         max_total_tokens=args.max_total_tokens,
         max_cases=args.max_cases,
+        api_key=args.api_key,
+        access_token=args.access_token,
     )
     output = json.dumps(report, ensure_ascii=False, indent=2)
     if args.output:

@@ -47,7 +47,7 @@ def test_api_recall_and_mrr_use_reference_rank(monkeypatch, tmp_path) -> None:
 
     captured_payloads: list[dict] = []
 
-    def fake_post_json(url: str, payload: dict) -> dict:
+    def fake_post_json(url: str, payload: dict, **kwargs) -> dict:
         captured_payloads.append(payload)
         assert payload["include_chunk_content"] is True
         return {
@@ -111,7 +111,7 @@ def test_api_partial_recall_and_context_precision(monkeypatch, tmp_path) -> None
         facts=[_fact("FACT-1", "9021 QMU"), _fact("FACT-2", "9038 QMU")],
     )
 
-    def fake_post_json(url: str, payload: dict) -> dict:
+    def fake_post_json(url: str, payload: dict, **kwargs) -> dict:
         return {
             "status": "ok",
             "data": {
@@ -173,7 +173,7 @@ def test_api_requires_ranked_chunk_content(monkeypatch, tmp_path, response) -> N
 
     monkeypatch.setattr(
         "memory_eval_tests.online.retrieval_eval._post_json",
-        lambda url, payload: response,
+        lambda url, payload, **kwargs: response,
     )
     with pytest.raises(ValueError, match=r"references|content"):
         evaluate_api(dataset_source=dataset, rag_api_url="http://127.0.0.1:9621")
@@ -194,7 +194,7 @@ def test_api_max_cases_samples_deterministically(monkeypatch, tmp_path) -> None:
     dataset = _write_oracle(tmp_path, questions=questions, facts=facts)
     seen: list[str] = []
 
-    def fake_post_json(url: str, payload: dict) -> dict:
+    def fake_post_json(url: str, payload: dict, **kwargs) -> dict:
         seen.append(payload["query"])
         return {
             "status": "ok",
@@ -246,7 +246,7 @@ def test_capped_sampling_shares_non_abstain_subset_with_answer_eval(
     retrieval_seen: list[str] = []
     answer_seen: list[str] = []
 
-    def fake_retrieval_post(url: str, payload: dict) -> dict:
+    def fake_retrieval_post(url: str, payload: dict, **kwargs) -> dict:
         retrieval_seen.append(payload["query"])
         return {
             "status": "ok",
@@ -256,7 +256,7 @@ def test_capped_sampling_shares_non_abstain_subset_with_answer_eval(
             "metadata": {},
         }
 
-    def fake_answer_post(url: str, payload: dict) -> dict:
+    def fake_answer_post(url: str, payload: dict, **kwargs) -> dict:
         answer_seen.append(payload["query"])
         return {"response": "unrelated", "references": []}
 
