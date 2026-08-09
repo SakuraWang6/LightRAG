@@ -32,7 +32,9 @@ except ImportError:
     _eval_framework_version = None
 
 
-def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] = None) -> APIRouter:
+def create_eval_routes(
+    api_key: Optional[str] = None, runs_root: Optional[Path] = None
+) -> APIRouter:
     """Create the eval-console router.
 
     Args:
@@ -63,9 +65,9 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
         try:
             require_eval()
             return {
-                "runs_root": str(root.relative_to(Path(__file__).resolve().parents[2])) if root.is_relative_to(
-                    Path(__file__).resolve().parents[2]
-                ) else str(root),
+                "runs_root": str(root.relative_to(Path(__file__).resolve().parents[2]))
+                if root.is_relative_to(Path(__file__).resolve().parents[2])
+                else str(root),
                 "indexed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "run_count": len(scan_runs(root)),
                 "eval_framework_version": _eval_framework_version,
@@ -80,9 +82,15 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
     @router.get("/runs", dependencies=[Depends(combined_auth)])
     async def list_runs(
         kind: Optional[str] = Query(default=None, description="Filter by run kind"),
-        dataset: Optional[str] = Query(default=None, description="Filter by dataset id"),
-        q: Optional[str] = Query(default=None, description="Search label / dataset / artifact titles"),
-        limit: int = Query(default=500, ge=1, le=10000, description="Max runs per page"),
+        dataset: Optional[str] = Query(
+            default=None, description="Filter by dataset id"
+        ),
+        q: Optional[str] = Query(
+            default=None, description="Search label / dataset / artifact titles"
+        ),
+        limit: int = Query(
+            default=500, ge=1, le=10000, description="Max runs per page"
+        ),
         offset: int = Query(default=0, ge=0, description="Pagination offset"),
     ) -> dict[str, Any]:
         try:
@@ -115,6 +123,28 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
             raise
         except Exception as exc:
             logger.error(f"Error listing eval runs: {exc}")
+            logger.error(traceback.format_exc())
+            raise internal_server_error(exc)
+
+    @router.get("/runs/{run_id:path}/log", dependencies=[Depends(combined_auth)])
+    async def get_run_log(
+        run_id: str,
+        lines: int = Query(default=200, ge=1, le=5000),
+    ) -> dict[str, Any]:
+        try:
+            require_eval()
+            detail = load_run(root, run_id)
+            if detail is None:
+                raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+            log_path = Path(detail["run_dir"]) / "run.log"
+            if not log_path.exists():
+                return {"exists": False, "lines": []}
+            content = log_path.read_text(encoding="utf-8").splitlines()
+            return {"exists": True, "lines": content[-lines:]}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error reading eval run log '{run_id}': {exc}")
             logger.error(traceback.format_exc())
             raise internal_server_error(exc)
 
@@ -151,7 +181,9 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
     @router.post("/runs/{run_id:path}/analyze", dependencies=[Depends(combined_auth)])
     def analyze_run(
         run_id: str,
-        force: bool = Query(default=False, description="Regenerate instead of returning the cache"),
+        force: bool = Query(
+            default=False, description="Regenerate instead of returning the cache"
+        ),
     ) -> dict[str, Any]:
         """Ask the local LLM to produce a concise analysis of one run.
 
@@ -184,7 +216,18 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
             conditions = {
                 c["key"]: c["value"]
                 for c in detail.get("conditions", [])
-                if c["key"] in {"dataset", "pages", "tier", "model", "mode", "top_k", "num_ctx", "kg", "methods"}
+                if c["key"]
+                in {
+                    "dataset",
+                    "pages",
+                    "tier",
+                    "model",
+                    "mode",
+                    "top_k",
+                    "num_ctx",
+                    "kg",
+                    "methods",
+                }
             }
             rows = (summary_methods or {}).get("table", {}).get("rows", [])
             snippet = []

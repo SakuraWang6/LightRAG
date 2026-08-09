@@ -7,18 +7,33 @@ import json
 from pathlib import Path
 from typing import Any
 
+from memory_eval_tests.experiments.common import ExperimentSpec, RunContext
+
 
 def _by_method(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {item["method"]: {row["question_id"]: row for row in item["results"]} for item in payload["methods"]}
+    return {
+        item["method"]: {row["question_id"]: row for row in item["results"]}
+        for item in payload["methods"]
+    }
 
 
-def _classify(row: dict[str, Any], direct_top20: dict[str, Any]) -> tuple[str, str, str | None]:
+def _classify(
+    row: dict[str, Any], direct_top20: dict[str, Any]
+) -> tuple[str, str, str | None]:
     if row["exact_match"]:
         return "PASS", "Correct under the repaired deterministic evaluator.", None
     if row["candidate_recall"] < 1:
-        return "R1 Retrieval Failure", "An oracle fact has no matching unit in the Top-20 candidate pool.", None
+        return (
+            "R1 Retrieval Failure",
+            "An oracle fact has no matching unit in the Top-20 candidate pool.",
+            None,
+        )
     if row["selected_recall"] < row["candidate_recall"]:
-        return "R2 Selection Failure", "The candidate pool contains the oracle fact, but the selector omitted it.", None
+        return (
+            "R2 Selection Failure",
+            "The candidate pool contains the oracle fact, but the selector omitted it.",
+            None,
+        )
     if not row["exact_match"] and direct_top20.get("exact_match"):
         return (
             "R3 Context Interference",
@@ -55,9 +70,23 @@ def render(payload: dict[str, Any]) -> str:
         "| Primary cause | Cases |",
         "|---|---:|",
     ]
-    for cause in ("R1 Retrieval Failure", "R2 Selection Failure", "R3 Context Interference", "R4 Generation / Reasoning Failure", "R5 Evaluator Failure"):
+    for cause in (
+        "R1 Retrieval Failure",
+        "R2 Selection Failure",
+        "R3 Context Interference",
+        "R4 Generation / Reasoning Failure",
+        "R5 Evaluator Failure",
+    ):
         lines.append(f"| {cause} | {counts.get(cause, 0)} |")
-    lines.extend(["", "## Per-question evidence", "", "| Question | Type | Top-20 Recall | Selected Recall | Direct Top-20 | Select5 | Primary | Secondary | Evidence |", "|---|---|---:|---:|---:|---:|---|---|---|"])
+    lines.extend(
+        [
+            "",
+            "## Per-question evidence",
+            "",
+            "| Question | Type | Top-20 Recall | Selected Recall | Direct Top-20 | Select5 | Primary | Secondary | Evidence |",
+            "|---|---|---:|---:|---:|---:|---|---|---|",
+        ]
+    )
     for question_id, row, primary, secondary, evidence in rows:
         lines.append(
             f"| {question_id} | {row['question_group']} | {row['candidate_recall']:.2f} | {row['selected_recall']:.2f} | "
@@ -79,6 +108,27 @@ def render(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _render_from_input(input_path: Path) -> str:
+    payload = json.loads(input_path.read_text(encoding="utf-8"))
+    return render(payload)
+
+
+def _run_analysis(context: RunContext) -> dict[str, Any]:
+    extra = context.extra
+    input_path = Path(
+        extra.get("input")
+        or "memory_eval_tests/runs/evidence-selector-v1/evidence_selector_results.json"
+    )
+    rendered = _render_from_input(input_path)
+    output = context.output_dir / "evidence_selector_failure_analysis.md"
+    output.write_text(rendered, encoding="utf-8")
+    return {
+        "methods": [],
+        "report": rendered,
+        "status": "complete",
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
@@ -90,3 +140,15 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+spec = ExperimentSpec(
+    id="evidence_selector_failure_analysis",
+    label="证据选择失败分解",
+    description=(
+        "把 Top20→Select5 的错误按 R1 检索失败 / R2 选择失败 / R3 上下文干扰 / "
+        "R4 生成推理失败 分类，输出逐题证据表。"
+    ),
+    runner=_run_analysis,
+    kind="experiment",
+)

@@ -52,6 +52,23 @@ def test_legacy_metric_aliases_map_to_canonical_names() -> None:
     assert normalize_metric_key("ungrounded_rate") == "ungrounded_rate"
 
 
+def test_capture_environment_credentials(monkeypatch) -> None:
+    monkeypatch.delenv("LIGHTRAG_API_KEY", raising=False)
+    monkeypatch.delenv("LIGHTRAG_ACCESS_TOKEN", raising=False)
+    env = capture_environment()
+    assert env.get("api_key") is None
+    assert env.get("access_token") is None
+
+    overridden = capture_environment(api_key="k", access_token="t")
+    assert overridden["api_key"] == "k"
+    assert overridden["access_token"] == "t"
+
+    monkeypatch.setenv("LIGHTRAG_API_KEY", "from-env")
+    assert capture_environment()["api_key"] == "from-env"
+    # Explicit arguments win over environment defaults.
+    assert capture_environment(api_key="cli")["api_key"] == "cli"
+
+
 def test_sample_evenly_is_deterministic_and_spread() -> None:
     from memory_eval_tests.common.sampling import sample_evenly
 
@@ -108,6 +125,46 @@ def test_envelope_roundtrip(tmp_path: Path) -> None:
     assert envelope["methods"][0]["summary"]["passed"] is True
 
 
+def test_envelope_records_started_and_finished(tmp_path: Path) -> None:
+    from memory_eval_tests.experiments.common import (
+        ExperimentSpec,
+        RunContext,
+        write_envelope,
+    )
+
+    spec = ExperimentSpec(id="x", label="X", description="d", runner=lambda c: {})
+    started = "2026-08-09T00:00:00+00:00"
+    context = RunContext(
+        spec=spec,
+        dataset=tmp_path / "dataset",
+        output_dir=tmp_path / "run",
+        baseline={},
+        environment={},
+        variables=[],
+        run_id="r",
+        started_at=started,
+    )
+    write_envelope(tmp_path / "run", context=context, status="complete", methods=[])
+    envelope = json.loads((tmp_path / "run" / "run.json").read_text(encoding="utf-8"))
+    assert envelope["started_at"] == started
+    assert envelope["finished_at"]
+
+    path = write_simple_envelope(
+        tmp_path / "simple",
+        kind="online",
+        run_id="s",
+        experiment={"id": "e", "label": "L", "description": "d"},
+        baseline={},
+        environment={},
+        methods=[],
+        status="complete",
+        started_at=started,
+    )
+    simple = json.loads(path.read_text(encoding="utf-8"))
+    assert simple["started_at"] == started
+    assert simple["finished_at"]
+
+
 def test_registry_specs() -> None:
     from memory_eval_tests.experiments.registry import list_specs
 
@@ -124,6 +181,9 @@ def test_registry_specs() -> None:
         "table_packing",
         "combined_pipeline",
         "oracle_upper_bound",
+        "frozen_prompt_llm_eval",
+        "evaluator_recheck",
+        "evidence_selector_failure_analysis",
     ]
     for spec in list_specs():
         assert spec.description

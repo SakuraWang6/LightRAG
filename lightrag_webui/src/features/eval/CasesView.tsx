@@ -1,7 +1,8 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CheckIcon, XIcon, MinusIcon } from 'lucide-react'
+import { CheckIcon, DownloadIcon, XIcon, MinusIcon } from 'lucide-react'
 
+import Button from '@/components/ui/Button'
 import {
   Select,
   SelectContent,
@@ -17,6 +18,7 @@ import {
   TableHeader,
   TableRow
 } from '@/components/ui/Table'
+import { buildCasesCsv, caseFieldLabel } from '@/features/eval/utils'
 
 type NormalizedCase = {
   id: string
@@ -57,6 +59,7 @@ function formatDetailValue(value: unknown): string {
 }
 
 function CaseDetail({ c }: { c: NormalizedCase }) {
+  const { i18n } = useTranslation()
   const entries = useMemo(() => {
     const detail = (c.raw.detail ?? {}) as Record<string, unknown>
     const merged: Record<string, unknown> = {}
@@ -73,8 +76,29 @@ function CaseDetail({ c }: { c: NormalizedCase }) {
     <dl className="space-y-1">
       {Object.entries(entries).map(([key, value]) => (
         <div key={key} className="flex gap-3 text-xs">
-          <dt className="text-muted-foreground w-40 shrink-0 break-all font-medium">{key}</dt>
-          <dd className="min-w-0 break-words">{formatDetailValue(value)}</dd>
+          <dt className="text-muted-foreground w-40 shrink-0 break-all font-medium">
+            {caseFieldLabel(key, i18n.language)}
+          </dt>
+          <dd className="min-w-0 break-words">
+            {key === 'hit_evidence' && Array.isArray(value) ? (
+              <div className="space-y-2">
+                {value.map((item, index) => (
+                  <div key={index} className="rounded-md border p-2">
+                    <div className="text-muted-foreground mb-1">
+                      {String(item.fact_id ?? '')} · rank {String(item.rank ?? '—')}
+                      {item.file_path ? ` · ${String(item.file_path)}` : ''}
+                      {item.kind ? ` · ${String(item.kind)}` : ''}
+                    </div>
+                    <p className="whitespace-pre-wrap break-words">
+                      {item.text ? String(item.text) : '—'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              formatDetailValue(value)
+            )}
+          </dd>
         </div>
       ))}
     </dl>
@@ -132,9 +156,20 @@ export default function CasesView({ rows }: CasesViewProps) {
     [cases, filter, groupFilter]
   )
 
+  const exportCsv = () => {
+    const csv = buildCasesCsv(filtered.map((c) => c.raw))
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'eval-cases.csv'
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="space-y-3">
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2">
         <div className="w-44">
           <Select value={filter} onValueChange={setFilter}>
             <SelectTrigger className="h-8">
@@ -165,6 +200,10 @@ export default function CasesView({ rows }: CasesViewProps) {
         <span className="text-muted-foreground self-center text-xs">
           {filtered.length}/{cases.length}
         </span>
+        <Button size="sm" variant="outline" className="ml-auto" onClick={exportCsv}>
+          <DownloadIcon className="mr-1 size-4" />
+          {t('eval.exportCsv')}
+        </Button>
       </div>
 
       <div className="overflow-auto rounded-md border">

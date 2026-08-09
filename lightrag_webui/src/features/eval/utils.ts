@@ -56,6 +56,79 @@ export function buildCompareCsv(
   return lines.join('\n') + '\n'
 }
 
+const CASE_FIELD_LABELS: Record<string, { zh: string; en: string }> = {
+  recall_at_k: { zh: '召回@K', en: 'Recall@K' },
+  reciprocal_rank: { zh: 'MRR 排名', en: 'MRR rank' },
+  context_precision: { zh: '上下文精确率', en: 'Context precision' },
+  object_hit_rate: { zh: '对象命中率', en: 'Object hit rate' },
+  exact_match: { zh: '精确匹配', en: 'Exact match' },
+  grounded: { zh: '有证据支撑', en: 'Grounded' },
+  evidence_available: { zh: '证据可得', en: 'Evidence available' },
+  abstention_correct: { zh: '拒答正确', en: 'Abstention correct' },
+  hit_fact_ids: { zh: '命中证据', en: 'Hit facts' },
+  expected_fact_ids: { zh: '期望证据', en: 'Expected facts' },
+  top_contexts: { zh: '命中上下文', en: 'Top contexts' },
+  hit_evidence: { zh: '命中证据原文', en: 'Hit evidence' },
+  question_id: { zh: '题号', en: 'Question ID' },
+  question_group: { zh: '分组', en: 'Group' },
+  question_type: { zh: '题型', en: 'Type' },
+  method: { zh: '方法', en: 'Method' }
+}
+
+export function caseFieldLabel(key: string, locale: string): string {
+  const entry = CASE_FIELD_LABELS[key]
+  if (!entry) return key
+  return (locale === 'zh' || locale.startsWith('zh')) ? entry.zh : entry.en
+}
+
+export function buildCasesCsv(rows: Array<Record<string, unknown>>): string {
+  const keys = new Set<string>([
+    'question_id',
+    'question',
+    'answer',
+    'expected',
+    'group',
+    'type',
+    'method'
+  ])
+  for (const row of rows) {
+    const detail = (row.detail ?? {}) as Record<string, unknown>
+    for (const key of Object.keys(detail)) {
+      if (!keys.has(key)) keys.add(key)
+    }
+  }
+  const ordered = Array.from(keys)
+  const lines = [ordered.map(escapeCsvCell).join(',')]
+  for (const row of rows) {
+    const detail = (row.detail ?? {}) as Record<string, unknown>
+    lines.push(
+      ordered
+        .map((key) => {
+          const value = detail[key] ?? row[key]
+          return escapeCsvCell(formatMetricCell(value))
+        })
+        .join(',')
+    )
+  }
+  return lines.join('\n') + '\n'
+}
+
+export function metricStats(
+  values: Array<unknown>
+): { n: number; sigma: number | null } {
+  const numbers = values.filter((value): value is number => typeof value === 'number')
+  if (numbers.length === 0) return { n: 0, sigma: null }
+  const mean = numbers.reduce((sum, value) => sum + value, 0) / numbers.length
+  let sigma: number | null = null
+  if (numbers.length >= 2) {
+    const variance =
+      numbers.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
+      (numbers.length - 1)
+    sigma = Math.sqrt(variance)
+  }
+  return { n: numbers.length, sigma }
+}
+
 export function runKindClass(kind: EvalRunKind): string {
   switch (kind) {
     case 'offline':

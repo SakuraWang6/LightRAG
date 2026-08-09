@@ -13,6 +13,9 @@ from memory_eval_tests.common.evidence import normalize_evidence
 from memory_eval_tests.common.http import post_json as _http_post_json
 from memory_eval_tests.common.sampling import sample_evenly
 
+_HIT_EVIDENCE_LIMIT = 5
+_HIT_EVIDENCE_CHARS = 500
+
 
 def evaluate_api(
     *,
@@ -55,19 +58,28 @@ def evaluate_api(
             if fact["fact_id"] in question.get("evidence_fact_ids", [])
         ]
         references = _ranked_references(response)
-        ranked_chunks: list[tuple[int, str]] = []
+        ranked_chunks: list[tuple[int, int, str]] = []
         rank = 0
         for ref_index, ref in enumerate(references):
             for chunk in ref.get("content") or []:
                 rank += 1
-                ranked_chunks.append((rank, chunk))
+                ranked_chunks.append((rank, ref_index, chunk))
         hits_by_fact: dict[str, int] = {}
+        hit_evidence: dict[str, dict[str, Any]] = {}
         hit_chunk_count = 0
-        for rank, chunk in ranked_chunks:
+        for rank, ref_index, chunk in ranked_chunks:
             chunk_hit = False
             for fact in expected_facts:
                 if _content_contains_fact(chunk, fact):
-                    hits_by_fact.setdefault(fact["fact_id"], rank)
+                    fact_id = fact["fact_id"]
+                    if fact_id not in hits_by_fact:
+                        hits_by_fact[fact_id] = rank
+                        hit_evidence[fact_id] = {
+                            "fact_id": fact_id,
+                            "rank": rank,
+                            "file_path": references[ref_index].get("file_path", ""),
+                            "text": chunk[:_HIT_EVIDENCE_CHARS],
+                        }
                     chunk_hit = True
             if chunk_hit:
                 hit_chunk_count += 1
@@ -90,8 +102,16 @@ def evaluate_api(
                 "expected_fact_ids": [fact["fact_id"] for fact in expected_facts],
                 "hit_fact_ids": [
                     fact_id
-                    for fact_id, _ in sorted(hits_by_fact.items(), key=lambda item: item[1])
+                    for fact_id, _ in sorted(
+                        hits_by_fact.items(), key=lambda item: item[1]
+                    )
                 ],
+                "hit_evidence": [
+                    hit_evidence[fact_id]
+                    for fact_id in sorted(
+                        hit_evidence, key=lambda item: hits_by_fact[item]
+                    )
+                ][:_HIT_EVIDENCE_LIMIT],
                 "top_contexts": [
                     {
                         "rank": ref_index + 1,
@@ -122,9 +142,7 @@ def evaluate_sidecar(
 
     questions = sample_evenly(list(oracle.questions), max_cases)
     questions = [
-        question
-        for question in questions
-        if question.expected_behavior != "abstain"
+        question for question in questions if question.expected_behavior != "abstain"
     ]
     for question in questions:
         ranked = _rank_contexts(question.question, contexts)
@@ -135,13 +153,24 @@ def evaluate_sidecar(
             if fact_id in facts_by_id
         ]
         hits_by_fact: dict[str, int] = {}
+        hit_evidence: dict[str, dict[str, Any]] = {}
         object_hits: set[str] = set()
         hit_context_count = 0
         for rank, context in enumerate(top_contexts, start=1):
             context_hit = False
             for fact in expected_facts:
                 if _context_contains_fact(context, fact):
-                    hits_by_fact.setdefault(fact.fact_id, rank)
+                    if fact.fact_id not in hits_by_fact:
+                        hits_by_fact[fact.fact_id] = rank
+                        hit_evidence[fact.fact_id] = {
+                            "fact_id": fact.fact_id,
+                            "rank": rank,
+                            "kind": context["kind"],
+                            "id": context["id"],
+                            "text": str(context.get("content", ""))[
+                                :_HIT_EVIDENCE_CHARS
+                            ],
+                        }
                     context_hit = True
                     if context["kind"] == fact.object_type or (
                         fact.object_type == "figure" and context["kind"] == "drawing"
@@ -164,12 +193,20 @@ def evaluate_sidecar(
                 "question_type": question.question_type,
                 "recall_at_k": recall,
                 "reciprocal_rank": 1 / first_rank if first_rank else 0.0,
-                "context_precision": hit_context_count / len(top_contexts) if top_contexts else 0.0,
+                "context_precision": hit_context_count / len(top_contexts)
+                if top_contexts
+                else 0.0,
                 "object_hit_rate": (
                     len(object_hits) / len(object_expected) if object_expected else 1.0
                 ),
                 "expected_fact_ids": [fact.fact_id for fact in expected_facts],
                 "hit_fact_ids": sorted(hits_by_fact),
+                "hit_evidence": [
+                    hit_evidence[fact_id]
+                    for fact_id in sorted(
+                        hit_evidence, key=lambda item: hits_by_fact[item]
+                    )
+                ][:_HIT_EVIDENCE_LIMIT],
                 "top_contexts": [
                     {
                         "rank": index + 1,
@@ -208,9 +245,7 @@ def _summarize_dict_results(
             "results": [],
         }
     object_rates = [
-        r["object_hit_rate"]
-        for r in results
-        if r.get("object_hit_rate") is not None
+        r["object_hit_rate"] for r in results if r.get("object_hit_rate") is not None
     ]
     return {
         "backend": backend,
@@ -219,8 +254,11 @@ def _summarize_dict_results(
         "cases": len(results),
         "average_recall": sum(r["recall_at_k"] for r in results) / len(results),
         "mrr": sum(r["reciprocal_rank"] for r in results) / len(results),
-        "context_precision": sum(r["context_precision"] for r in results) / len(results),
-        "object_hit_rate": sum(object_rates) / len(object_rates) if object_rates else None,
+        "context_precision": sum(r["context_precision"] for r in results)
+        / len(results),
+        "object_hit_rate": sum(object_rates) / len(object_rates)
+        if object_rates
+        else None,
         "full_recall_cases": sum(r["recall_at_k"] == 1.0 for r in results),
         "results": results,
     }
@@ -368,7 +406,9 @@ def _post_json(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Evaluate LightRAG retrieval against oracle.")
+    parser = argparse.ArgumentParser(
+        description="Evaluate LightRAG retrieval against oracle."
+    )
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--backend", choices=("api", "sidecar"), default="api")
     parser.add_argument("--parsed-dir", type=Path)
@@ -376,7 +416,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", default="mix")
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--max-cases", type=int)
-    parser.add_argument("--api-key", default=None, help="X-API-Key header for authenticated servers.")
+    parser.add_argument(
+        "--api-key", default=None, help="X-API-Key header for authenticated servers."
+    )
     parser.add_argument(
         "--access-token",
         default=None,

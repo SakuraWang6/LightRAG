@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 DATASET_SCHEMA_VERSION = "1.0"
 _SUPPORTED_SCHEMA_VERSIONS = frozenset({DATASET_SCHEMA_VERSION})
 

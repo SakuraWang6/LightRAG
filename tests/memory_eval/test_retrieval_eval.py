@@ -93,6 +93,12 @@ def test_api_recall_and_mrr_use_reference_rank(monkeypatch, tmp_path) -> None:
     case = report["results"][0]
     assert case["hit_fact_ids"] == ["FACT-1", "FACT-2"]
     assert case["object_hit_rate"] is None
+    evidence = case["hit_evidence"]
+    assert [item["fact_id"] for item in evidence] == ["FACT-1", "FACT-2"]
+    assert evidence[0]["rank"] == 2
+    assert evidence[0]["file_path"] == "rich-smoke.docx"
+    assert "9021 QMU" in evidence[0]["text"]
+    assert evidence[1]["rank"] == 3
     assert [ctx["rank"] for ctx in case["top_contexts"]] == [1, 2]
 
 
@@ -136,7 +142,76 @@ def test_api_partial_recall_and_context_precision(monkeypatch, tmp_path) -> None
     # The only hit (FACT-1) appears in the second reference item -> rank 2.
     assert case["reciprocal_rank"] == pytest.approx(0.5)
     assert case["context_precision"] == pytest.approx(1 / 3)
+    assert case["hit_evidence"][0]["fact_id"] == "FACT-1"
+    assert "9021 QMU" in case["hit_evidence"][0]["text"]
     assert report["average_recall"] == pytest.approx(0.5)
+
+
+def test_sidecar_hit_evidence_contains_block_text(monkeypatch, tmp_path) -> None:
+    from memory_eval_tests.online.retrieval_eval import evaluate_sidecar
+
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "oracle.json").write_text(
+        json.dumps(
+            {
+                "dataset_id": "sidecar-test",
+                "facts": [
+                    {
+                        "fact_id": "FACT-1",
+                        "fact_type": "direct_numeric",
+                        "answer": "9021 QMU",
+                        "expected_text": "FACT-1: 9021 QMU",
+                        "section": "S1",
+                        "page": 1,
+                        "object_type": "text",
+                    }
+                ],
+                "questions": [
+                    {
+                        "id": "Q1",
+                        "question": "What is the limit?",
+                        "answer": "9021 QMU",
+                        "question_type": "direct_numeric",
+                        "evidence_fact_ids": ["FACT-1"],
+                        "expected_behavior": "answer",
+                    }
+                ],
+                "objects": [],
+                "relations": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    parsed = tmp_path / "parsed"
+    parsed.mkdir()
+    (parsed / "x.blocks.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "content", "blockid": "b1", "content": "Noise block."}),
+                json.dumps(
+                    {
+                        "type": "content",
+                        "blockid": "b2",
+                        "content": "The calibration limit is 9021 QMU.",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report = evaluate_sidecar(
+        dataset_source=str(dataset),
+        parsed_dir=parsed,
+        mode="sidecar",
+        top_k=5,
+    )
+    case = report["results"][0]
+    assert case["hit_evidence"][0]["fact_id"] == "FACT-1"
+    assert case["hit_evidence"][0]["rank"] == 1
+    assert case["hit_evidence"][0]["id"] == "b2"
+    assert "9021 QMU" in case["hit_evidence"][0]["text"]
 
 
 @pytest.mark.parametrize(

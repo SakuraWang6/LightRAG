@@ -6,7 +6,6 @@ from typing import Any
 
 from memory_data_service.schemas import DatasetManifest, DatasetSummary, OraclePayload
 
-
 PACKAGE_DIR = Path(__file__).resolve().parent
 DEFAULT_GENERATED_ROOT = PACKAGE_DIR / "generated"
 

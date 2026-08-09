@@ -2,7 +2,10 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   buildCompareCsv,
+  buildCasesCsv,
+  caseFieldLabel,
   formatDelta,
+  metricStats,
   metricRank,
   statusLabel
 } from '@/features/eval/utils'
@@ -47,5 +50,36 @@ describe('eval utils', () => {
     expect(csv).toContain('"x, ""quoted"""')
     expect(csv).toContain('0.5,0.9')
     expect(csv.endsWith('\n')).toBe(true)
+  })
+
+  test('caseFieldLabel localizes known keys and falls back to the raw key', () => {
+    expect(caseFieldLabel('hit_fact_ids', 'zh-CN')).toBe('命中证据')
+    expect(caseFieldLabel('hit_fact_ids', 'en')).toBe('Hit facts')
+    expect(caseFieldLabel('unknown_key', 'zh')).toBe('unknown_key')
+  })
+
+  test('buildCasesCsv includes detail fields without capping', () => {
+    const rows = [
+      {
+        question_id: 'Q1',
+        question: 'Q?',
+        hit_fact_ids: 'FACT-1, FACT-2, FACT-3, FACT-4, FACT-5, FACT-6',
+        detail: {
+          hit_fact_ids: ['FACT-1', 'FACT-2', 'FACT-3', 'FACT-4', 'FACT-5', 'FACT-6'],
+          hit_evidence: [{ fact_id: 'FACT-1', text: 'evidence text' }]
+        }
+      }
+    ]
+    const csv = buildCasesCsv(rows)
+    expect(csv.split('\n')[0]).toContain('hit_fact_ids')
+    expect(csv).toContain('FACT-1,FACT-2,FACT-3,FACT-4,FACT-5,FACT-6')
+  })
+
+  test('metricStats computes n and sample stdev', () => {
+    expect(metricStats([])).toEqual({ n: 0, sigma: null })
+    expect(metricStats(['x', 1])).toEqual({ n: 1, sigma: null })
+    const stats = metricStats([0.8, 0.9, 0.85])
+    expect(stats.n).toBe(3)
+    expect(stats.sigma).toBeCloseTo(0.05, 5)
   })
 })

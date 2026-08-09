@@ -22,6 +22,7 @@ import MetricCards from '@/features/eval/MetricCards'
 import MethodCompare from '@/features/eval/MethodCompare'
 import ProgressBar from '@/features/eval/ProgressBar'
 import ReportDocument from '@/features/eval/ReportDocument'
+import RunLog from '@/features/eval/RunLog'
 import { formatDate, runKindClass, statusBadgeClass, statusLabel } from '@/features/eval/utils'
 
 const HEADLINE_ORDER = [
@@ -56,6 +57,11 @@ function RunHeader({ run }: { run: EvalRunDetail }) {
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-lg font-semibold">{run.label}</h2>
         <Badge variant="outline" className={runKindClass(run.kind)}>{run.kind}</Badge>
+        {run.legacy ? (
+          <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
+            {t('eval.legacyRun')}
+          </Badge>
+        ) : null}
         {run.status ? <Badge variant="outline" className={statusBadgeClass(run.status)}>{statusLabel(run)}</Badge> : null}
         {(run.failed_checks ?? []).map((check) => (
           <Badge key={check} className="border-red-300 bg-red-50 text-red-700 dark:border-red-700 dark:bg-red-950 dark:text-red-300">
@@ -65,6 +71,12 @@ function RunHeader({ run }: { run: EvalRunDetail }) {
       </div>
       <p className="text-muted-foreground mt-1 text-xs">
         {t('eval.updatedAt')}: {formatDate(run.updated_at)}
+        {run.duration_seconds != null ? (
+          <>
+            {' · '}
+            {t('eval.duration')}: {run.duration_seconds}s
+          </>
+        ) : null}
         {' · '}
         {run.artifacts.length} {t('eval.artifactLabel')}
       </p>
@@ -185,6 +197,10 @@ function StandardRunView({ run }: { run: EvalRunDetail }) {
             <FileTextIcon className="mr-1 size-4" />
             {t('eval.reports')}
           </TabsTrigger>
+          <TabsTrigger value="log">
+            <FileTextIcon className="mr-1 size-4" />
+            {t('eval.runLog')}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="metrics" className="mt-3 space-y-3">
@@ -293,7 +309,10 @@ function ExperimentView({ run }: { run: EvalRunDetail }) {
 
         <TabsContent value="cases" className="mt-3">
           {caseRows.length === 0 ? (
-            <EmptyCard title={t('eval.noCases')} description={t('eval.noCasesHint')} />
+            <EmptyCard
+              title={t('eval.noCases')}
+              description={run.legacy ? t('eval.legacyNoCases') : t('eval.noCasesHint')}
+            />
           ) : (
             <CasesView rows={caseRows} />
           )}
@@ -328,6 +347,10 @@ function ExperimentView({ run }: { run: EvalRunDetail }) {
               ) : null}
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="log" className="mt-3">
+          <RunLog runId={run.id} />
         </TabsContent>
       </Tabs>
     </div>

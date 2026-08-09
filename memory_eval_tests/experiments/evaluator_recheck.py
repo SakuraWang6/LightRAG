@@ -8,14 +8,23 @@ from pathlib import Path
 from typing import Any
 
 from memory_eval_tests.common.dataset_client import DatasetClient
+from memory_eval_tests.experiments.common import ExperimentSpec, RunContext
 from memory_eval_tests.online.answer_eval import score_answer
 
 DEFAULT_REPORTS = (
     Path("memory_eval_tests/runs/online/rich-smoke-v1-api/answer_mix.json"),
-    Path("memory_eval_tests/runs/online/rich-smoke-v1-local-qwen8b-skipkg/answer_mix_top5_ctx8192.json"),
-    Path("memory_eval_tests/runs/online/rich-smoke-v1-local-qwen8b-kg-timeout900/answer_mix_top5_ctx8192.json"),
-    Path("memory_eval_tests/runs/online/rich-smoke-v1-kg-ablation/answer_kg_mix_top5_ctx8192_gpt4o-mini.json"),
-    Path("memory_eval_tests/runs/online/rich-smoke-v1-kg-ablation/context_size_qwen8b_ctx16384.json"),
+    Path(
+        "memory_eval_tests/runs/online/rich-smoke-v1-local-qwen8b-skipkg/answer_mix_top5_ctx8192.json"
+    ),
+    Path(
+        "memory_eval_tests/runs/online/rich-smoke-v1-local-qwen8b-kg-timeout900/answer_mix_top5_ctx8192.json"
+    ),
+    Path(
+        "memory_eval_tests/runs/online/rich-smoke-v1-kg-ablation/answer_kg_mix_top5_ctx8192_gpt4o-mini.json"
+    ),
+    Path(
+        "memory_eval_tests/runs/online/rich-smoke-v1-kg-ablation/context_size_qwen8b_ctx16384.json"
+    ),
 )
 
 
@@ -45,7 +54,11 @@ def _change_reason(question: dict[str, Any], old: bool, new: bool) -> str:
 
 
 def recheck_one(
-    *, label: str, report: dict[str, Any], questions: dict[str, dict[str, Any]], facts: dict[str, dict[str, Any]]
+    *,
+    label: str,
+    report: dict[str, Any],
+    questions: dict[str, dict[str, Any]],
+    facts: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     rows = []
     for old_row in report.get("results", []):
@@ -53,7 +66,11 @@ def recheck_one(
         question = questions.get(question_id)
         if not question:
             continue
-        evidence = [facts[fact_id] for fact_id in question.get("evidence_fact_ids", []) if fact_id in facts]
+        evidence = [
+            facts[fact_id]
+            for fact_id in question.get("evidence_fact_ids", [])
+            if fact_id in facts
+        ]
         new = score_answer(
             answer_text=str(old_row.get("answer", "")),
             expected=str(old_row.get("expected", question.get("answer", ""))),
@@ -87,14 +104,24 @@ def recheck_one(
     return {
         "label": label,
         "cases": total,
-        "old_answer_accuracy": sum(row["old_exact_match"] for row in rows) / total if total else 0.0,
-        "new_answer_accuracy": sum(row["new_exact_match"] for row in rows) / total if total else 0.0,
-        "old_groundedness": sum(row["old_grounded"] for row in rows) / total if total else 0.0,
-        "new_groundedness": sum(row["new_grounded"] for row in rows) / total if total else 0.0,
+        "old_answer_accuracy": sum(row["old_exact_match"] for row in rows) / total
+        if total
+        else 0.0,
+        "new_answer_accuracy": sum(row["new_exact_match"] for row in rows) / total
+        if total
+        else 0.0,
+        "old_groundedness": sum(row["old_grounded"] for row in rows) / total
+        if total
+        else 0.0,
+        "new_groundedness": sum(row["new_grounded"] for row in rows) / total
+        if total
+        else 0.0,
         "evidence_available": _average(rows, "new_evidence_available"),
         "citation_presence": _average(rows, "new_citation_presence"),
         "citation_correctness": _average(rows, "new_citation_correctness"),
-        "changed_questions": [row for row in rows if row["old_exact_match"] != row["new_exact_match"]],
+        "changed_questions": [
+            row for row in rows if row["old_exact_match"] != row["new_exact_match"]
+        ],
         "genuine_model_failures": [row for row in rows if not row["new_exact_match"]],
         "results": rows,
     }
@@ -120,7 +147,9 @@ def render_markdown(rechecks: list[dict[str, Any]]) -> str:
             f"{value('citation_presence')} | {value('citation_correctness')} |"
         )
     lines.extend(["", "## Changed questions", ""])
-    changed = [(item["label"], row) for item in rechecks for row in item["changed_questions"]]
+    changed = [
+        (item["label"], row) for item in rechecks for row in item["changed_questions"]
+    ]
     if not changed:
         lines.append("No exact-match scores changed under the repaired evaluator.")
     else:
@@ -148,29 +177,91 @@ def render_markdown(rechecks: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", type=Path, default=Path("memory_data_service/generated/rich-smoke-v1"))
-    parser.add_argument("--report", type=Path, action="append")
-    parser.add_argument(
-        "--output-json", type=Path, default=Path("memory_eval_tests/runs/evaluator_recheck.json")
-    )
-    parser.add_argument(
-        "--output-md", type=Path, default=Path("memory_eval_tests/runs/evaluator_recheck_report.md")
-    )
-    args = parser.parse_args()
+def _run(args: argparse.Namespace) -> dict[str, Any]:
     oracle = DatasetClient(str(args.dataset)).oracle()
     questions = {str(question["id"]): question for question in oracle["questions"]}
     facts = {str(fact["fact_id"]): fact for fact in oracle["facts"]}
     rechecks = []
     for path in args.report or list(DEFAULT_REPORTS):
         for label, report in _expand_report(path):
-            rechecks.append(recheck_one(label=label, report=report, questions=questions, facts=facts))
+            rechecks.append(
+                recheck_one(
+                    label=label, report=report, questions=questions, facts=facts
+                )
+            )
     payload = {"dataset": str(args.dataset), "reports": rechecks}
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
-    args.output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.output_json.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     args.output_md.write_text(render_markdown(rechecks), encoding="utf-8")
+    return payload
+
+
+def _run_recheck(context: RunContext) -> dict[str, Any]:
+    extra = context.extra
+    args = argparse.Namespace(
+        dataset=context.dataset,
+        report=[Path(extra["report"])] if extra.get("report") else None,
+        output_json=context.output_dir / "evaluator_recheck.json",
+        output_md=context.output_dir / "evaluator_recheck_report.md",
+    )
+    payload = _run(args)
+    rechecks = payload["reports"]
+    changed = sum(len(item["changed_questions"]) for item in rechecks)
+    summary = {
+        "reports": len(rechecks),
+        "cases": sum(item["cases"] for item in rechecks),
+        "changed_questions": changed,
+    }
+    return {
+        "methods": [
+            {
+                "method": "recheck",
+                "label": "评估器复核",
+                "params": {},
+                "summary": summary,
+                "results": rechecks,
+            }
+        ],
+        "report": render_markdown(rechecks),
+        "status": "complete",
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=Path("memory_data_service/generated/rich-smoke-v1"),
+    )
+    parser.add_argument("--report", type=Path, action="append")
+    parser.add_argument(
+        "--output-json",
+        type=Path,
+        default=Path("memory_eval_tests/runs/evaluator_recheck.json"),
+    )
+    parser.add_argument(
+        "--output-md",
+        type=Path,
+        default=Path("memory_eval_tests/runs/evaluator_recheck_report.md"),
+    )
+    args = parser.parse_args()
+    _run(args)
 
 
 if __name__ == "__main__":
     main()
+
+
+spec = ExperimentSpec(
+    id="evaluator_recheck",
+    label="评估器复核",
+    description=(
+        "用当前评分器重算历史保存的答案（不调用 LLM/RAG），量化评估器修订对"
+        "旧结论的影响。"
+    ),
+    runner=_run_recheck,
+    kind="experiment",
+)

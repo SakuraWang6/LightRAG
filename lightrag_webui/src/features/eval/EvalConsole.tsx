@@ -318,6 +318,11 @@ export default function EvalConsole() {
                           <Badge variant="outline" className={`text-[10px] ${runKindClass(run.kind)}`}>
                             {run.kind}
                           </Badge>
+                          {run.legacy ? (
+                            <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
+                              {t('eval.legacyRun')}
+                            </Badge>
+                          ) : null}
                         </div>
                         <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-1 text-[11px]">
                           {run.dataset ? <span className="truncate">{run.dataset}</span> : null}

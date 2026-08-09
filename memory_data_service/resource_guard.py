@@ -6,7 +6,6 @@ from typing import Any
 
 from memory_data_service.schemas import DatasetCreateRequest
 
-
 MAX_DEFAULT_GENERATION_PAGES = 3000
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,7 @@ _SCAN_SKIP_DIRS = {
 # expiry the mtime signature is re-checked so new/changed runs appear
 # automatically, and POST /eval/refresh forces an immediate rebuild.
 _SCAN_TTL_SECONDS = 15.0
+_SCAN_INDEX_NAME = ".eval_index.json"
 _scan_cache: dict[
     Path,
     tuple[float, tuple[tuple[str, int, int], ...], list[dict[str, Any]]],
@@ -49,6 +51,9 @@ _scan_cache: dict[
 
 
 def default_runs_root() -> Path:
+    configured = os.getenv("MEMORY_EVAL_RUNS_ROOT")
+    if configured:
+        return Path(configured)
     return Path(__file__).resolve().parents[2] / "memory_eval_tests" / "runs"
 
 
@@ -63,7 +68,9 @@ def _dataset_meta(runs_root: Path, dataset: str | None) -> dict[str, Any]:
     env_root = os.getenv("MEMORY_EVAL_DATASETS_ROOT")
     if env_root:
         candidates.append(Path(env_root))
-    candidates.append(Path(runs_root).parent.parent / "memory_data_service" / "generated")
+    candidates.append(
+        Path(runs_root).parent.parent / "memory_data_service" / "generated"
+    )
     candidates.append(Path.cwd() / "memory_data_service" / "generated")
     for root in dict.fromkeys(candidates):
         try:
@@ -110,13 +117,21 @@ def _flatten_cases(methods: list[dict[str, Any]]) -> dict[str, Any]:
             row: dict[str, Any] = {}
             detail: dict[str, Any] = {}
             for key, value in case.items():
-                if isinstance(value, (int, float, bool, str, list)) and value is not None:
+                if (
+                    isinstance(value, (int, float, bool, str, list))
+                    and value is not None
+                ):
                     cell_value: Any = value
                     if isinstance(value, list):
                         # Structured retrieval evidence stays fully available
                         # for the per-case detail view; only the table cell is
                         # capped to keep payloads small.
-                        if key in {"hit_fact_ids", "expected_fact_ids", "top_contexts"}:
+                        if key in {
+                            "hit_fact_ids",
+                            "expected_fact_ids",
+                            "top_contexts",
+                            "hit_evidence",
+                        }:
                             detail[key] = value
                         cell_value = ", ".join(str(item) for item in value[:5])
                     elif isinstance(value, str) and len(value) > 300:
@@ -209,6 +224,22 @@ def _read_progress(run_dir: Path) -> dict[str, Any]:
         return {}
 
 
+def _duration_seconds(envelope: dict[str, Any]) -> float | None:
+    started = envelope.get("started_at")
+    finished = envelope.get("finished_at")
+    if not started or not finished:
+        return None
+    try:
+        return round(
+            (
+                datetime.fromisoformat(finished) - datetime.fromisoformat(started)
+            ).total_seconds(),
+            3,
+        )
+    except ValueError:
+        return None
+
+
 def _markdown_toc(content: str) -> list[dict[str, Any]]:
     import re
 
@@ -230,7 +261,11 @@ def _report_artifact(run_dir: Path, envelope: dict[str, Any]) -> dict[str, Any] 
     except OSError:
         return None
     first = next(
-        (line.strip().lstrip("# ") for line in content.splitlines() if line.strip().startswith("#")),
+        (
+            line.strip().lstrip("# ")
+            for line in content.splitlines()
+            if line.strip().startswith("#")
+        ),
         path.name,
     )
     return {
@@ -271,7 +306,9 @@ def _run_record(
     failed_checks: list[str] = []
     if kind == "offline":
         failed_checks = [
-            _OFFLINE_LABELS.get(m.get("method") or "", m.get("label") or m.get("method") or "")
+            _OFFLINE_LABELS.get(
+                m.get("method") or "", m.get("label") or m.get("method") or ""
+            )
             for m in methods
             if m.get("method") != "offline_summary"
             and (m.get("summary") or {}).get("passed") is False
@@ -280,17 +317,21 @@ def _run_record(
         "id": run_id,
         "run_dir": str(run_dir),
         "kind": kind,
+        "legacy": bool(envelope.get("legacy", False)),
         "label": experiment.get("label") or run_dir.name,
         "description": experiment.get("description") or "",
         "dataset": dataset or dataset_meta.get("dataset"),
         "updated_at": envelope.get("created_at"),
+        "started_at": envelope.get("started_at"),
+        "finished_at": envelope.get("finished_at"),
+        "duration_seconds": _duration_seconds(envelope),
         "status": envelope.get("status"),
         "conditions": conditions,
         "progress": progress,
         "failed_checks": failed_checks,
-        "headline": {} if kind == "experiment" else {
-            metric["key"]: metric for metric in _summary_metrics(methods)
-        },
+        "headline": {}
+        if kind == "experiment"
+        else {metric["key"]: metric for metric in _summary_metrics(methods)},
         "variables": envelope.get("variables") or [],
         "artifact_titles": [],
     }
@@ -390,7 +431,7 @@ def _envelope_signature(runs_root: Path) -> tuple[tuple[str, int, int], ...]:
         progress_mtime = (
             progress_path.stat().st_mtime_ns if progress_path.exists() else 0
         )
-        entries.append((str(run_dir), run_mtime, progress_mtime))
+        entries.append((str(run_dir.relative_to(runs_root)), run_mtime, progress_mtime))
     return tuple(sorted(entries))
 
 
@@ -400,6 +441,68 @@ def clear_scan_cache(runs_root: Path | None = None) -> None:
         _scan_cache.clear()
     else:
         _scan_cache.pop(runs_root, None)
+        try:
+            (runs_root / _SCAN_INDEX_NAME).unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _scan_index_path(runs_root: Path) -> Path:
+    return runs_root / _SCAN_INDEX_NAME
+
+
+def _write_scan_index(
+    runs_root: Path,
+    signature: tuple[tuple[str, int, int], ...],
+    records: list[dict[str, Any]],
+) -> None:
+    try:
+        _scan_index_path(runs_root).write_text(
+            json.dumps(
+                {
+                    "signature": [list(item) for item in signature],
+                    "records": records,
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def _read_scan_index(
+    runs_root: Path,
+) -> tuple[tuple[tuple[str, int, int], ...], list[dict[str, Any]]] | None:
+    try:
+        payload = json.loads(_scan_index_path(runs_root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    signature = tuple(tuple(item) for item in payload.get("signature", []))
+    return signature, payload.get("records", [])
+
+
+def _signature_matches_paths(
+    runs_root: Path,
+    signature: tuple[tuple[str, int, int], ...],
+) -> bool:
+    """Verify a persisted signature by stat'ing only the recorded paths."""
+    for rel, run_mtime, progress_mtime in signature:
+        run_dir = runs_root / rel
+        try:
+            if (run_dir / "run.json").stat().st_mtime_ns != run_mtime:
+                return False
+        except OSError:
+            return False
+        progress_path = run_dir / "progress.json"
+        try:
+            current_progress_mtime = progress_path.stat().st_mtime_ns
+        except OSError:
+            current_progress_mtime = 0
+        if current_progress_mtime != progress_mtime:
+            return False
+    return True
 
 
 def scan_runs(runs_root: Path, *, force: bool = False) -> list[dict[str, Any]]:
@@ -412,6 +515,13 @@ def scan_runs(runs_root: Path, *, force: bool = False) -> list[dict[str, Any]]:
         if signature == _envelope_signature(runs_root):
             _scan_cache[runs_root] = (now, signature, records)
             return records
+    if not force:
+        persisted = _read_scan_index(runs_root)
+        if persisted is not None:
+            persisted_signature, records = persisted
+            if _signature_matches_paths(runs_root, persisted_signature):
+                _scan_cache[runs_root] = (now, persisted_signature, records)
+                return records
     signature = _envelope_signature(runs_root)
     records = []
     for run_dir in _iter_envelope_dirs(runs_root):
@@ -422,6 +532,7 @@ def scan_runs(runs_root: Path, *, force: bool = False) -> list[dict[str, Any]]:
         records.append(_run_record(runs_root, run_dir, envelope, with_artifacts=False))
     records.sort(key=lambda r: r["updated_at"] or "", reverse=True)
     _scan_cache[runs_root] = (now, signature, records)
+    _write_scan_index(runs_root, signature, records)
     return records
 
 

@@ -14,8 +14,17 @@ def _specs() -> list[ExperimentSpec]:
         spec as context_selection,
     )
     from memory_eval_tests.experiments.context_size import spec as context_size
+    from memory_eval_tests.experiments.evaluator_recheck import (
+        spec as evaluator_recheck,
+    )
     from memory_eval_tests.experiments.evidence_selector_experiment import (
         spec as evidence_selector,
+    )
+    from memory_eval_tests.experiments.evidence_selector_failure_analysis import (
+        spec as evidence_selector_failure_analysis,
+    )
+    from memory_eval_tests.experiments.frozen_prompt_llm_eval import (
+        spec as frozen_prompt_llm_eval,
     )
     from memory_eval_tests.experiments.kg_ablation import spec as kg_ablation
     from memory_eval_tests.experiments.online_baseline import spec as online_baseline
@@ -45,6 +54,9 @@ def _specs() -> list[ExperimentSpec]:
         table_packing,
         combined_pipeline,
         oracle_upper_bound,
+        frozen_prompt_llm_eval,
+        evaluator_recheck,
+        evidence_selector_failure_analysis,
     ]
 
 

@@ -45,6 +45,12 @@ def find_rag() -> LightRAG:
 
 def load_keyword_cache(storage_dir: Path) -> dict[str, tuple[list[str], list[str]]]:
     cache_path = storage_dir / "kv_store_llm_response_cache.json"
+    if not cache_path.exists():
+        raise FileNotFoundError(
+            f"missing keyword cache at {cache_path}; the selected storage_dir must "
+            "contain a prepared LightRAG index. Pass --storage-dir explicitly or "
+            "run against an existing output_dir/rag_storage."
+        )
     rows = json.loads(cache_path.read_text(encoding="utf-8"))
     result: dict[str, tuple[list[str], list[str]]] = {}
     for row in rows.values():

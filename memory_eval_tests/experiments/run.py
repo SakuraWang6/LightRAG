@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 
 from memory_eval_tests.experiments.common import (
@@ -24,12 +25,33 @@ def _parse_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _log(output_dir: Path, message: str) -> None:
+    """Append a timestamped harness-level line to ``run.log``."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with (output_dir / "run.log").open("a", encoding="utf-8") as handle:
+        handle.write(
+            f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] {message}\n"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Standardized evaluation harness")
     parser.add_argument("--experiment", required=True, help="Registered experiment id")
-    parser.add_argument("--dataset", type=Path, required=True, help="Dataset directory under memory_data_service/generated")
-    parser.add_argument("--output-dir", type=Path, required=True, help="Run directory (run.json + report.md + progress.json are written here)")
-    parser.add_argument("--run-id", default=None, help="Optional run id (default: output-dir name)")
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        required=True,
+        help="Dataset directory under memory_data_service/generated",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Run directory (run.json + report.md + progress.json are written here)",
+    )
+    parser.add_argument(
+        "--run-id", default=None, help="Optional run id (default: output-dir name)"
+    )
     parser.add_argument("--model", default=None)
     parser.add_argument("--mode", default=None)
     parser.add_argument("--top-k", type=int, default=None)
@@ -39,11 +61,31 @@ def main() -> None:
     parser.add_argument("--temperature", type=float, default=None)
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--rag-api-url", default="http://127.0.0.1:9621")
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="X-API-Key for the LightRAG API (defaults to LIGHTRAG_API_KEY).",
+    )
+    parser.add_argument(
+        "--access-token",
+        default=None,
+        help="Bearer access token for the LightRAG API (defaults to LIGHTRAG_ACCESS_TOKEN).",
+    )
     parser.add_argument("--storage-dir", type=Path, default=None)
     parser.add_argument("--engine", default=None)
     parser.add_argument("--max-cases", type=int, default=0)
-    parser.add_argument("--skip-kg", action="store_true", help="Disable KG extraction (isolated storage required)")
-    parser.add_argument("--extra", action="append", default=[], metavar="KEY=VALUE", help="Experiment-specific option")
+    parser.add_argument(
+        "--skip-kg",
+        action="store_true",
+        help="Disable KG extraction (isolated storage required)",
+    )
+    parser.add_argument(
+        "--extra",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Experiment-specific option",
+    )
 
     args = parser.parse_args()
     spec = get_spec(args.experiment)
@@ -74,6 +116,8 @@ def main() -> None:
     environment = capture_environment(
         rag_api_url=args.rag_api_url,
         ollama_url=args.ollama_url,
+        api_key=args.api_key,
+        access_token=args.access_token,
         storage_dir=str(storage_dir),
     )
     run_id = args.run_id or args.output_dir.name
@@ -88,6 +132,10 @@ def main() -> None:
         extra=extra,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    _log(
+        args.output_dir,
+        f"starting experiment={spec.id} run_id={run_id} dataset={args.dataset}",
+    )
     # Publish an initial envelope immediately so the console can supervise the
     # run while it is in progress; the final write below replaces it.
     write_envelope(
@@ -114,7 +162,12 @@ def main() -> None:
             report_rel_path=report_path.name,
             extra=payload.get("extra"),
         )
+        _log(
+            args.output_dir,
+            f"finished status={status} cases={sum(len(m.get('results') or []) for m in methods)}",
+        )
     except Exception as exc:  # keep the failure visible for the console monitor
+        _log(args.output_dir, f"failed {type(exc).__name__}: {exc}")
         write_progress(
             args.output_dir,
             status="failed",

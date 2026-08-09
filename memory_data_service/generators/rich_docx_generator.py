@@ -15,7 +15,11 @@ from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 from docx.shared import Inches
 
-from memory_data_service.generators.docx_generator import _convert_pdf, _file_record, _skipped
+from memory_data_service.generators.docx_generator import (
+    _convert_pdf,
+    _file_record,
+    _skipped,
+)
 from memory_data_service.resource_guard import (
     GenerationResourceMonitor,
     enforce_generation_limits,
@@ -32,7 +36,6 @@ from memory_data_service.schemas import (
     QuestionRecord,
 )
 from memory_data_service.storage import DEFAULT_GENERATED_ROOT, ensure_root, write_json
-
 
 MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 

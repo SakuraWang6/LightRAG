@@ -60,6 +60,19 @@ def _runner(context: RunContext) -> dict[str, Any]:
     chunk_top_k = int(baseline.get("chunk_top_k") or 5)
     max_total_tokens = baseline.get("max_total_tokens") or 8192
     mode = baseline.get("mode", "mix")
+    max_cases = int(baseline.get("max_cases") or 0)
+    api_key = context.environment.get("api_key")
+    access_token = context.environment.get("access_token")
+
+    def _auth_args() -> list[str]:
+        args: list[str] = []
+        if api_key:
+            args.extend(["--api-key", api_key])
+        if access_token:
+            args.extend(["--access-token", access_token])
+        if max_cases > 0:
+            args.extend(["--max-cases", str(max_cases)])
+        return args
 
     subprocess.run(
         [
@@ -74,6 +87,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             mode,
             "--top-k",
             str(top_k),
+            *_auth_args(),
             "--output",
             str(retrieval_json),
         ],
@@ -98,6 +112,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             str(chunk_top_k),
             "--max-total-tokens",
             str(max_total_tokens),
+            *_auth_args(),
             "--output",
             str(answer_json),
         ],

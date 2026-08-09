@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 from memory_eval_tests.experiments.common import ExperimentSpec, RunContext
-from memory_eval_tests.experiments.common.rag_session import DEFAULT_STORAGE
 
 
 def _as_bool(value: str | None) -> bool:
@@ -40,12 +39,14 @@ def namespace_from_context(
             baseline.get("storage_dir")
             or environment.get("storage_dir")
             or extra.get("storage_dir")
-            or DEFAULT_STORAGE
+            or context.output_dir / "rag_storage"
         )
     )
     namespaces: dict[str, Any] = {
         "dataset": context.dataset,
         "storage_dir": storage_dir,
+        "api_key": extra.get("api_key") or environment.get("api_key"),
+        "access_token": extra.get("access_token") or environment.get("access_token"),
         "ollama_url": str(
             environment.get("ollama_url")
             or extra.get("ollama_url")

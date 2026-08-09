@@ -78,9 +78,9 @@ def _significance_label(delta: float, group_std: float, n: int) -> str:
     if n < 3:
         return "样本不足"
     if group_std <= 0:
-        return "显著" if abs(delta) > 0 else "无差异"
+        return "差异较大（启发式）" if abs(delta) > 0 else "无差异"
     effect = abs(delta) / group_std
-    return "显著" if effect >= 0.8 else "不显著"
+    return "差异较大（启发式）" if effect >= 0.8 else "差异不明显"
 
 
 def build_baseline_table(
@@ -170,8 +170,9 @@ def render_markdown(payload: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "标记口径：`显著` = 组均值与基线差值的效应量 |d| ≥ 0.8 且 n ≥ 3；"
-            "`样本不足` = n < 3，不做显著性判断。该标记是启发式，不是正式假设检验。",
+            "标记口径：`差异较大（启发式）` = 组均值与基线差值的效应量 |d| ≥ 0.8 且 "
+            "n ≥ 3；`差异不明显` = 效应量低于阈值；`样本不足` = n < 3。该标记是"
+            "效应量启发式，不是统计显著性检验；正式结论需要指定检验与样本量。",
         ]
     )
     return "\n".join(lines)

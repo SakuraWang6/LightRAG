@@ -72,9 +72,13 @@ export type EvalRun = {
   id: string
   run_dir?: string
   kind: EvalRunKind
+  legacy?: boolean
   label: string
   dataset?: string | null
   updated_at?: string | null
+  started_at?: string | null
+  finished_at?: string | null
+  duration_seconds?: number | null
   status?: string | null
   conditions: RunCondition[]
   description?: string
@@ -123,6 +127,17 @@ export async function listEvalRuns(params?: {
   q?: string
 }): Promise<{ runs: EvalRun[]; runs_root: string }> {
   const response = await evalApiClient.get('/eval/runs', { params })
+  return response.data
+}
+
+export async function getEvalRunLog(
+  runId: string,
+  lines = 200
+): Promise<{ exists: boolean; lines: string[] }> {
+  const response = await evalApiClient.get(
+    `/eval/runs/${encodeURIComponent(runId)}/log`,
+    { params: { lines } }
+  )
   return response.data
 }
 

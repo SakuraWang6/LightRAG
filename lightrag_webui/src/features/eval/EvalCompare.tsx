@@ -25,6 +25,7 @@ import {
   buildCompareCsv,
   formatDelta,
   formatMetricCell,
+  metricStats,
   metricRank,
   runKindClass
 } from '@/features/eval/utils'
@@ -222,7 +223,18 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
                   {rows.map((row) => (
                     <TableRow key={row.key}>
                       <TableCell className="text-muted-foreground whitespace-nowrap px-3 py-2">
-                        {row.label}
+                        <span>{row.label}</span>
+                        {(() => {
+                          const stats = metricStats(row.values)
+                          return stats.n > 0 ? (
+                            <span className="text-muted-foreground/70 block text-[10px]">
+                              n={stats.n}
+                              {stats.sigma != null
+                                ? ` σ=${Number(stats.sigma).toFixed(4).replace(/\.?0+$/, '')}`
+                                : ''}
+                            </span>
+                          ) : null
+                        })()}
                       </TableCell>
                       {row.values.map((value, index) => (
                         <TableCell key={index} className="whitespace-nowrap px-3 py-2">

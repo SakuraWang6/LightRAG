@@ -7,6 +7,11 @@ import subprocess
 import time
 from pathlib import Path
 
+from memory_data_service.resource_guard import (
+    GenerationResourceMonitor,
+    enforce_generation_limits,
+    estimate_generation_resources,
+)
 from memory_data_service.schemas import (
     DatasetCreateRequest,
     DatasetManifest,
@@ -15,13 +20,7 @@ from memory_data_service.schemas import (
     OraclePayload,
     QuestionRecord,
 )
-from memory_data_service.resource_guard import (
-    GenerationResourceMonitor,
-    enforce_generation_limits,
-    estimate_generation_resources,
-)
 from memory_data_service.storage import DEFAULT_GENERATED_ROOT, ensure_root, write_json
-
 
 SOFFICE_DEFAULT = Path("/opt/homebrew/bin/soffice")
 

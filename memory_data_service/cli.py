@@ -11,26 +11,38 @@ from memory_data_service.generators import generate_dataset
 from memory_data_service.schemas import DatasetCreateRequest
 from memory_data_service.storage import DEFAULT_GENERATED_ROOT, list_datasets
 
-
-app = typer.Typer(help="Synthetic rich-document data service for LightRAG memory evaluation.")
+app = typer.Typer(
+    help="Synthetic rich-document data service for LightRAG memory evaluation."
+)
 console = Console()
 
 
 @app.command()
 def generate(
-    tier: Annotated[str, typer.Option(help="smoke, medium, large, or stress")] = "smoke",
+    tier: Annotated[
+        str, typer.Option(help="smoke, medium, large, or stress")
+    ] = "smoke",
     profile: Annotated[str, typer.Option(help="basic or rich")] = "rich",
-    formats: Annotated[str, typer.Option(help="Comma-separated formats: docx,pdf")] = "docx",
+    formats: Annotated[
+        str, typer.Option(help="Comma-separated formats: docx,pdf")
+    ] = "docx",
     modalities: Annotated[
-        str, typer.Option(help="Comma-separated modalities: text,tables,figures,equations")
+        str,
+        typer.Option(help="Comma-separated modalities: text,tables,figures,equations"),
     ] = "text,tables,figures,equations",
     pages: Annotated[int | None, typer.Option(help="Override tier page count")] = None,
-    dataset_id: Annotated[str | None, typer.Option(help="Optional stable dataset id")] = None,
+    dataset_id: Annotated[
+        str | None, typer.Option(help="Optional stable dataset id")
+    ] = None,
     allow_oversized_generation: Annotated[
         bool,
         typer.Option(
             help="Allow generation above the default 3000-page guard. Use only for explicit stress experiments."
         ),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option(help="Overwrite an existing dataset with the same id."),
     ] = False,
     output_root: Annotated[
         Path, typer.Option(help="Generated dataset root")
@@ -46,7 +58,7 @@ def generate(
         allow_oversized_generation=allow_oversized_generation,
     )
     try:
-        manifest = generate_dataset(request, root=output_root)
+        manifest = generate_dataset(request, root=output_root, force=force)
     except ValueError as exc:
         console.print(f"[red]Generation refused:[/red] {exc}")
         raise typer.Exit(2) from exc

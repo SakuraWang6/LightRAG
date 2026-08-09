@@ -108,7 +108,7 @@ def test_baseline_table_groups_repeats_and_marks_significance() -> None:
     assert repeated["n"] == 4
     assert repeated["mean"] == pytest.approx(0.7625)
     assert repeated["delta"] == pytest.approx(0.2625)
-    assert repeated["significance"] == "显著"
+    assert repeated["significance"] == "差异较大（启发式）"
     single = next(row for row in payload["groups"] if row["n"] == 1)
     assert single["significance"] == "样本不足"
     assert "基线/回归对比报告" in render_markdown(payload)

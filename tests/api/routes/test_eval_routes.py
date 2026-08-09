@@ -265,7 +265,7 @@ def test_eval_routes_degrade_gracefully_when_package_missing(
 def test_scan_cache_refreshes_and_ignores_parsed_inputs(runs_tree: Path) -> None:
     from lightrag.api.eval_index import clear_scan_cache, scan_runs
 
-    clear_scan_cache()
+    clear_scan_cache(runs_tree)
     assert len(scan_runs(runs_tree)) == 2
     # A new envelope appears without an explicit invalidation call.
     _write(
@@ -284,7 +284,7 @@ def test_scan_cache_refreshes_and_ignores_parsed_inputs(runs_tree: Path) -> None
             "reports": {},
         },
     )
-    clear_scan_cache()
+    clear_scan_cache(runs_tree)
     assert len(scan_runs(runs_tree)) == 3
     # Anything under inputs/__parsed__ must never be indexed as a run.
     _write(
@@ -303,7 +303,7 @@ def test_scan_cache_refreshes_and_ignores_parsed_inputs(runs_tree: Path) -> None
             "reports": {},
         },
     )
-    clear_scan_cache()
+    clear_scan_cache(runs_tree)
     ids = {run["id"] for run in scan_runs(runs_tree)}
     assert "should-not-appear" not in ids
     assert "new-run" in ids
@@ -328,6 +328,49 @@ def test_scan_cache_ttl_serves_records_without_walking(monkeypatch, runs_tree: P
     assert calls["count"] == 1
     assert len(scan_runs(runs_tree, force=True)) == 2
     assert calls["count"] == 2
+
+
+def test_persisted_scan_index_serves_records_without_walking(
+    monkeypatch, runs_tree: Path
+) -> None:
+    import lightrag.api.eval_index as eval_index
+    from lightrag.api.eval_index import scan_runs
+
+    eval_index.clear_scan_cache(runs_tree)
+    assert len(scan_runs(runs_tree)) == 2
+    assert (runs_tree / ".eval_index.json").exists()
+
+    # Cold process: drop the in-memory cache, then the persisted index must
+    # serve the list without walking the tree.
+    eval_index._scan_cache.pop(runs_tree, None)
+
+    def boom(runs_root: Path):
+        raise AssertionError("_envelope_signature should not be called on index hit")
+
+    monkeypatch.setattr(eval_index, "_envelope_signature", boom)
+    assert len(scan_runs(runs_tree)) == 2
+    monkeypatch.undo()
+
+
+def test_envelope_write_invalidates_persisted_scan_index(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from memory_eval_tests.experiments.common import write_simple_envelope
+
+    monkeypatch.setenv("MEMORY_EVAL_RUNS_ROOT", str(tmp_path))
+    index = tmp_path / ".eval_index.json"
+    index.write_text("{}", encoding="utf-8")
+    write_simple_envelope(
+        tmp_path / "run",
+        kind="offline",
+        run_id="r",
+        experiment={"id": "e", "label": "L", "description": "d"},
+        baseline={},
+        environment={},
+        methods=[],
+        status="complete",
+    )
+    assert not index.exists()
 
 
 def test_flatten_cases_keeps_full_retrieval_evidence() -> None:
@@ -366,3 +409,51 @@ def test_summary_metrics_prefers_canonical_over_legacy_key() -> None:
     by_key = {metric["key"]: metric["value"] for metric in metrics}
     assert by_key["ungrounded_rate"] == 0.2
     assert "hallucination_rate" not in by_key
+
+
+def test_run_record_surfaces_legacy_and_timing(runs_tree: Path) -> None:
+    from lightrag.api.eval_index import load_run
+
+    _write(
+        runs_tree / "legacy-run" / "run.json",
+        {
+            "schema_version": "1.0",
+            "kind": "online",
+            "run_id": "legacy-run",
+            "created_at": "2026-08-09T00:00:00+00:00",
+            "started_at": "2026-08-09T00:00:00+00:00",
+            "finished_at": "2026-08-09T00:05:00+00:00",
+            "status": "complete",
+            "legacy": True,
+            "experiment": {"id": "legacy_online", "label": "Legacy", "description": ""},
+            "environment": {},
+            "baseline": {},
+            "variables": [],
+            "methods": [],
+            "reports": {},
+        },
+    )
+    detail = load_run(runs_tree, "legacy-run")
+    assert detail is not None
+    assert detail["legacy"] is True
+    assert detail["duration_seconds"] == pytest.approx(300.0)
+
+
+def test_run_log_endpoint_returns_tail(runs_tree: Path, monkeypatch) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    client = _client(runs_tree, api_key="secret-key")
+    headers = {"X-API-Key": "secret-key"}
+    log_path = runs_tree / "context-selection-v1" / "run.log"
+    log_path.write_text(
+        "\n".join(f"line-{index}" for index in range(1, 6)) + "\n",
+        encoding="utf-8",
+    )
+    response = client.get("/eval/runs/context-selection-v1/log?lines=2", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["exists"] is True
+    assert payload["lines"] == ["line-4", "line-5"]
+    missing = client.get("/eval/runs/rich-smoke-v1/log", headers=headers)
+    # The offline fixture has no run.log; endpoint returns exists=False.
+    assert missing.json()["exists"] is False
+    assert missing.status_code == 200
