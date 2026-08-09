@@ -213,13 +213,13 @@ function StandardRunView({ run }: { run: EvalRunDetail }) {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="metrics" className="mt-3 space-y-3">
+        <TabsContent value="metrics" forceMount={false} className="mt-3 space-y-3">
           {run.artifacts.map((artifact) => (
             <ArtifactMetricsCard key={artifact.rel_path} artifact={artifact} />
           ))}
         </TabsContent>
 
-        <TabsContent value="cases" className="mt-3">
+        <TabsContent value="cases" forceMount={false} className="mt-3">
           {caseArtifacts.length === 0 ? (
             <EmptyCard title={t('eval.noCases')} description={t('eval.noCasesHint')} />
           ) : (
@@ -243,7 +243,7 @@ function StandardRunView({ run }: { run: EvalRunDetail }) {
           )}
         </TabsContent>
 
-        <TabsContent value="reports" className="mt-3 space-y-3">
+        <TabsContent value="reports" forceMount={false} className="mt-3 space-y-3">
           <AiAnalysis runId={run.id} />
           {reportArtifacts.length === 0 ? (
             <EmptyCard title={t('eval.noReports')} description={t('eval.noReportsHint')} />
@@ -309,7 +309,7 @@ function ExperimentView({ run }: { run: EvalRunDetail }) {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="methods" className="mt-3">
+        <TabsContent value="methods" forceMount={false} className="mt-3">
           {methodArtifact ? (
             <MethodCompare table={methodArtifact.table} />
           ) : (
@@ -317,7 +317,7 @@ function ExperimentView({ run }: { run: EvalRunDetail }) {
           )}
         </TabsContent>
 
-        <TabsContent value="cases" className="mt-3">
+        <TabsContent value="cases" forceMount={false} className="mt-3">
           {caseRows.length === 0 ? (
             <EmptyCard
               title={t('eval.noCases')}
@@ -328,7 +328,7 @@ function ExperimentView({ run }: { run: EvalRunDetail }) {
           )}
         </TabsContent>
 
-        <TabsContent value="reports" className="mt-3 space-y-3">
+        <TabsContent value="reports" forceMount={false} className="mt-3 space-y-3">
           <AiAnalysis runId={run.id} />
           {reportArtifacts.length === 0 ? (
             <EmptyCard title={t('eval.noReports')} description={t('eval.noReportsHint')} />
@@ -359,7 +359,7 @@ function ExperimentView({ run }: { run: EvalRunDetail }) {
           )}
         </TabsContent>
 
-        <TabsContent value="log" className="mt-3">
+        <TabsContent value="log" forceMount={false} className="mt-3">
           <RunLog runId={run.id} />
         </TabsContent>
       </Tabs>

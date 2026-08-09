@@ -35,23 +35,28 @@ const TabsTrigger = React.forwardRef<
 ))
 TabsTrigger.displayName = TabsPrimitive.Trigger.displayName
 
-const TabsContent = React.forwardRef<
-  React.ComponentRef<typeof TabsPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>
->(({ className, ...props }, ref) => (
+type TabsContentProps = Omit<
+  React.ComponentPropsWithoutRef<typeof TabsPrimitive.Content>,
+  'forceMount'
+> & { forceMount?: boolean }
+
+const TabsContent = React.forwardRef<React.ComponentRef<typeof TabsPrimitive.Content>, TabsContentProps>(
+  ({ className, forceMount = true, ...props }, ref) => (
   <TabsPrimitive.Content
     ref={ref}
+    forceMount={forceMount ? true : undefined}
     className={cn(
       'ring-offset-background focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
-      'data-[state=inactive]:invisible data-[state=active]:visible',
+      // visibility-based hiding is required for WebGL canvases (forceMount),
+      // but it lets nested visible children escape; display:none avoids that.
+      forceMount ? 'data-[state=inactive]:invisible data-[state=active]:visible' : 'data-[state=inactive]:hidden',
       'h-full w-full',
       className
     )}
-    // Force mounting of inactive tabs to preserve WebGL contexts
-    forceMount
     {...props}
   />
-))
+  )
+)
 TabsContent.displayName = TabsPrimitive.Content.displayName
 
 export { Tabs, TabsList, TabsTrigger, TabsContent }
