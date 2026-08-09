@@ -1,9 +1,11 @@
 """Ollama chat wrapper with per-call decoding control and hard deadlines.
 
-The HTTP client reads the response body incrementally with a per-read socket
-timeout and an overall wall-clock deadline, so a stuck Ollama request surfaces
-as a ``TimeoutError`` within a bounded window instead of hanging the experiment
-for tens of minutes. A single retry covers transient model-load stalls.
+The request uses ``stream=True``: a healthy generation continuously produces
+token deltas (so per-read socket timeouts never fire for slow but legitimate
+32K-context generations), while a stuck request stops producing bytes and is
+surfaced as a ``TimeoutError`` within ``read_timeout`` seconds. An overall
+wall-clock deadline bounds the whole call, and one retry covers transient
+model-load stalls.
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ def chat_ollama(
     """Call ``/api/chat`` with explicit context window and decoding options."""
     payload = {
         "model": model,
-        "stream": False,
+        "stream": True,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "options": {
             "temperature": temperature,
@@ -59,21 +61,42 @@ def chat_ollama(
                     headers={"Content-Type": "application/json"},
                 )
                 response = conn.getresponse()
-                chunks: list[bytes] = []
+                content_parts: list[str] = []
+                buffer = b""
+                done = False
                 while True:
                     if time.monotonic() > deadline:
                         raise ChatTimeoutError(
                             f"Ollama chat exceeded {timeout}s deadline (model={model}, num_ctx={num_ctx})"
                         )
-                    chunk = response.read(8192)
+                    chunk = response.read(4096)
                     if not chunk:
                         break
-                    chunks.append(chunk)
-                body = json.loads(b"".join(chunks).decode("utf-8"))
+                    buffer += chunk
+                    while b"\n" in buffer:
+                        line, buffer = buffer.split(b"\n", 1)
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line.decode("utf-8"))
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            continue
+                        if obj.get("error"):
+                            raise RuntimeError(str(obj["error"]))
+                        content_parts.append(str((obj.get("message") or {}).get("content") or ""))
+                        if obj.get("done"):
+                            done = True
+                            break
+                    if done:
+                        break
             finally:
                 conn.close()
-            return str((body.get("message") or {}).get("content") or "")
-        except (socket.timeout, TimeoutError, http.client.HTTPException, ConnectionError, json.JSONDecodeError) as exc:
+            text = "".join(content_parts).strip()
+            if not text:
+                raise RuntimeError("Empty Ollama response")
+            return text
+        except (socket.timeout, TimeoutError, http.client.HTTPException, ConnectionError, RuntimeError) as exc:
             last_error = exc
             if attempt < retries:
                 time.sleep(2)
