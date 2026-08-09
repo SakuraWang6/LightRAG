@@ -169,3 +169,43 @@ service environment variables.
 两边都先对全量题列表抽样，再在采样结果上过滤：检索侧排除 abstain（其
 `evidence_fact_ids` 为空，召回无意义），回答侧保留 abstain 以计算拒答指标。
 因此无论是否设置 `max_cases`，两边的非 abstain 子集都完全一致。
+
+## 看护运行（supervise）
+
+长实验可用 `experiments/supervise.py` 看护：子进程崩溃（exit code ≠ 0）自动重启，
+超过 `--max-restarts` 后放弃；重启时自动继承已有 `run.json` 的 `started_at` 与
+`restarts`，跨 supervisor 重启（含 launchctl 拉起）不丢连续性。
+
+```bash
+conda run -n lightrag-memory-eval python -m memory_eval_tests.experiments.supervise \
+  --experiment context_size \
+  --dataset memory_data_service/generated/rich-smoke-v1 \
+  --output-dir memory_eval_tests/runs/context-size-v2 \
+  --supervision heartbeat --stale-minutes 60
+```
+
+### 心跳与挂死检测的职责边界
+
+- **崩溃重启是默认能力**：子进程退出非零即重启；`supports_resume` 的实验
+  （`context_size` / `kg_ablation`）会自动读 `partial.json` 续跑，其余从头重试。
+- **挂死检测默认关闭**（`supervision="none"`）。LLM 单次调用挂死已由
+  `chat_ollama` 的硬超时兜底，supervisor 的 stale-kill 价值有限，因此作为显式
+  高级选项：`--supervision heartbeat` 启用后，监测子进程 `run.py` 每 30s touch 的
+  `.heartbeat` 文件（证明“解释器活着”，能兜 GIL 阻塞类挂死），`run.log` 增长仅作
+  辅助信号；`--stale-minutes` 默认 60。
+- **阈值估算**：`--stale-minutes` 应大于最坏单阶段耗时。参考
+  `--num-ctx` × 每 token 耗时（慢机器 16K 上下文单次生成可达数十分钟）；chat 层
+  超时（`--timeout 1800` 等）已单独兜底，不要在 heartbeat 阈值上过度激进。
+
+### 行为说明
+
+- 子进程以独立进程组运行（`start_new_session=True`），收到 SIGINT/SIGTERM 时对
+  整棵进程树（含 online_baseline 的 retrieval/answer 子进程）先 SIGTERM、30s 后
+  SIGKILL，避免孙进程变孤儿继续写 output 目录。
+- supervisor 事件与子进程输出统一写入 `run.log`；每次重启会把
+  `progress.json.message` 置为“第 N 次重启（续跑/重试）”作为瞬时提示，
+  envelope 的 `restarts` 字段与 run.log 事件是权威记录。
+- `output_dir/.supervise.lock` 保证同一 output-dir 只允许一个看护进程；重复启动
+  直接报错退出。
+- launchctl 示例：`KeepAlive` 配合 `SuccessfulExit: false`，进程退出即由系统拉起，
+  supervisor 启动时会继承旧 `run.json` 的 `started_at`/`restarts`。

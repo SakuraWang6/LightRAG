@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import sys
+import threading
 import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -27,6 +29,39 @@ from memory_eval_tests.experiments.registry import get_spec
 
 def _parse_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _heartbeat_loop(output_dir: Path, stop: threading.Event) -> None:
+    """Touch ``.heartbeat`` every 30s while the runner process is alive.
+
+    The supervisor treats this as a liveness signal: it proves the interpreter
+    is alive (and not GIL-blocked), not that the runner is making progress.
+    """
+    while not stop.is_set():
+        try:
+            (output_dir / ".heartbeat").write_text(
+                datetime.now(timezone.utc).isoformat(timespec="seconds") + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+        stop.wait(30)
+
+
+def _install_sigterm_handler(output_dir: Path) -> None:
+    def _handle(signum: int, frame) -> None:
+        _log(output_dir, "SIGTERM received; marking progress and interrupting runner")
+        write_progress(
+            output_dir,
+            status="terminating",
+            done=0,
+            total=1,
+            phase="terminating",
+            message="SIGTERM received",
+        )
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _handle)
 
 
 def _log(output_dir: Path, message: str) -> None:
@@ -122,6 +157,22 @@ def main() -> None:
         default=None,
         help="Runs root used for scan-index invalidation (defaults to MEMORY_EVAL_RUNS_ROOT or repo runs/).",
     )
+    parser.add_argument(
+        "--restart-count",
+        type=int,
+        default=0,
+        help="Number of times the supervisor has restarted this run (display metadata).",
+    )
+    parser.add_argument(
+        "--original-started-at",
+        default=None,
+        help="Original started_at carried across supervisor restarts.",
+    )
+    parser.add_argument(
+        "--heartbeat",
+        action="store_true",
+        help="Touch output_dir/.heartbeat every 30s so a supervisor can detect liveness.",
+    )
     parser.add_argument("--storage-dir", type=Path, default=None)
     parser.add_argument("--engine", default=None)
     parser.add_argument("--max-cases", type=int, default=0)
@@ -187,8 +238,12 @@ def main() -> None:
         variables=spec.variables,
         run_id=run_id,
         extra=extra,
+        restarts=args.restart_count,
+        started_at=args.original_started_at
+        or datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    _install_sigterm_handler(args.output_dir)
     _log(
         args.output_dir,
         f"starting experiment={spec.id} run_id={run_id} dataset={args.dataset}",
@@ -205,6 +260,15 @@ def main() -> None:
         runs_root=runs_root,
     )
     write_progress(args.output_dir, status="queued", done=0, total=1, phase="starting")
+    stop_heartbeat = threading.Event()
+    heartbeat_thread: threading.Thread | None = None
+    if args.heartbeat:
+        heartbeat_thread = threading.Thread(
+            target=_heartbeat_loop,
+            args=(args.output_dir, stop_heartbeat),
+            daemon=True,
+        )
+        heartbeat_thread.start()
     with _tee_log(args.output_dir):
         try:
             payload = spec.runner(context)
@@ -238,6 +302,10 @@ def main() -> None:
             )
             print(traceback.format_exc())
             raise
+        finally:
+            stop_heartbeat.set()
+            if heartbeat_thread is not None:
+                heartbeat_thread.join(timeout=2)
 
 
 if __name__ == "__main__":

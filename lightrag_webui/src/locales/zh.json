@@ -514,6 +514,7 @@
     "updatedAt": "更新时间",
     "duration": "耗时",
     "legacyRun": "遗留",
+    "restarts": "已重启 {{count}} 次",
     "legacyNoCases": "历史迁移数据不包含逐题明细；如需逐题分析请按当前口径重新运行实验。",
     "runLog": "日志",
     "runLogEmpty": "该运行没有 run.log（可能由旧版本或非 harness 入口产出）。",

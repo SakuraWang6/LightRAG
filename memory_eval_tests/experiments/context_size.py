@@ -334,4 +334,6 @@ spec = ExperimentSpec(
         },
     ],
     runner=_runner,
+    supervision="heartbeat",
+    supports_resume=True,
 )

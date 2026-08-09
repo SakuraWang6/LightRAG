@@ -73,6 +73,7 @@ export type EvalRun = {
   run_dir?: string
   kind: EvalRunKind
   legacy?: boolean
+  restarts?: number
   label: string
   dataset?: string | null
   updated_at?: string | null

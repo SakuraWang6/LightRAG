@@ -22,44 +22,51 @@ def _write(path: Path, payload) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def test_online_baseline_passes_auth_and_max_cases(monkeypatch, tmp_path: Path) -> None:
+def test_online_baseline_passes_auth_and_max_cases(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
     from memory_eval_tests.experiments.online_baseline import _runner
 
     calls: list[list[str]] = []
 
-    def fake_run(argv, **kwargs) -> None:
-        calls.append(argv)
-        output = Path(argv[argv.index("--output") + 1])
-        if "retrieval_eval" in argv:
-            _write(
-                output,
-                {
-                    "mode": "mix",
-                    "top_k": 5,
-                    "cases": 1,
-                    "average_recall": 1.0,
-                    "mrr": 0.5,
-                    "results": [],
-                },
-            )
-        else:
-            _write(
-                output,
-                {
-                    "mode": "mix",
-                    "cases": 1,
-                    "answer_accuracy": 1.0,
-                    "groundedness": 1.0,
-                    "ungrounded_rate": 0.0,
-                    "abstention_accuracy": None,
-                    "evidence_available": 1.0,
-                    "results": [],
-                },
-            )
+    class FakePopen:
+        def __init__(self, cmd, **kwargs):
+            calls.append(cmd)
+            output = Path(cmd[cmd.index("--output") + 1])
+            if "retrieval_eval" in cmd:
+                _write(
+                    output,
+                    {
+                        "mode": "mix",
+                        "top_k": 5,
+                        "cases": 1,
+                        "average_recall": 1.0,
+                        "mrr": 0.5,
+                        "results": [],
+                    },
+                )
+            else:
+                _write(
+                    output,
+                    {
+                        "mode": "mix",
+                        "cases": 1,
+                        "answer_accuracy": 1.0,
+                        "groundedness": 1.0,
+                        "ungrounded_rate": 0.0,
+                        "abstention_accuracy": None,
+                        "evidence_available": 1.0,
+                        "results": [],
+                    },
+                )
+            self.stdout = iter(["progress-line-1\n", "progress-line-2\n"])
+
+        def wait(self):
+            return 0
 
     monkeypatch.setattr(
-        "memory_eval_tests.experiments.online_baseline.subprocess.run",
-        fake_run,
+        "memory_eval_tests.experiments.online_baseline.subprocess.Popen",
+        FakePopen,
     )
     output_dir = tmp_path / "run"
     output_dir.mkdir()
@@ -98,6 +105,9 @@ def test_online_baseline_passes_auth_and_max_cases(monkeypatch, tmp_path: Path) 
         assert argv[argv.index("--access-token") + 1] == "t"
         assert "--max-cases" in argv
         assert argv[argv.index("--max-cases") + 1] == "7"
+    out = capsys.readouterr().out
+    assert "progress-line-1" in out
+    assert "progress-line-2" in out
 
 
 def test_legacy_adapter_namespace_carries_credentials(tmp_path: Path) -> None:

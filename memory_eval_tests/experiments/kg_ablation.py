@@ -493,4 +493,5 @@ spec = ExperimentSpec(
         }
     ],
     kind="experiment",
+    supports_resume=True,
 )

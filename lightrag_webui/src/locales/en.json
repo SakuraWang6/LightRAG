@@ -514,6 +514,7 @@
     "updatedAt": "Updated",
     "duration": "Duration",
     "legacyRun": "Legacy",
+    "restarts": "Restarted {{count}}×",
     "legacyNoCases": "Migrated legacy runs carry no per-question cases; re-run the experiment under the current semantics for case-level analysis.",
     "runLog": "Log",
     "runLogEmpty": "This run has no run.log (produced by an older version or a non-harness entry point).",

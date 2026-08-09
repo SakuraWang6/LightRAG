@@ -24,6 +24,31 @@ def _summary_metrics(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _run_forwarding(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> None:
+    """Run a subprocess and forward its output line-by-line to our stdout.
+
+    Forwarding through ``sys.stdout.write`` (not ``print``) avoids doubling
+    newlines when child lines already end with one, and lets run.py's tee
+    capture the child's output into run.log live.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+    code = proc.wait()
+    if code != 0:
+        raise subprocess.CalledProcessError(code, cmd)
+
+
 def _render_report(retrieval: dict[str, Any], answer: dict[str, Any]) -> str:
     lines = [
         "# 在线基线评测",
@@ -74,7 +99,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             args.extend(["--max-cases", str(max_cases)])
         return args
 
-    subprocess.run(
+    _run_forwarding(
         [
             sys.executable,
             "-m",
@@ -93,9 +118,8 @@ def _runner(context: RunContext) -> dict[str, Any]:
         ],
         cwd=repo_root,
         env=env,
-        check=True,
     )
-    subprocess.run(
+    _run_forwarding(
         [
             sys.executable,
             "-m",
@@ -118,7 +142,6 @@ def _runner(context: RunContext) -> dict[str, Any]:
         ],
         cwd=repo_root,
         env=env,
-        check=True,
     )
     retrieval = json.loads(retrieval_json.read_text(encoding="utf-8"))
     answer = json.loads(answer_json.read_text(encoding="utf-8"))

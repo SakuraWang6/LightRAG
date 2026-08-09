@@ -62,6 +62,11 @@ function RunHeader({ run }: { run: EvalRunDetail }) {
             {t('eval.legacyRun')}
           </Badge>
         ) : null}
+        {(run.restarts ?? 0) > 0 ? (
+          <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
+            {t('eval.restarts', { count: run.restarts ?? 0 })}
+          </Badge>
+        ) : null}
         {run.status ? <Badge variant="outline" className={statusBadgeClass(run.status)}>{statusLabel(run)}</Badge> : null}
         {(run.failed_checks ?? []).map((check) => (
           <Badge key={check} className="border-red-300 bg-red-50 text-red-700 dark:border-red-700 dark:bg-red-950 dark:text-red-300">

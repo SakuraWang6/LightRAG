@@ -157,11 +157,13 @@ def test_envelope_records_started_and_finished(tmp_path: Path) -> None:
         variables=[],
         run_id="r",
         started_at=started,
+        restarts=2,
     )
     write_envelope(tmp_path / "run", context=context, status="complete", methods=[])
     envelope = json.loads((tmp_path / "run" / "run.json").read_text(encoding="utf-8"))
     assert envelope["started_at"] == started
     assert envelope["finished_at"]
+    assert envelope["restarts"] == 2
 
     path = write_simple_envelope(
         tmp_path / "simple",
@@ -173,10 +175,12 @@ def test_envelope_records_started_and_finished(tmp_path: Path) -> None:
         methods=[],
         status="complete",
         started_at=started,
+        restarts=3,
     )
     simple = json.loads(path.read_text(encoding="utf-8"))
     assert simple["started_at"] == started
     assert simple["finished_at"]
+    assert simple["restarts"] == 3
 
 
 def test_envelope_redacts_credentials(tmp_path: Path) -> None:

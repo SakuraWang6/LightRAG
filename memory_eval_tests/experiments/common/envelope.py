@@ -75,6 +75,8 @@ class ExperimentSpec:
     )
     variables: list[dict[str, Any]] = field(default_factory=list)
     kind: str = "experiment"
+    supervision: str = "none"
+    supports_resume: bool = False
 
 
 @dataclass
@@ -87,6 +89,7 @@ class RunContext:
     variables: list[dict[str, Any]]
     run_id: str
     extra: dict[str, Any] = field(default_factory=dict)
+    restarts: int = 0
     started_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
     )
@@ -233,6 +236,7 @@ def write_envelope(
         "run_id": context.run_id,
         "created_at": now,
         "started_at": context.started_at,
+        "restarts": context.restarts,
         "status": status,
         "experiment": {
             "id": context.spec.id,
@@ -275,6 +279,7 @@ def write_simple_envelope(
     extra: dict[str, Any] | None = None,
     started_at: str | None = None,
     finished_at: str | None = None,
+    restarts: int = 0,
     runs_root: Path | None = None,
 ) -> Path:
     """Envelope writer for non-registry runs (offline/online evaluators)."""
@@ -286,6 +291,7 @@ def write_simple_envelope(
         "run_id": run_id,
         "created_at": now,
         "status": status,
+        "restarts": restarts,
         "experiment": experiment,
         "environment": _redact_environment(environment),
         "baseline": baseline,
