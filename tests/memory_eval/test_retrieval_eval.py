@@ -87,7 +87,8 @@ def test_api_recall_and_mrr_use_reference_rank(monkeypatch, tmp_path) -> None:
     assert report["average_recall"] == pytest.approx(1.0)
     # FACT-1 first appears in the second ranked chunk (rank 2), FACT-2 at rank 3.
     assert report["mrr"] == pytest.approx(0.5)
-    assert report["context_precision"] == pytest.approx(1.0)
+    # Chunk-level precision: 2 of the 3 returned chunks contain evidence.
+    assert report["context_precision"] == pytest.approx(2 / 3)
     assert report["object_hit_rate"] is None
     case = report["results"][0]
     assert case["hit_fact_ids"] == ["FACT-1", "FACT-2"]
@@ -216,3 +217,71 @@ def test_api_max_cases_samples_deterministically(monkeypatch, tmp_path) -> None:
     ]
     # Evenly spaced across the oracle, not a front-prefix sample.
     assert seen == ["Question 1?", "Question 13?", "Question 24?", "Question 36?"]
+
+
+def test_capped_sampling_shares_non_abstain_subset_with_answer_eval(
+    monkeypatch, tmp_path
+) -> None:
+    """Both runners sample the full question list first, then filter abstain."""
+    from memory_eval_tests.online.answer_eval import evaluate_answers
+
+    questions = [
+        {
+            "id": f"Q{i:03d}",
+            "question": f"Question {i}?",
+            "question_type": "abstain" if i > 34 else "direct_numeric",
+            "expected_behavior": "abstain" if i > 34 else "answer",
+            "answer": (
+                "The document does not provide this information."
+                if i > 34
+                else f"value {i}"
+            ),
+            "evidence_fact_ids": [] if i > 34 else [f"FACT-{i}"],
+        }
+        for i in range(1, 37)
+    ]
+    facts = [_fact(f"FACT-{i}", f"value {i}") for i in range(1, 37)]
+    dataset = _write_oracle(tmp_path, questions=questions, facts=facts)
+    abstain_ids = {"Q035", "Q036"}
+    retrieval_seen: list[str] = []
+    answer_seen: list[str] = []
+
+    def fake_retrieval_post(url: str, payload: dict) -> dict:
+        retrieval_seen.append(payload["query"])
+        return {
+            "status": "ok",
+            "data": {
+                "references": [{"file_path": "a.docx", "content": ["nothing"]}]
+            },
+            "metadata": {},
+        }
+
+    def fake_answer_post(url: str, payload: dict) -> dict:
+        answer_seen.append(payload["query"])
+        return {"response": "unrelated", "references": []}
+
+    monkeypatch.setattr("memory_eval_tests.online.retrieval_eval._post_json", fake_retrieval_post)
+    monkeypatch.setattr("memory_eval_tests.online.answer_eval._post_json", fake_answer_post)
+
+    evaluate_api(
+        dataset_source=dataset,
+        rag_api_url="http://127.0.0.1:9621",
+        max_cases=10,
+    )
+    evaluate_answers(
+        dataset_source=dataset,
+        rag_api_url="http://127.0.0.1:9621",
+        max_cases=10,
+    )
+
+    retrieval_ids = {question for question in retrieval_seen}
+    answer_ids = {question for question in answer_seen}
+    # Same query text -> same question; retrieval drops abstain from the shared
+    # evenly-spaced sample of the full oracle.
+    non_abstain_answer = {
+        question
+        for question in answer_ids
+        if question not in {q["question"] for q in questions if q["id"] in abstain_ids}
+    }
+    assert retrieval_ids == non_abstain_answer
+    assert retrieval_ids and len(retrieval_ids) < 10

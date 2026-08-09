@@ -23,13 +23,14 @@ def evaluate_api(
     max_cases: int | None = None,
 ) -> dict[str, Any]:
     oracle = DatasetClient(dataset_source).oracle()
+    questions = sample_evenly(list(oracle.get("questions", [])), max_cases)
     questions = [
         question
-        for question in oracle.get("questions", [])
+        for question in questions
         if question.get("expected_behavior") != "abstain"
     ]
     results: list[dict[str, Any]] = []
-    for question in sample_evenly(questions, max_cases):
+    for question in questions:
         payload = {
             "query": question["question"],
             "mode": mode,
@@ -47,22 +48,22 @@ def evaluate_api(
             if fact["fact_id"] in question.get("evidence_fact_ids", [])
         ]
         references = _ranked_references(response)
-        ranked_chunks: list[tuple[int, int, str]] = []
+        ranked_chunks: list[tuple[int, str]] = []
         rank = 0
         for ref_index, ref in enumerate(references):
             for chunk in ref.get("content") or []:
                 rank += 1
-                ranked_chunks.append((rank, ref_index, chunk))
+                ranked_chunks.append((rank, chunk))
         hits_by_fact: dict[str, int] = {}
-        hit_context_indexes: set[int] = set()
-        for rank, ref_index, chunk in ranked_chunks:
-            context_hit = False
+        hit_chunk_count = 0
+        for rank, chunk in ranked_chunks:
+            chunk_hit = False
             for fact in expected_facts:
                 if _content_contains_fact(chunk, fact):
                     hits_by_fact.setdefault(fact["fact_id"], rank)
-                    context_hit = True
-            if context_hit:
-                hit_context_indexes.add(ref_index)
+                    chunk_hit = True
+            if chunk_hit:
+                hit_chunk_count += 1
 
         expected_count = len(expected_facts)
         recall = len(hits_by_fact) / expected_count if expected_count else 0.0
@@ -74,7 +75,7 @@ def evaluate_api(
                 "recall_at_k": recall,
                 "reciprocal_rank": 1 / first_rank if first_rank else 0.0,
                 "context_precision": (
-                    len(hit_context_indexes) / len(references) if references else 0.0
+                    hit_chunk_count / len(ranked_chunks) if ranked_chunks else 0.0
                 ),
                 # The API references expose file paths and chunk text only, not
                 # the parsed object kind, so object-level hits are unavailable.
@@ -112,12 +113,13 @@ def evaluate_sidecar(
     contexts = _load_sidecar_contexts(parsed_dir)
     results: list[dict[str, Any]] = []
 
+    questions = sample_evenly(list(oracle.questions), max_cases)
     questions = [
         question
-        for question in oracle.questions
+        for question in questions
         if question.expected_behavior != "abstain"
     ]
-    for question in sample_evenly(questions, max_cases):
+    for question in questions:
         ranked = _rank_contexts(question.question, contexts)
         top_contexts = ranked[:top_k]
         expected_facts = [

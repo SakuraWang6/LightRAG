@@ -115,15 +115,18 @@ def score_answer(
     if expected_behavior == "abstain":
         abstention_correct = _looks_like_abstain(answer_text)
         exact = abstention_correct
-        # Refusing an unanswerable question does not require a source citation.
-        evidence_available = True
+        # Refusing an unanswerable question has no oracle evidence and needs no
+        # citation.  Keep evidence_available as None so abstain questions are
+        # excluded from the evidence-availability rate instead of inflating it.
+        evidence_available = None
         citation_presence = False
         citation_correctness = None
 
     # Groundedness means the answer is correct and its oracle evidence was
-    # supplied to the model.  It deliberately does not conflate availability
-    # with an explicit citation in the generated prose.
-    grounded = bool(exact and evidence_available)
+    # supplied to the model; a correct abstain is grounded without evidence.
+    grounded = bool(
+        exact and (True if evidence_available is None else evidence_available)
+    )
     ungrounded = bool(expected_behavior == "abstain" and not abstention_correct)
     if expected_behavior != "abstain":
         ungrounded = not grounded
@@ -134,7 +137,7 @@ def score_answer(
         "formula_correct": formula_correct,
         "table_cell_correct": table_cell_correct,
         "abstention_correct": abstention_correct,
-        "evidence_available": bool(evidence_available),
+        "evidence_available": evidence_available,
         "citation_presence": bool(citation_presence),
         "citation_correctness": citation_correctness,
         "grounded": grounded,

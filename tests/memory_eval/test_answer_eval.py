@@ -103,6 +103,35 @@ def test_score_answer_no_longer_emits_legacy_alias_fields():
     assert scored["ungrounded"] is False
 
 
+def test_abstain_excludes_evidence_available_but_counts_as_grounded():
+    question = {"question_type": "abstain", "expected_behavior": "abstain"}
+    expected = "The document does not provide this information."
+    correct = score_answer(
+        answer_text="The document does not mention this approval code.",
+        expected=expected,
+        question=question,
+        evidence_facts=[],
+        references_blob="",
+    )
+    assert correct["abstention_correct"] is True
+    assert correct["evidence_available"] is None
+    assert correct["citation_presence"] is False
+    assert correct["grounded"] is True
+    assert correct["ungrounded"] is False
+
+    wrong = score_answer(
+        answer_text="The answer is 42.",
+        expected=expected,
+        question=question,
+        evidence_facts=[],
+        references_blob="",
+    )
+    assert wrong["abstention_correct"] is False
+    assert wrong["evidence_available"] is None
+    assert wrong["grounded"] is False
+    assert wrong["ungrounded"] is True
+
+
 def test_evaluate_answers_emits_canonical_summary_keys(monkeypatch, tmp_path):
     from memory_eval_tests.online.answer_eval import evaluate_answers
 
