@@ -57,3 +57,24 @@ jobs:
           .pytest_cache/
           test-results.xml
         retention-days: 7
+
+  webui-tests:
+    name: WebUI Unit Tests
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Bun
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: latest
+
+    - name: Install dependencies (locked)
+      working-directory: lightrag_webui
+      run: bun install --frozen-lockfile
+
+    - name: Run webui unit tests
+      working-directory: lightrag_webui
+      run: bun test

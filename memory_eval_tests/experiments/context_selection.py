@@ -7,7 +7,6 @@ conditions and comparable per-method metrics.
 
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -16,7 +15,6 @@ from memory_eval_tests.common.dataset_client import DatasetClient
 from memory_eval_tests.experiments.common import (
     ExperimentSpec,
     RunContext,
-    build_conditions,
     chat_ollama,
     context_check,
     normalize_summary,
@@ -38,16 +36,16 @@ from memory_eval_tests.experiments.common.context import (
     split_prompt,
     target_tables,
 )
+from memory_eval_tests.experiments.common.rag_session import (
+    DEFAULT_STORAGE,
+    find_rag,
+    load_keyword_cache,
+    query_param,
+)
 from memory_eval_tests.experiments.common.tables import (
     build_oracle_context,
     load_sidecar_tables,
     table_markdown,
-)
-from memory_eval_tests.experiments.kg_ablation import (
-    DEFAULT_STORAGE,
-    _find_rag,
-    _load_keyword_cache,
-    _query_param,
 )
 from memory_eval_tests.online.answer_eval import score_answer
 
@@ -191,11 +189,11 @@ async def _run(context: RunContext) -> dict[str, Any]:
     }
     tables = load_sidecar_tables(_sidecar_parsed_dir(dataset))
 
-    cache = _load_keyword_cache(storage_dir)
+    cache = load_keyword_cache(storage_dir)
     missing = [q["id"] for q in questions if q["question"] not in cache]
     if missing:
         raise RuntimeError(f"Missing cached keywords for {len(missing)} questions; run ingest/cache first")
-    rag = _find_rag()
+    rag = find_rag()
     await rag.initialize_storages()
     rag.llm_response_cache.global_config["enable_llm_cache"] = False
 
@@ -211,11 +209,11 @@ async def _run(context: RunContext) -> dict[str, Any]:
             high, low = cache[text]
             top20_prompt = await rag.aquery(
                 text,
-                param=_query_param(top_k=20, high_keywords=high, low_keywords=low, prompt_only=True),
+                param=query_param(top_k=20, high_keywords=high, low_keywords=low, prompt_only=True),
             )
             top3_prompt = await rag.aquery(
                 text,
-                param=_query_param(top_k=3, high_keywords=high, low_keywords=low, prompt_only=True),
+                param=query_param(top_k=3, high_keywords=high, low_keywords=low, prompt_only=True),
             )
             prefix, user = split_prompt(str(top20_prompt))
             top20 = make_candidates(entity_rows(str(top20_prompt), limit=20))

@@ -23,73 +23,24 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import re
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 from memory_eval_tests.common.dataset_client import DatasetClient
-from memory_eval_tests.experiments.evidence_selector_experiment import (
-    _chat_ollama,
-    _contains_fact,
-    _group,
-    _make_candidates,
-    _parse_selection,
-    _render_context,
-    _split_prompt,
+from memory_eval_tests.experiments.common.selectors import (
+    contains_fact,
+    entity_rows_from_context,
+    facts_covered,
+    group,
+    make_candidates,
+    parse_selection,
+    render_context,
+    role_prompt,
+    simple_chat_ollama,
+    split_prompt,
 )
+from memory_eval_tests.experiments.legacy_adapter import legacy_spec
 from memory_eval_tests.online.answer_eval import score_answer
-
-
-def _entity_rows_from_context(context: str, limit: int = 20) -> list[dict[str, Any]]:
-    match = re.search(
-        r"Knowledge Graph Data \(Entity\):\s*```json\s*(.*?)\s*```",
-        context,
-        flags=re.S,
-    )
-    if not match:
-        return []
-    rows = []
-    for line in match.group(1).splitlines():
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(item, dict) and item.get("entity"):
-            rows.append(item)
-        if len(rows) >= limit:
-            break
-    return rows
-
-
-def _role_prompt(question: str, candidates: list[dict[str, Any]], limit: int) -> str:
-    rendered = [
-        {
-            "evidence_id": item["evidence_id"],
-            "object_type": item["object_type"],
-            "entity": item["entity"],
-            "text": item["text"],
-        }
-        for item in candidates
-    ]
-    return (
-        "You are an evidence selector. Do not answer the question. The question may require "
-        "multiple distinct pieces of evidence (multi-hop). Identify each distinct role the "
-        "question needs (for example a latency fact, an equation, a figure, or a table), and "
-        "ensure at least one evidence ID covers every role before spending the remaining budget. "
-        "Prefer authoritative facts over distractors. Select at most "
-        f"{limit} evidence IDs. Return ONLY strict JSON with this shape: "
-        '{"selected_evidence_ids":["EVD-..."],"roles":["..."]}.\n\n'
-        f"Question: {question}\n\nCandidates:\n{json.dumps(rendered, ensure_ascii=False)}"
-    )
-
-
-def _facts_covered(candidates: list[dict[str, Any]], facts: list[dict[str, Any]]) -> list[str]:
-    covered = []
-    for fact in facts:
-        if any(_contains_fact(candidate, fact) for candidate in candidates):
-            covered.append(str(fact.get("fact_id") or ""))
-    return covered
 
 
 def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -174,7 +125,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     questions = {q["id"]: q for q in oracle["questions"]}
     facts_by_id = {fact["fact_id"]: fact for fact in oracle["facts"]}
     frozen = json.loads(args.frozen_prompts.read_text(encoding="utf-8"))
-    prefix, _ = _split_prompt(str(frozen["prompts"][0]["prompt"]))
+    prefix, _ = split_prompt(str(frozen["prompts"][0]["prompt"]))
 
     rows: list[dict[str, Any]] = []
     if args.resume and args.output_json.exists():
@@ -198,7 +149,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         if question_id not in questions:
             continue
         question = questions[question_id]
-        candidates = _make_candidates(_entity_rows_from_context(base["candidate_context"], limit=20))
+        candidates = make_candidates(entity_rows_from_context(base["candidate_context"], limit=20))
         saved_ids = list(base["selected_evidence_ids"])
         rebuilt_ids = [item["evidence_id"] for item in candidates]
         if rebuilt_ids != list(base["candidate_evidence_ids"]):
@@ -206,18 +157,18 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         evidence_facts = [
             facts_by_id[fid] for fid in question.get("evidence_fact_ids", []) if fid in facts_by_id
         ]
-        candidate_covered = _facts_covered(candidates, evidence_facts)
+        candidate_covered = facts_covered(candidates, evidence_facts)
         candidate_recall = len(candidate_covered) / len(evidence_facts) if evidence_facts else 1.0
 
         def run_arm(method: str, selected: list[dict[str, Any]], selector_raw: str | None, answer: str | None, context: str | None) -> dict[str, Any]:
             selected_ids = [item["evidence_id"] for item in selected]
-            matched_facts = _facts_covered(selected, evidence_facts)
+            matched_facts = facts_covered(selected, evidence_facts)
             role_coverage = len(matched_facts) / len(evidence_facts) if evidence_facts else 1.0
             relevant = [item["evidence_id"] for item in selected if item["evidence_id"] in base["candidate_oracle_evidence_ids"]]
             if context is None:
-                context = _render_context(selected)
+                context = render_context(selected)
             if answer is None:
-                answer = _chat_ollama(
+                answer = simple_chat_ollama(
                     host=args.ollama_url,
                     model=args.model,
                     system=prefix + context,
@@ -234,7 +185,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             return {
                 "question_id": question_id,
                 "method": method,
-                "question_group": _group(question),
+                "question_group": group(question),
                 "candidate_recall": candidate_recall,
                 "role_coverage": role_coverage,
                 "selection_precision": len(relevant) / len(selected_ids) if selected_ids else None,
@@ -262,14 +213,14 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
 
         # Arm 2: role-aware LLM prompt.
         if ("select5_role_prompt", question_id) not in done:
-            raw_selector = _chat_ollama(
+            raw_selector = simple_chat_ollama(
                 host=args.ollama_url,
                 model=args.model,
                 system="Follow the requested JSON schema exactly.",
-                user=_role_prompt(str(question["question"]), candidates, 5),
+                user=role_prompt(str(question["question"]), candidates, 5),
                 num_predict=160,
             )
-            ids = _parse_selection(raw_selector, candidates, 5)
+            ids = parse_selection(raw_selector, candidates, 5)
             selected = [item for item in candidates if item["evidence_id"] in ids]
             rows.append(run_arm("select5_role_prompt", selected, raw_selector, None, None))
 
@@ -277,13 +228,13 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         if ("select5_role_guaranteed", question_id) not in done:
             selected = [item for item in candidates if item["evidence_id"] in saved_ids]
             before = {item["evidence_id"] for item in selected}
-            matched_facts = {str(fact["fact_id"]) for fact in evidence_facts if any(_contains_fact(item, fact) for item in selected)}
+            matched_facts = {str(fact["fact_id"]) for fact in evidence_facts if any(contains_fact(item, fact) for item in selected)}
             additions = []
             for fact in evidence_facts:
                 fid = str(fact.get("fact_id") or "")
                 if fid in matched_facts:
                     continue
-                matches = [item for item in candidates if item["evidence_id"] not in before and _contains_fact(item, fact)]
+                matches = [item for item in candidates if item["evidence_id"] not in before and contains_fact(item, fact)]
                 if matches:
                     chosen = max(matches, key=lambda item: len(item["text"]))
                     additions.append(chosen)
@@ -344,3 +295,25 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+spec = legacy_spec(
+    experiment_id="relation_selector",
+    label="角色感知选择消融",
+    description=(
+        "在冻结 Top-20 候选池上对比 plain Select5、角色感知 Select5 提示与 "
+        "oracle 角色兜底修复三臂。"
+    ),
+    run=_run,
+    artifact_stem="relation_selector",
+    render_report=_render_report,
+    extra_paths={
+        "evidence_results": (
+            "memory_eval_tests/runs/evidence-selector-v1/evidence_selector_results.json"
+        ),
+        "frozen_prompts": (
+            "memory_eval_tests/runs/online/rich-smoke-v1-kg-ablation/"
+            "prompts_kg_mix_top5_ctx8192.json"
+        ),
+    },
+)

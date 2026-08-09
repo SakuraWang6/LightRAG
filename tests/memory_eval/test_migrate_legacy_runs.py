@@ -20,7 +20,13 @@ def _legacy_tree(tmp_path: Path) -> tuple[Path, Path]:
     run_dir = runs / "online" / "rich-smoke-v1-local-qwen8b-skipkg"
     _write_json(
         run_dir / "retrieval_mix_top5.json",
-        {"mode": "mix", "top_k": 5, "cases": 34, "average_recall": 0.9411, "mrr": 0.9411},
+        {
+            "mode": "mix",
+            "top_k": 5,
+            "cases": 34,
+            "average_recall": 0.9411,
+            "mrr": 0.9411,
+        },
     )
     _write_json(
         run_dir / "answer_mix.json",
@@ -38,9 +44,14 @@ def _legacy_tree(tmp_path: Path) -> tuple[Path, Path]:
     return runs, generated
 
 
+pytestmark = pytest.mark.offline
+
+
 def test_dry_run_does_not_write_envelopes(tmp_path: Path) -> None:
     runs, generated = _legacy_tree(tmp_path)
-    summary = migrate_legacy_runs(runs_root=runs, generated_root=generated, dry_run=True)
+    summary = migrate_legacy_runs(
+        runs_root=runs, generated_root=generated, dry_run=True
+    )
     assert summary["count"] == 2
     assert summary["dry_run"] is True
     assert not list(runs.rglob("run.json"))
@@ -72,7 +83,9 @@ def test_run_without_artifacts_gets_incomplete_envelope(tmp_path: Path) -> None:
     runs, generated = _legacy_tree(tmp_path)
     migrate_legacy_runs(runs_root=runs, generated_root=generated)
     envelope = json.loads(
-        (runs / "online" / "rich-smoke-v1-native-teP" / "run.json").read_text(encoding="utf-8")
+        (runs / "online" / "rich-smoke-v1-native-teP" / "run.json").read_text(
+            encoding="utf-8"
+        )
     )
     assert envelope["status"] == "incomplete"
     assert envelope["legacy"] is True
@@ -82,7 +95,13 @@ def test_run_without_artifacts_gets_incomplete_envelope(tmp_path: Path) -> None:
 def test_existing_envelopes_are_not_touched(tmp_path: Path) -> None:
     runs, generated = _legacy_tree(tmp_path)
     current = runs / "online" / "rich-smoke-v1"
-    _write_json(current / "run.json", {"schema_version": "1.0", "kind": "online", "run_id": "rich-smoke-v1"})
+    _write_json(
+        current / "run.json",
+        {"schema_version": "1.0", "kind": "online", "run_id": "rich-smoke-v1"},
+    )
     migrate_legacy_runs(runs_root=runs, generated_root=generated)
-    assert json.loads((current / "run.json").read_text(encoding="utf-8"))["run_id"] == "rich-smoke-v1"
+    assert (
+        json.loads((current / "run.json").read_text(encoding="utf-8"))["run_id"]
+        == "rich-smoke-v1"
+    )
     assert not (runs / "online" / "rich-smoke-v1" / "analysis.json").exists()

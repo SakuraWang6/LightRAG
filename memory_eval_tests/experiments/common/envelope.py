@@ -107,8 +107,8 @@ def _dataset_meta(dataset: Path) -> dict[str, Any]:
 
 def capture_environment(**overrides: Any) -> dict[str, Any]:
     try:
-        from lightrag._version import __version__ as core_version
         from lightrag._version import __api_version__ as api_version
+        from lightrag._version import __version__ as core_version
     except Exception:
         core_version, api_version = "unknown", "unknown"
     env: dict[str, Any] = {

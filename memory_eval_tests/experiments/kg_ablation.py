@@ -11,78 +11,21 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from lightrag import LightRAG, QueryParam
-
+from lightrag import LightRAG
 from memory_eval_tests.common.dataset_client import DatasetClient
-from memory_eval_tests.online.answer_eval import score_answer
-
-
-DEFAULT_STORAGE = Path(
-    "memory_eval_tests/runs/online/rich-smoke-v1-local-qwen8b-kg-timeout900/rag_storage"
+from memory_eval_tests.experiments.common import ExperimentSpec, RunContext
+from memory_eval_tests.experiments.common.rag_session import (
+    DEFAULT_STORAGE,
+    find_rag,
+    load_keyword_cache,
+    query_param,
 )
-
-
-def _find_rag() -> LightRAG:
-    """Build the configured app once and retrieve its already-opened RAG object."""
-    # ``lightrag.api.config`` parses command-line settings at import time.  Keep
-    # this runner's ablation flags out of that parser, then restore argv.
-    saved_argv = sys.argv
-    sys.argv = [sys.argv[0]]
-    try:
-        from lightrag.api.lightrag_server import get_application
-    finally:
-        sys.argv = saved_argv
-    app = get_application()
-    for included_router in app.routes:
-        router = getattr(included_router, "original_router", None)
-        for route in getattr(router, "routes", []):
-            if route.path != "/query":
-                continue
-            for cell in route.endpoint.__closure__ or ():
-                if isinstance(cell.cell_contents, LightRAG):
-                    return cell.cell_contents
-    raise RuntimeError("Unable to locate the LightRAG instance from the configured API app")
-
-
-def _load_keyword_cache(storage_dir: Path) -> dict[str, tuple[list[str], list[str]]]:
-    cache_path = storage_dir / "kv_store_llm_response_cache.json"
-    rows = json.loads(cache_path.read_text(encoding="utf-8"))
-    result: dict[str, tuple[list[str], list[str]]] = {}
-    for row in rows.values():
-        if row.get("cache_type") != "keywords":
-            continue
-        question = str(row.get("original_prompt") or "").strip()
-        try:
-            payload = json.loads(str(row.get("return") or "{}"))
-        except json.JSONDecodeError:
-            continue
-        high = payload.get("high_level_keywords") or []
-        low = payload.get("low_level_keywords") or []
-        if question and isinstance(high, list) and isinstance(low, list):
-            result[question] = ([str(item) for item in high], [str(item) for item in low])
-    return result
-
-
-def _query_param(
-    *, top_k: int, high_keywords: list[str], low_keywords: list[str], prompt_only: bool = False,
-    context_only: bool = False,
-) -> QueryParam:
-    return QueryParam(
-        mode="mix",
-        top_k=top_k,
-        chunk_top_k=top_k,
-        max_total_tokens=8192,
-        hl_keywords=high_keywords,
-        ll_keywords=low_keywords,
-        only_need_prompt=prompt_only,
-        only_need_context=context_only,
-        response_type="Multiple Paragraphs",
-    )
+from memory_eval_tests.experiments.legacy_adapter import namespace_from_context
+from memory_eval_tests.online.answer_eval import score_answer
 
 
 def _fact_in_context(fact: dict[str, Any], context: str) -> bool:
@@ -106,7 +49,7 @@ async def freeze_prompts(
         high, low = keyword_cache[text]
         prompt = await rag.aquery(
             text,
-            param=_query_param(
+            param=query_param(
                 top_k=5,
                 high_keywords=high,
                 low_keywords=low,
@@ -153,7 +96,7 @@ async def run_local_ablation(
         context = await asyncio.wait_for(
             rag.aquery(
                 text,
-                param=_query_param(
+                param=query_param(
                     top_k=top_k,
                     high_keywords=high,
                     low_keywords=low,
@@ -165,7 +108,7 @@ async def run_local_ablation(
         answer = await asyncio.wait_for(
             rag.aquery(
                 text,
-                param=_query_param(top_k=top_k, high_keywords=high, low_keywords=low),
+                param=query_param(top_k=top_k, high_keywords=high, low_keywords=low),
             ),
             timeout=per_query_timeout,
         )
@@ -253,7 +196,7 @@ async def run_retrieval_ablation(
         high, low = keyword_cache[text]
         context = await rag.aquery(
             text,
-            param=_query_param(
+            param=query_param(
                 top_k=top_k,
                 high_keywords=high,
                 low_keywords=low,
@@ -302,12 +245,12 @@ async def _amain(args: argparse.Namespace) -> None:
         if missing_requested:
             raise RuntimeError(f"Unknown question IDs: {', '.join(sorted(missing_requested))}")
     facts_by_id = {fact["fact_id"]: fact for fact in oracle["facts"]}
-    keyword_cache = _load_keyword_cache(args.storage_dir)
+    keyword_cache = load_keyword_cache(args.storage_dir)
     missing = [question["id"] for question in questions if question["question"] not in keyword_cache]
     if missing:
         raise RuntimeError(f"Missing cached keywords for: {', '.join(missing)}")
 
-    rag = _find_rag()
+    rag = find_rag()
     await rag.initialize_storages()
     try:
         # Never mutate the source index's query cache while evaluating variants.
@@ -434,3 +377,78 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def _render_kg_report(payload: dict[str, Any]) -> str:
+    lines = [
+        "# KG 上下文消融",
+        "",
+        "固定 KG 索引、关键词缓存、qwen3:8b 与 16,384 token 生成窗口，"
+        "仅改变检索深度。",
+        "",
+        "| Top-K | Cases | Retrieval Recall | Accuracy | Groundedness | 未支撑率 | Mean Context (chars) |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for report in payload.get("reports") or []:
+        lines.append(
+            f"| {report.get('top_k')} | {report.get('cases', 0)} | "
+            f"{report.get('retrieval_recall', 0):.4f} | "
+            f"{report.get('answer_accuracy', 0):.4f} | "
+            f"{report.get('groundedness', 0):.4f} | "
+            f"{report.get('ungrounded_rate', 0):.4f} | "
+            f"{report.get('mean_context_chars', 0):.0f} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _run_kg_ablation(context: RunContext) -> dict[str, Any]:
+    extra = context.extra
+    args = namespace_from_context(context, artifact_stem="kg_ablation")
+    args.top_k = [
+        int(value)
+        for value in str(extra.get("top_k") or "1,3,5,10,20").split(",")
+        if value.strip()
+    ]
+    args.freeze_prompts = None
+    args.retrieval_only = None
+    args.run_local = context.output_dir / "kg_ablation_results.json"
+    args.per_query_timeout = int(extra.get("per_query_timeout") or 600)
+    args.question_id = None
+    asyncio.run(_amain(args))
+    payload = json.loads(args.run_local.read_text(encoding="utf-8"))
+    methods = []
+    for report in payload.get("reports") or []:
+        summary = {key: value for key, value in report.items() if key != "results"}
+        methods.append(
+            {
+                "method": f"top{report.get('top_k')}",
+                "label": f"Top-{report.get('top_k')}",
+                "params": {},
+                "summary": summary,
+                "results": report.get("results") or [],
+            }
+        )
+    return {
+        "methods": methods,
+        "report": _render_kg_report(payload),
+        "status": "complete",
+    }
+
+
+spec = ExperimentSpec(
+    id="kg_ablation",
+    label="KG Top-K 上下文消融",
+    description=(
+        "固定 KG 索引与关键词缓存，遍历 Top-K=1/3/5/10/20 测量证据召回、"
+        "上下文体积与回答质量。"
+    ),
+    runner=_run_kg_ablation,
+    variables=[
+        {
+            "axis": "top_k",
+            "label": "Top-K",
+            "arms": [{"arm": str(k)} for k in (1, 3, 5, 10, 20)],
+        }
+    ],
+    kind="experiment",
+)

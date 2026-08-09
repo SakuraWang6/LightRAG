@@ -19,67 +19,26 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import re
 from pathlib import Path
 from typing import Any
 
 from memory_eval_tests.common.dataset_client import DatasetClient
-from memory_eval_tests.experiments.evidence_selector_experiment import (
-    _chat_ollama,
-    _contains_fact,
-    _group,
-    _make_candidates,
-    _split_prompt,
+from memory_eval_tests.experiments.common.selectors import (
+    contains_fact,
+    entity_rows_from_context,
+    group,
+    make_candidates,
+    render_combined_context,
+    simple_chat_ollama,
+    split_prompt,
+    target_tables,
 )
-from memory_eval_tests.experiments.oracle_upper_bound import (
-    _find_table_for_fact,
-    _load_sidecar_tables,
-    _table_markdown,
+from memory_eval_tests.experiments.common.tables import (
+    load_sidecar_tables,
+    table_markdown,
 )
+from memory_eval_tests.experiments.legacy_adapter import legacy_spec
 from memory_eval_tests.online.answer_eval import score_answer
-
-
-def _entity_rows_from_context(context: str, limit: int = 20) -> list[dict[str, Any]]:
-    match = re.search(
-        r"Knowledge Graph Data \(Entity\):\s*```json\s*(.*?)\s*```",
-        context,
-        flags=re.S,
-    )
-    if not match:
-        return []
-    rows = []
-    for line in match.group(1).splitlines():
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(item, dict) and item.get("entity"):
-            rows.append(item)
-        if len(rows) >= limit:
-            break
-    return rows
-
-
-def _render_context(rows: list[dict[str, Any]], chunks: list[dict[str, Any]]) -> str:
-    entity = "Knowledge Graph Data (Entity):\n\n```json\n" + "\n".join(
-        json.dumps(row["raw"], ensure_ascii=False) for row in rows
-    ) + "\n```\n"
-    relationships = "Knowledge Graph Data (Relationship):\n\n```json\n\n```\n"
-    documents = "Document Chunks:\n\n```json\n" + "\n".join(
-        json.dumps(chunk, ensure_ascii=False) for chunk in chunks
-    ) + "\n```\n"
-    return entity + relationships + documents
-
-
-def _target_tables(evidence_facts: list[dict[str, Any]], tables: dict[str, dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
-    result = []
-    for fact in evidence_facts:
-        if str(fact.get("object_type") or "") != "table":
-            continue
-        matched = _find_table_for_fact(fact, tables)
-        if matched:
-            result.append(matched)
-    return result
 
 
 def _metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -159,9 +118,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     oracle = DatasetClient(str(args.dataset)).oracle()
     questions = {q["id"]: q for q in oracle["questions"]}
     facts_by_id = {fact["fact_id"]: fact for fact in oracle["facts"]}
-    tables = _load_sidecar_tables(args.sidecar_parsed_dir)
+    tables = load_sidecar_tables(args.sidecar_parsed_dir)
     frozen = json.loads(args.frozen_prompts.read_text(encoding="utf-8"))
-    prefix, _ = _split_prompt(str(frozen["prompts"][0]["prompt"]))
+    prefix, _ = split_prompt(str(frozen["prompts"][0]["prompt"]))
 
     rows: list[dict[str, Any]] = []
     if args.resume and args.output_json.exists():
@@ -194,14 +153,14 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         evidence_facts = [
             facts_by_id[fid] for fid in question.get("evidence_fact_ids", []) if fid in facts_by_id
         ]
-        candidates = _make_candidates(_entity_rows_from_context(base["candidate_context"], limit=20))
+        candidates = make_candidates(entity_rows_from_context(base["candidate_context"], limit=20))
         if [item["evidence_id"] for item in candidates] != list(base["candidate_evidence_ids"]):
             raise RuntimeError(f"Candidate pool rebuild mismatch for {question_id}")
-        target_tables = _target_tables(evidence_facts, tables)
-        target_ids = {table_id for table_id, _ in target_tables}
+        matched_tables = target_tables(evidence_facts, tables)
+        target_ids = {table_id for table_id, _ in matched_tables}
         chunks = [
-            {"chunk_id": table_id, "content": _table_markdown(str(table.get("content") or ""))}
-            for table_id, table in target_tables
+            {"chunk_id": table_id, "content": table_markdown(str(table.get("content") or ""))}
+            for table_id, table in matched_tables
         ]
 
         for method, label in arms:
@@ -212,7 +171,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                     {
                         "question_id": question_id,
                         "method": method,
-                        "question_group": _group(question),
+                        "question_group": group(question),
                         "changed": False,
                         "selected_context_chars": len(base["selected_context"]),
                         "answer": base["answer"],
@@ -225,23 +184,23 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                 selected_ids = set(guaranteed_by_qid[question_id]["selected_evidence_ids"])
                 pool_rows = [item for item in candidates if item["evidence_id"] in selected_ids]
             else:
-                pool_rows = [item for item in candidates if any(_contains_fact(item, fact) for fact in evidence_facts)]
+                pool_rows = [item for item in candidates if any(contains_fact(item, fact) for fact in evidence_facts)]
             kept = []
             for item in pool_rows:
                 raw_text = f"{item['entity']} {item['text']}"
                 is_table_row = str(item["entity"]).lower().startswith("table")
                 mentions_target = any(target in raw_text for target in target_ids) or any(
-                    _contains_fact(item, fact) for fact in evidence_facts
+                    contains_fact(item, fact) for fact in evidence_facts
                 )
                 if not is_table_row or mentions_target:
                     kept.append(item)
-            context = _render_context(kept, chunks)
+            context = render_combined_context(kept, chunks)
             if context == base["selected_context"]:
                 rows.append(
                     {
                         "question_id": question_id,
                         "method": method,
-                        "question_group": _group(question),
+                        "question_group": group(question),
                         "changed": False,
                         "selected_context_chars": len(context),
                         "selected_evidence_ids": [item["evidence_id"] for item in kept],
@@ -252,7 +211,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                     }
                 )
                 continue
-            answer = _chat_ollama(
+            answer = simple_chat_ollama(
                 host=args.ollama_url,
                 model=args.model,
                 system=prefix + context,
@@ -270,7 +229,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                 {
                     "question_id": question_id,
                     "method": method,
-                    "question_group": _group(question),
+                    "question_group": group(question),
                     "changed": True,
                     "selected_context_chars": len(context),
                     "selected_evidence_ids": [item["evidence_id"] for item in kept],
@@ -326,3 +285,32 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+spec = legacy_spec(
+    experiment_id="combined_pipeline",
+    label="组合选择+打包管线",
+    description=(
+        "组合角色兜底选择与目标表格打包：combined_focus（现实方法）与 "
+        "combined_precision（精确上限），保留 Select5 基线。"
+    ),
+    run=_run,
+    artifact_stem="combined_pipeline",
+    render_report=_render_report,
+    extra_paths={
+        "evidence_results": (
+            "memory_eval_tests/runs/evidence-selector-v1/evidence_selector_results.json"
+        ),
+        "relation_results": (
+            "memory_eval_tests/runs/relation-selector-v1/relation_selector_results.json"
+        ),
+        "sidecar_parsed_dir": (
+            "memory_eval_tests/runs/offline/rich-smoke-v1/sidecar/"
+            "rich-smoke-v1.docx.parsed/rich-smoke-v1.tables.json"
+        ),
+        "frozen_prompts": (
+            "memory_eval_tests/runs/online/rich-smoke-v1-kg-ablation/"
+            "prompts_kg_mix_top5_ctx8192.json"
+        ),
+    },
+)

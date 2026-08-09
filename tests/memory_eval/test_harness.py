@@ -15,6 +15,7 @@ from memory_eval_tests.experiments.common import (
     write_simple_envelope,
 )
 
+pytestmark = pytest.mark.offline
 
 def test_metric_alias_normalization() -> None:
     summary = normalize_summary(
@@ -117,6 +118,12 @@ def test_registry_specs() -> None:
         "structure_ablation",
         "scale",
         "online_baseline",
+        "kg_ablation",
+        "evidence_selector",
+        "relation_selector",
+        "table_packing",
+        "combined_pipeline",
+        "oracle_upper_bound",
     ]
     for spec in list_specs():
         assert spec.description

@@ -1,11 +1,18 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeftIcon } from 'lucide-react'
+import { ArrowLeftIcon, DownloadIcon } from 'lucide-react'
 
 import type { EvalRunDetail, MetricItem } from '@/api/eval'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/Select'
 import {
   Table,
   TableBody,
@@ -14,7 +21,13 @@ import {
   TableHeader,
   TableRow
 } from '@/components/ui/Table'
-import { formatMetricCell, metricRank, runKindClass } from '@/features/eval/utils'
+import {
+  buildCompareCsv,
+  formatDelta,
+  formatMetricCell,
+  metricRank,
+  runKindClass
+} from '@/features/eval/utils'
 
 interface EvalCompareProps {
   runs: EvalRunDetail[]
@@ -56,6 +69,19 @@ function collectMetrics(run: EvalRunDetail): Map<string, MetricItem> {
 
 export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
   const { t } = useTranslation()
+  const [baselineId, setBaselineId] = useState<string | null>(null)
+
+  const baselineIndex = useMemo(() => {
+    if (baselineId) {
+      const index = runs.findIndex((run) => run.id === baselineId)
+      if (index >= 0) return index
+    }
+    let latest = 0
+    runs.forEach((run, index) => {
+      if ((run.updated_at ?? '') > (runs[latest].updated_at ?? '')) latest = index
+    })
+    return runs.length ? latest : null
+  }, [baselineId, runs])
 
   const conditionKeys = useMemo(() => {
     const keys = new Set<string>()
@@ -87,6 +113,17 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
       })
   }, [runs])
 
+  const exportCsv = () => {
+    const csv = buildCompareCsv(runs, rows, baselineIndex)
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = 'eval-compare.csv'
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center gap-3 border-b px-4 py-3">
@@ -95,6 +132,28 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
         </Button>
         <h2 className="text-lg font-semibold">{t('eval.compare')}</h2>
         <span className="text-muted-foreground text-xs">{runs.length} runs</span>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-muted-foreground text-xs">{t('eval.baselineRun')}</span>
+          <Select
+            value={baselineIndex != null ? runs[baselineIndex]?.id : undefined}
+            onValueChange={(value) => setBaselineId(value)}
+          >
+            <SelectTrigger className="h-8 w-56">
+              <SelectValue placeholder="—" />
+            </SelectTrigger>
+            <SelectContent>
+              {runs.map((run) => (
+                <SelectItem key={run.id} value={run.id}>
+                  <span className="max-w-[180px] truncate">{run.label}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button size="sm" variant="outline" onClick={exportCsv}>
+            <DownloadIcon className="mr-1 size-4" />
+            {t('eval.exportCsv')}
+          </Button>
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-4">
         <Card>
@@ -152,7 +211,7 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
                             {run.label}
                           </span>
                           <Badge variant="outline" className={`w-fit text-[10px] ${runKindClass(run.kind)}`}>
-                            {run.kind}
+                            {runs.indexOf(run) === baselineIndex ? `${run.kind} · 基线` : run.kind}
                           </Badge>
                         </span>
                       </TableHead>
@@ -168,6 +227,11 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
                       {row.values.map((value, index) => (
                         <TableCell key={index} className="whitespace-nowrap px-3 py-2">
                           {formatMetricCell(value)}
+                          {baselineIndex != null && index !== baselineIndex ? (
+                            <span className="text-muted-foreground ml-1 text-[10px]">
+                              {formatDelta(value, row.values[baselineIndex])}
+                            </span>
+                          ) : null}
                         </TableCell>
                       ))}
                     </TableRow>
@@ -182,6 +246,9 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
                 </TableBody>
               </Table>
             </div>
+            <p className="text-muted-foreground mt-2 text-xs">
+              {t('eval.compareNote', { count: runs.length })}
+            </p>
           </CardContent>
         </Card>
       </div>

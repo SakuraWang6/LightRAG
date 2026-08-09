@@ -6,10 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from lightrag.chunker.paragraph_semantic import chunking_by_paragraph_semantic
-
 from memory_data_service.schemas import OraclePayload
 from memory_eval_tests.common.dataset_client import DatasetClient
-from memory_eval_tests.offline.object_traceability import _normalize_evidence
+from memory_eval_tests.common.evidence import normalize_evidence
 
 
 class CharacterTokenizer:
@@ -32,7 +31,7 @@ def audit_chunk_traceability(
     if blocks_path is None:
         raise FileNotFoundError(f"no *.blocks.jsonl found in {parsed_dir}")
 
-    blocks = _load_blocks(blocks_path)
+    blocks = load_blocks(blocks_path)
     block_ids = {block["blockid"] for block in blocks if block.get("blockid")}
     merged_content = "\n".join(str(block.get("content", "")) for block in blocks)
     chunks = chunking_by_paragraph_semantic(
@@ -58,11 +57,11 @@ def audit_chunk_traceability(
 
     fact_hits = []
     chunk_texts = [str(chunk.get("content", "")) for chunk in chunks]
-    normalized_chunks = [_normalize_evidence(text) for text in chunk_texts]
+    normalized_chunks = [normalize_evidence(text) for text in chunk_texts]
     sampled_facts = _limit_items(oracle.facts, max_facts)
     for fact in sampled_facts:
-        normalized_answer = _normalize_evidence(fact.answer)
-        normalized_expected = _normalize_evidence(fact.expected_text)
+        normalized_answer = normalize_evidence(fact.answer)
+        normalized_expected = normalize_evidence(fact.expected_text)
         hit_indexes = [
             index
             for index, text in enumerate(chunk_texts)
@@ -124,7 +123,7 @@ def audit_chunk_traceability(
     }
 
 
-def _load_blocks(blocks_path: Path) -> list[dict[str, Any]]:
+def load_blocks(blocks_path: Path) -> list[dict[str, Any]]:
     rows = [json.loads(line) for line in blocks_path.read_text(encoding="utf-8").splitlines()]
     return [row for row in rows if row.get("type") == "content"]
 
@@ -150,7 +149,7 @@ def _object_text_hits(
     hits = 0
     for obj in candidates:
         text = obj.text or obj.title
-        normalized_text = _normalize_evidence(text)
+        normalized_text = normalize_evidence(text)
         hit = bool(normalized_text) and any(
             normalized_text in chunk for chunk in normalized_chunks
         )

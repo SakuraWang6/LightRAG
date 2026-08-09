@@ -7,6 +7,10 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+DATASET_SCHEMA_VERSION = "1.0"
+_SUPPORTED_SCHEMA_VERSIONS = frozenset({DATASET_SCHEMA_VERSION})
+
+
 TierName = Literal["smoke", "medium", "large", "stress"]
 DocumentFormat = Literal["docx", "pdf"]
 ModalityName = Literal["text", "tables", "figures", "equations"]
@@ -119,6 +123,7 @@ class ObjectRelation(BaseModel):
 
 
 class DatasetManifest(BaseModel):
+    schema_version: str = DATASET_SCHEMA_VERSION
     dataset_id: str
     created_at: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
@@ -143,6 +148,7 @@ class DatasetManifest(BaseModel):
 
 
 class OraclePayload(BaseModel):
+    schema_version: str = DATASET_SCHEMA_VERSION
     dataset_id: str
     facts: list[FactRecord]
     questions: list[QuestionRecord]
@@ -162,3 +168,12 @@ class DatasetSummary(BaseModel):
 
 def dataset_dir(root: Path, dataset_id: str) -> Path:
     return root / dataset_id
+
+
+def check_schema_version(schema_version: str | None) -> tuple[bool, str]:
+    """Return ``(supported, version)`` for a dataset's schema version.
+
+    Missing versions are treated as the original unversioned layout (1.0).
+    """
+    version = schema_version or DATASET_SCHEMA_VERSION
+    return version in _SUPPORTED_SCHEMA_VERSIONS, version

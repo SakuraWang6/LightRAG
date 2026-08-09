@@ -23,23 +23,23 @@ import argparse
 import asyncio
 import json
 import re
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 from memory_eval_tests.common.dataset_client import DatasetClient
-from memory_eval_tests.experiments.evidence_selector_experiment import (
-    _chat_ollama,
-    _contains_fact,
-    _group,
-    _make_candidates,
-    _split_prompt,
+from memory_eval_tests.experiments.common.selectors import (
+    contains_fact,
+    group,
+    make_candidates,
+    simple_chat_ollama,
+    split_prompt,
 )
-from memory_eval_tests.experiments.oracle_upper_bound import (
-    _find_table_for_fact,
-    _load_sidecar_tables,
-    _table_markdown,
+from memory_eval_tests.experiments.common.tables import (
+    find_table_for_fact,
+    load_sidecar_tables,
+    table_markdown,
 )
+from memory_eval_tests.experiments.legacy_adapter import legacy_spec
 from memory_eval_tests.online.answer_eval import score_answer
 
 
@@ -97,7 +97,7 @@ def _minimal_markdown(content: str, fact_id: str, neighbors: int = 1) -> str:
         return content
     gold = _gold_row_index(content, fact_id)
     if gold is None:
-        return _table_markdown(content)
+        return table_markdown(content)
     keep = set(range(min(2, len(rows))))
     keep.update(range(max(0, gold - neighbors), min(len(rows), gold + neighbors + 1)))
     selected_rows = [rows[index] for index in sorted(keep)]
@@ -118,7 +118,7 @@ def _target_tables(
     for fact in evidence_facts:
         if str(fact.get("object_type") or "") != "table":
             continue
-        matched = _find_table_for_fact(fact, tables)
+        matched = find_table_for_fact(fact, tables)
         if matched:
             table_id, table = matched
             result.append((table_id, table, str(fact.get("fact_id") or "")))
@@ -200,9 +200,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     oracle = DatasetClient(str(args.dataset)).oracle()
     questions = {q["id"]: q for q in oracle["questions"]}
     facts_by_id = {fact["fact_id"]: fact for fact in oracle["facts"]}
-    tables = _load_sidecar_tables(args.sidecar_parsed_dir)
+    tables = load_sidecar_tables(args.sidecar_parsed_dir)
     frozen = json.loads(args.frozen_prompts.read_text(encoding="utf-8"))
-    prefix, _ = _split_prompt(str(frozen["prompts"][0]["prompt"]))
+    prefix, _ = split_prompt(str(frozen["prompts"][0]["prompt"]))
 
     rows: list[dict[str, Any]] = []
     if args.resume and args.output_json.exists():
@@ -240,7 +240,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         evidence_facts = [
             facts_by_id[fid] for fid in question.get("evidence_fact_ids", []) if fid in facts_by_id
         ]
-        candidates = _make_candidates(_entity_rows_from_context(base["candidate_context"], limit=20))
+        candidates = make_candidates(_entity_rows_from_context(base["candidate_context"], limit=20))
         if [item["evidence_id"] for item in candidates] != list(base["candidate_evidence_ids"]):
             raise RuntimeError(f"Candidate pool rebuild mismatch for {question_id}")
         selected = [item for item in candidates if item["evidence_id"] in base["selected_evidence_ids"]]
@@ -255,7 +255,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                     {
                         "question_id": question_id,
                         "method": method,
-                        "question_group": _group(question),
+                        "question_group": group(question),
                         "changed": False,
                         "selected_context_chars": len(base["selected_context"]),
                         "selected_context": base["selected_context"],
@@ -270,7 +270,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                     {
                         "question_id": question_id,
                         "method": method,
-                        "question_group": _group(question),
+                        "question_group": group(question),
                         "changed": False,
                         "selected_context_chars": len(base["selected_context"]),
                         "selected_context": base["selected_context"],
@@ -287,7 +287,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                 if method == "table_pack_minimal":
                     content_text = _minimal_markdown(content, fact_id)
                 else:
-                    content_text = _table_markdown(content)
+                    content_text = table_markdown(content)
                 chunks.append(
                     {
                         "chunk_id": table_id,
@@ -300,7 +300,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                     raw_text = f"{item['entity']} {item['text']}"
                     is_table_row = str(item["entity"]).lower().startswith("table")
                     mentions_target = any(target in raw_text for target in target_ids) or any(
-                        _contains_fact(item, fact) for fact in evidence_facts
+                        contains_fact(item, fact) for fact in evidence_facts
                     )
                     if not is_table_row or mentions_target:
                         kept.append(item)
@@ -308,7 +308,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 packed_rows = selected
             context = _render_context(packed_rows, chunks)
-            answer = _chat_ollama(
+            answer = simple_chat_ollama(
                 host=args.ollama_url,
                 model=args.model,
                 system=prefix + context,
@@ -326,7 +326,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                 {
                     "question_id": question_id,
                     "method": method,
-                    "question_group": _group(question),
+                    "question_group": group(question),
                     "changed": True,
                     "selected_context_chars": len(context),
                     "selected_context": context,
@@ -379,3 +379,29 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+spec = legacy_spec(
+    experiment_id="table_packing",
+    label="表格打包消融",
+    description=(
+        "在保存的 Select5 证据包上对比表格完整打包 / 最小化打包 / 聚焦打包 "
+        "三种渲染差异。"
+    ),
+    run=_run,
+    artifact_stem="table_packing",
+    render_report=_render_report,
+    extra_paths={
+        "evidence_results": (
+            "memory_eval_tests/runs/evidence-selector-v1/evidence_selector_results.json"
+        ),
+        "sidecar_parsed_dir": (
+            "memory_eval_tests/runs/offline/rich-smoke-v1/sidecar/"
+            "rich-smoke-v1.docx.parsed/rich-smoke-v1.tables.json"
+        ),
+        "frozen_prompts": (
+            "memory_eval_tests/runs/online/rich-smoke-v1-kg-ablation/"
+            "prompts_kg_mix_top5_ctx8192.json"
+        ),
+    },
+)

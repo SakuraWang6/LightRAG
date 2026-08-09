@@ -9,6 +9,7 @@ from typing import Any
 
 from memory_data_service.schemas import DatasetManifest
 from memory_eval_tests.common.dataset_client import DatasetClient
+from memory_eval_tests.reporting.report_envelope import write_report_envelope
 
 
 def build_scale_rows(
@@ -123,6 +124,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runs-root", type=Path, default=Path("memory_eval_tests/runs/offline"))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--format", choices=("markdown", "json", "csv"), default="markdown")
+    parser.add_argument(
+        "--no-envelope",
+        action="store_true",
+        help="Skip writing the kind=report run.json envelope.",
+    )
     args = parser.parse_args(argv)
 
     rows = build_scale_rows(datasets=args.datasets, runs_root=args.runs_root)
@@ -135,6 +141,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered, encoding="utf-8")
+        if args.format == "markdown" and not args.no_envelope:
+            write_report_envelope(
+                output_path=args.output,
+                report_type="scale",
+                label="规模评测报告",
+                description="跨数据集规模对比（生成成本、解析与检索基线）。",
+                baseline={"datasets": [str(dataset) for dataset in args.datasets]},
+                methods=[
+                    {
+                        "method": "scale",
+                        "label": "规模评测",
+                        "params": {},
+                        "summary": {},
+                        "results": rows,
+                    }
+                ],
+            )
     else:
         sys.stdout.write(rendered)
     return 0

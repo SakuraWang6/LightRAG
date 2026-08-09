@@ -11,15 +11,8 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 from typing import Any
-
-# The server console script does not put the repository root on sys.path;
-# ``memory_eval_tests`` is a repo-local package, so expose it explicitly.
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
 
 from memory_eval_tests.experiments.common.envelope import build_conditions
 from memory_eval_tests.experiments.common.metrics import normalize_metric_key
@@ -34,6 +27,20 @@ _OFFLINE_LABELS = {
     "performance": "性能基线",
     "retrieval_sidecar": "词法检索",
 }
+
+_SCAN_SKIP_DIRS = {
+    "rag_storage",
+    "sidecar",
+    "inputs",
+    ".git",
+    "__pycache__",
+}
+
+# In-process scan cache: runs_root -> (mtime signature, list records).  The
+# signature covers every envelope dir's run.json/progress.json mtimes, so the
+# list is refreshed automatically whenever a run starts, progresses or finishes
+# without an explicit invalidation step.
+_scan_cache: dict[Path, tuple[tuple[tuple[str, int, int], ...], list[dict[str, Any]]]] = {}
 
 
 def default_runs_root() -> Path:
@@ -330,37 +337,68 @@ def _run_record(
     return record
 
 
-def _envelopes(runs_root: Path) -> list[tuple[Path, dict[str, Any]]]:
+def _iter_envelope_dirs(runs_root: Path) -> list[Path]:
+    """All directories containing a run.json, excluding heavy data dirs."""
     found = []
     for dirpath, dirnames, filenames in os.walk(str(runs_root), followlinks=False):
         dirnames[:] = [
             d
             for d in dirnames
-            if d not in {"rag_storage", "sidecar", ".git", "__pycache__"}
+            if d not in _SCAN_SKIP_DIRS
             and not d.endswith(".parsed")
+            and not d.endswith("__parsed__")
             and not d.startswith(".")
         ]
         if "run.json" in filenames:
-            run_dir = Path(dirpath)
-            try:
-                found.append((run_dir, _read_json(run_dir / "run.json")))
-            except (OSError, ValueError):
-                continue
+            found.append(Path(dirpath))
     return found
 
 
+def _envelope_signature(runs_root: Path) -> tuple[tuple[str, int, int], ...]:
+    entries: list[tuple[str, int, int]] = []
+    for run_dir in _iter_envelope_dirs(runs_root):
+        run_path = run_dir / "run.json"
+        progress_path = run_dir / "progress.json"
+        try:
+            run_mtime = run_path.stat().st_mtime_ns
+        except OSError:
+            continue
+        progress_mtime = (
+            progress_path.stat().st_mtime_ns if progress_path.exists() else 0
+        )
+        entries.append((str(run_dir), run_mtime, progress_mtime))
+    return tuple(sorted(entries))
+
+
+def clear_scan_cache(runs_root: Path | None = None) -> None:
+    """Drop the scan cache (used by tests and the refresh endpoint)."""
+    if runs_root is None:
+        _scan_cache.clear()
+    else:
+        _scan_cache.pop(runs_root, None)
+
+
 def scan_runs(runs_root: Path) -> list[dict[str, Any]]:
-    records = [
-        _run_record(runs_root, run_dir, envelope, with_artifacts=False)
-        for run_dir, envelope in _envelopes(runs_root)
-    ]
+    signature = _envelope_signature(runs_root)
+    cached = _scan_cache.get(runs_root)
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+    records = []
+    for run_dir in _iter_envelope_dirs(runs_root):
+        try:
+            envelope = _read_json(run_dir / "run.json")
+        except (OSError, ValueError):
+            continue
+        records.append(_run_record(runs_root, run_dir, envelope, with_artifacts=False))
     records.sort(key=lambda r: r["updated_at"] or "", reverse=True)
+    _scan_cache[runs_root] = (signature, records)
     return records
 
 
 def load_run(runs_root: Path, run_id: str) -> dict[str, Any] | None:
-    for run_dir, envelope in _envelopes(runs_root):
-        record = _run_record(runs_root, run_dir, envelope, with_artifacts=False)
+    for record in scan_runs(runs_root):
         if record["id"] == run_id:
+            run_dir = Path(record["run_dir"])
+            envelope = _read_json(run_dir / "run.json")
             return _run_record(runs_root, run_dir, envelope, with_artifacts=True)
     return None

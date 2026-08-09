@@ -17,7 +17,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-from memory_eval_tests.experiments.common import capture_environment, write_simple_envelope
+from memory_eval_tests.experiments.common import (
+    capture_environment,
+    write_simple_envelope,
+)
 
 _SKIP_DIRS = {"inputs", "rag_storage", "sidecar", "__pycache__", ".git"}
 _RESULT_PATTERNS = (
@@ -28,6 +31,17 @@ _RESULT_PATTERNS = (
 )
 _SKIP_NAME_PARTS = (".partial.",)
 _SKIP_NAMES = {"api_preflight.json"}
+
+_LEGACY_REPORTS = {
+    "scale_report.md": ("scale", "规模评测报告", "scale_report"),
+    "readiness_report.md": ("readiness", "文档记忆就绪度报告", "readiness_report"),
+    "comparison_report.md": ("comparison", "评测对比报告", "comparison_report"),
+    "evaluator_recheck_report.md": (
+        "evaluator_recheck",
+        "评估器复核报告",
+        "evaluator_recheck_report",
+    ),
+}
 
 
 def _method_kind(filename: str) -> tuple[str, str] | None:
@@ -142,10 +156,11 @@ def migrate_legacy_runs(
             if _method_from_json(path) is not None
         )
         payloads = [_load_json(path) for path in result_paths if path.exists()]
-        methods = [method for path in result_paths if (method := _method_from_json(path))]
-        dataset = (
-            _dataset_from_payloads(payloads)
-            or _dataset_from_dir_name(run_dir.name, generated_root)
+        methods = [
+            method for path in result_paths if (method := _method_from_json(path))
+        ]
+        dataset = _dataset_from_payloads(payloads) or _dataset_from_dir_name(
+            run_dir.name, generated_root
         )
         baseline: dict[str, Any] = {"dataset": dataset} if dataset else {}
         baseline.update(_scalar_baseline(payloads))
@@ -190,22 +205,63 @@ def migrate_legacy_runs(
     }
 
 
+def migrate_legacy_reports(*, runs_root: Path, dry_run: bool = False) -> dict[str, Any]:
+    """Wrap bare aggregate report markdown files into ``kind=report`` envelopes."""
+    from memory_eval_tests.reporting.report_envelope import write_report_envelope
+
+    created: list[str] = []
+    for filename, (report_type, label, experiment_id) in _LEGACY_REPORTS.items():
+        source = runs_root / filename
+        if not source.exists():
+            continue
+        run_dir = runs_root / f"{experiment_id}-v1"
+        if (run_dir / "run.json").exists():
+            continue
+        if dry_run:
+            created.append(f"{source} -> {run_dir}")
+            continue
+        run_dir.mkdir(parents=True, exist_ok=True)
+        target = run_dir / filename
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        write_report_envelope(
+            output_path=target,
+            report_type=report_type,
+            label=label,
+            description=f"历史报告迁移（{filename}，旧口径产物）。",
+            baseline={},
+        )
+        created.append(str(run_dir))
+    return {"dry_run": dry_run, "created": created, "count": len(created)}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--runs-root", type=Path, default=Path("memory_eval_tests/runs"))
+    parser.add_argument(
+        "--runs-root", type=Path, default=Path("memory_eval_tests/runs")
+    )
     parser.add_argument(
         "--generated-root",
         type=Path,
         default=Path("memory_data_service/generated"),
         help="Dataset manifest root used to infer dataset ids from dir names.",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Preview changes without writing.")
-    args = parser.parse_args(argv)
-    summary = migrate_legacy_runs(
-        runs_root=args.runs_root,
-        generated_root=args.generated_root,
-        dry_run=args.dry_run,
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Preview changes without writing."
     )
+    parser.add_argument(
+        "--reports",
+        action="store_true",
+        help="Migrate legacy aggregate report markdown files instead of online runs.",
+    )
+    args = parser.parse_args(argv)
+    if args.reports:
+        summary = migrate_legacy_reports(runs_root=args.runs_root, dry_run=args.dry_run)
+    else:
+        summary = migrate_legacy_runs(
+            runs_root=args.runs_root,
+            generated_root=args.generated_root,
+            dry_run=args.dry_run,
+        )
     for entry in summary["created"]:
         print(entry)
     print(

@@ -145,6 +145,8 @@ def _client(runs_root: Path, api_key: str | None = None) -> TestClient:
     return TestClient(app)
 
 
+pytestmark = pytest.mark.offline
+
 def test_scan_and_load_envelope(runs_tree: Path) -> None:
     from lightrag.api.eval_index import load_run, scan_runs
 
@@ -224,3 +226,82 @@ def test_refresh_returns_count(runs_tree: Path, monkeypatch) -> None:
     response = client.post("/eval/refresh", headers=headers)
     assert response.status_code == 200
     assert response.json()["run_count"] == 2
+
+
+def test_status_reports_framework_version(runs_tree: Path, monkeypatch) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    client = _client(runs_tree, api_key="secret-key")
+    response = client.get("/eval/status", headers={"X-API-Key": "secret-key"})
+    assert response.status_code == 200
+    assert response.json()["eval_framework_version"]
+
+
+def test_list_runs_pagination(runs_tree: Path, monkeypatch) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    client = _client(runs_tree, api_key="secret-key")
+    headers = {"X-API-Key": "secret-key"}
+    response = client.get("/eval/runs?limit=1&offset=1", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2
+    assert payload["limit"] == 1
+    assert payload["offset"] == 1
+    assert len(payload["runs"]) == 1
+
+
+def test_eval_routes_degrade_gracefully_when_package_missing(
+    runs_tree: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    client = _client(runs_tree, api_key="secret-key")
+    headers = {"X-API-Key": "secret-key"}
+    monkeypatch.setattr(_eval_routes, "_EVAL_AVAILABLE", False)
+    response = client.get("/eval/runs", headers=headers)
+    assert response.status_code == 503
+    monkeypatch.setattr(_eval_routes, "_EVAL_AVAILABLE", True)
+    assert client.get("/eval/runs", headers=headers).status_code == 200
+
+
+def test_scan_cache_refreshes_and_ignores_parsed_inputs(runs_tree: Path) -> None:
+    from lightrag.api.eval_index import clear_scan_cache, scan_runs
+
+    clear_scan_cache()
+    assert len(scan_runs(runs_tree)) == 2
+    # A new envelope appears without an explicit invalidation call.
+    _write(
+        runs_tree / "online" / "new-run" / "run.json",
+        {
+            "schema_version": "1.0",
+            "kind": "online",
+            "run_id": "new-run",
+            "created_at": "2026-08-09T02:00:00+00:00",
+            "status": "complete",
+            "experiment": {"id": "x", "label": "New Run", "description": ""},
+            "environment": {},
+            "baseline": {"dataset": "rich-smoke-v1"},
+            "variables": [],
+            "methods": [],
+            "reports": {},
+        },
+    )
+    assert len(scan_runs(runs_tree)) == 3
+    # Anything under inputs/__parsed__ must never be indexed as a run.
+    _write(
+        runs_tree / "online" / "new-run" / "inputs" / "__parsed__" / "run.json",
+        {
+            "schema_version": "1.0",
+            "kind": "online",
+            "run_id": "should-not-appear",
+            "created_at": "2026-08-09T03:00:00+00:00",
+            "status": "complete",
+            "experiment": {"id": "y", "label": "Ghost", "description": ""},
+            "environment": {},
+            "baseline": {},
+            "variables": [],
+            "methods": [],
+            "reports": {},
+        },
+    )
+    ids = {run["id"] for run in scan_runs(runs_tree)}
+    assert "should-not-appear" not in ids
+    assert "new-run" in ids

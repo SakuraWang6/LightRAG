@@ -13,7 +13,7 @@ from memory_eval_tests.experiments.common import (
     RunContext,
     normalize_summary,
 )
-from memory_eval_tests.experiments.scale_validation import _amain
+from memory_eval_tests.experiments.scale_validation import amain
 
 
 def _flatten_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -85,7 +85,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
         sidecar_tables=Path(sidecar_tables) if sidecar_tables else None,
         extra_arms=False,
     )
-    asyncio.run(_amain(args))
+    asyncio.run(amain(args))
     if stage != "eval":
         return {"methods": [], "report": "", "status": "complete", "extra": {"stage": stage}}
     payload = json.loads(output_json.read_text(encoding="utf-8"))

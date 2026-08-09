@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from memory_eval_tests.reporting.report_envelope import write_report_envelope
+
 
 def build_comparison_rows(reports: list[Path]) -> list[dict[str, Any]]:
     rows = []
@@ -120,6 +122,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("reports", nargs="+", type=Path, help="Evaluation JSON reports.")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--format", choices=("markdown", "json", "csv"), default="markdown")
+    parser.add_argument(
+        "--no-envelope",
+        action="store_true",
+        help="Skip writing the kind=report run.json envelope.",
+    )
     args = parser.parse_args(argv)
 
     rows = build_comparison_rows(args.reports)
@@ -132,6 +139,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered, encoding="utf-8")
+        if args.format == "markdown" and not args.no_envelope:
+            write_report_envelope(
+                output_path=args.output,
+                report_type="comparison",
+                label="评测对比报告",
+                description="解析器/模式/后端之间的指标对比。",
+                baseline={"reports": [str(path) for path in args.reports]},
+                methods=[
+                    {
+                        "method": "comparison",
+                        "label": "对比",
+                        "params": {},
+                        "summary": {},
+                        "results": rows,
+                    }
+                ],
+            )
     else:
         sys.stdout.write(rendered)
     return 0

@@ -15,8 +15,16 @@ from pathlib import Path
 from typing import Any
 
 from memory_eval_tests.common.dataset_client import DatasetClient
-from memory_eval_tests.experiments.evidence_selector_experiment import _chat_ollama, _split_prompt
-from memory_eval_tests.experiments.kg_ablation import DEFAULT_STORAGE, _find_rag, _load_keyword_cache, _query_param
+from memory_eval_tests.experiments.common.rag_session import (
+    DEFAULT_STORAGE,
+    find_rag,
+    load_keyword_cache,
+    query_param,
+)
+from memory_eval_tests.experiments.common.selectors import (
+    simple_chat_ollama,
+    split_prompt,
+)
 from memory_eval_tests.online.answer_eval import score_answer
 
 
@@ -95,9 +103,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     objects = {item["object_id"]: item for item in object_list}
     order = {item["object_id"]: index for index, item in enumerate(object_list)}
     relations = json.loads((args.dataset / "relations.json").read_text(encoding="utf-8"))["relations"]
-    cache = _load_keyword_cache(args.storage_dir)
+    cache = load_keyword_cache(args.storage_dir)
     rows = []
-    rag = _find_rag()
+    rag = find_rag()
     await rag.initialize_storages()
     rag.llm_response_cache.global_config["enable_llm_cache"] = False
     try:
@@ -106,12 +114,12 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             question = questions[question_id]
             evidence_facts = [facts[item] for item in question.get("evidence_fact_ids", []) if item in facts]
             high, low = cache[question["question"]]
-            prompt = await rag.aquery(question["question"], param=_query_param(top_k=20, high_keywords=high, low_keywords=low, prompt_only=True))
-            prefix, user = _split_prompt(str(prompt))
+            prompt = await rag.aquery(question["question"], param=query_param(top_k=20, high_keywords=high, low_keywords=low, prompt_only=True))
+            prefix, user = split_prompt(str(prompt))
             native_context = base["selected_context"]
             metadata = _oracle_metadata(context=native_context, evidence_facts=evidence_facts, objects=objects, order=order, relations=relations)
             oracle_context = native_context + "\nOracle Structure Metadata (metadata only; do not treat as new evidence):\n```json\n" + json.dumps(metadata, ensure_ascii=False) + "\n```\n"
-            oracle_answer = _chat_ollama(host=args.ollama_url, model=args.model, system=prefix + oracle_context, user=user, num_predict=128)
+            oracle_answer = simple_chat_ollama(host=args.ollama_url, model=args.model, system=prefix + oracle_context, user=user, num_predict=128)
             oracle_metrics = score_answer(answer_text=oracle_answer, expected=question["answer"], question=question, evidence_facts=evidence_facts, references_blob=native_context)
             native_metrics = {key: base[key] for key in oracle_metrics if key in base}
             rows.append({
@@ -258,8 +266,8 @@ async def _run_spec(context: RunContext) -> dict[str, Any]:
     objects = {item["object_id"]: item for item in object_list}
     order = {item["object_id"]: index for index, item in enumerate(object_list)}
     relations = json.loads((dataset / "relations.json").read_text(encoding="utf-8"))["relations"]
-    cache = _load_keyword_cache(storage_dir)
-    rag = _find_rag()
+    cache = load_keyword_cache(storage_dir)
+    rag = find_rag()
     await rag.initialize_storages()
     rag.llm_response_cache.global_config["enable_llm_cache"] = False
     rows: list[dict[str, Any]] = []
@@ -272,7 +280,7 @@ async def _run_spec(context: RunContext) -> dict[str, Any]:
             high, low = cache[question["question"]]
             prompt = await rag.aquery(
                 question["question"],
-                param=_query_param(top_k=20, high_keywords=high, low_keywords=low, prompt_only=True),
+                param=query_param(top_k=20, high_keywords=high, low_keywords=low, prompt_only=True),
             )
             prefix, user = split_prompt(str(prompt))
             native_context = base["selected_context"]

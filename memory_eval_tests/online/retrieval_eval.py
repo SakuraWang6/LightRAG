@@ -10,8 +10,8 @@ from typing import Any
 
 from memory_data_service.schemas import OraclePayload
 from memory_eval_tests.common.dataset_client import DatasetClient
+from memory_eval_tests.common.evidence import normalize_evidence
 from memory_eval_tests.common.sampling import sample_evenly
-from memory_eval_tests.offline.object_traceability import _normalize_evidence
 
 
 def evaluate_api(
@@ -320,24 +320,24 @@ def _ranked_references(response: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _context_contains_fact(context: dict[str, Any], fact: Any) -> bool:
     content = str(context.get("content", ""))
-    normalized_content = _normalize_evidence(content)
+    normalized_content = normalize_evidence(content)
     return (
         fact.fact_id in content
         or fact.answer in content
         or fact.expected_text in content
-        or _normalize_evidence(fact.answer) in normalized_content
-        or _normalize_evidence(fact.expected_text) in normalized_content
+        or normalize_evidence(fact.answer) in normalized_content
+        or normalize_evidence(fact.expected_text) in normalized_content
     )
 
 
 def _content_contains_fact(content: str, fact: dict[str, Any]) -> bool:
-    normalized_content = _normalize_evidence(content)
+    normalized_content = normalize_evidence(content)
     return (
         fact.get("fact_id", "") in content
         or fact.get("answer", "") in content
         or fact.get("expected_text", "") in content
-        or _normalize_evidence(str(fact.get("answer", ""))) in normalized_content
-        or _normalize_evidence(str(fact.get("expected_text", ""))) in normalized_content
+        or normalize_evidence(str(fact.get("answer", ""))) in normalized_content
+        or normalize_evidence(str(fact.get("expected_text", ""))) in normalized_content
     )
 
 

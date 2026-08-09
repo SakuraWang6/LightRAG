@@ -1,7 +1,14 @@
 import json
 
-from memory_eval_tests.online.answer_eval import _canonical_formula, _formula_match, score_answer
+import pytest
 
+from memory_eval_tests.online.answer_eval import (
+    _canonical_formula,
+    _formula_match,
+    score_answer,
+)
+
+pytestmark = pytest.mark.offline
 
 def test_formula_normalization_accepts_latex_unicode_and_fraction_variants():
     expected = r"E_{5}=P_{5}T_{5}/\eta_{5}"

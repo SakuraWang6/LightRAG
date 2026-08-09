@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from memory_eval_tests.reporting.report_envelope import write_report_envelope
 from memory_eval_tests.reporting.scale_report import build_scale_rows
 
 
@@ -178,6 +179,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runs-root", type=Path, default=Path("memory_eval_tests/runs/offline"))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
+    parser.add_argument(
+        "--no-envelope",
+        action="store_true",
+        help="Skip writing the kind=report run.json envelope.",
+    )
     args = parser.parse_args(argv)
 
     report = build_readiness_report(datasets=args.datasets, runs_root=args.runs_root)
@@ -185,6 +191,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered, encoding="utf-8")
+        if args.format == "markdown" and not args.no_envelope:
+            write_report_envelope(
+                output_path=args.output,
+                report_type="readiness",
+                label="文档记忆就绪度报告",
+                description="跨数据集的结构保留、可追溯性与检索就绪结论。",
+                baseline={"datasets": [str(dataset) for dataset in args.datasets]},
+                methods=[
+                    {
+                        "method": "readiness",
+                        "label": "就绪度",
+                        "params": {},
+                        "summary": {
+                            key: value
+                            for key, value in report.items()
+                            if isinstance(value, (int, float, bool))
+                        },
+                        "results": [],
+                    }
+                ],
+            )
     else:
         sys.stdout.write(rendered)
     return 0

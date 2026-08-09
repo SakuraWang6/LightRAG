@@ -16,9 +16,19 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from lightrag.utils import logger
-from ..eval_index import default_runs_root, load_run, scan_runs
-from memory_eval_tests.experiments.common.chat import chat_ollama
+
 from ..utils_api import get_combined_auth_dependency, internal_server_error
+
+try:
+    from memory_eval_tests import __version__ as _eval_framework_version
+    from memory_eval_tests.experiments.common.chat import chat_ollama
+
+    from ..eval_index import default_runs_root, load_run, scan_runs
+
+    _EVAL_AVAILABLE = True
+except ImportError:
+    _EVAL_AVAILABLE = False
+    _eval_framework_version = None
 
 
 def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] = None) -> APIRouter:
@@ -30,17 +40,34 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
     """
     router = APIRouter(prefix="/eval", tags=["eval-console"])
     combined_auth = get_combined_auth_dependency(api_key)
-    root = Path(runs_root) if runs_root is not None else default_runs_root()
+    root = (
+        Path(runs_root)
+        if runs_root is not None
+        else (default_runs_root() if _EVAL_AVAILABLE else None)
+    )
+
+    def require_eval() -> None:
+        if not _EVAL_AVAILABLE:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Evaluation framework package is not installed; "
+                    "reinstall lightrag-hku with the bundled "
+                    "memory_eval_tests/memory_data_service packages."
+                ),
+            )
 
     @router.get("/status", dependencies=[Depends(combined_auth)])
     async def eval_status() -> dict[str, Any]:
         try:
+            require_eval()
             return {
                 "runs_root": str(root.relative_to(Path(__file__).resolve().parents[2])) if root.is_relative_to(
                     Path(__file__).resolve().parents[2]
                 ) else str(root),
                 "indexed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "run_count": len(scan_runs(root)),
+                "eval_framework_version": _eval_framework_version,
             }
         except HTTPException:
             raise
@@ -54,8 +81,11 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
         kind: Optional[str] = Query(default=None, description="Filter by run kind"),
         dataset: Optional[str] = Query(default=None, description="Filter by dataset id"),
         q: Optional[str] = Query(default=None, description="Search label / dataset / artifact titles"),
+        limit: int = Query(default=500, ge=1, le=10000, description="Max runs per page"),
+        offset: int = Query(default=0, ge=0, description="Pagination offset"),
     ) -> dict[str, Any]:
         try:
+            require_eval()
             runs = scan_runs(root)
             if kind:
                 runs = [r for r in runs if r["kind"] == kind]
@@ -71,7 +101,15 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
                         [r["label"] or "", r["dataset"] or "", *r["artifact_titles"]]
                     ).lower()
                 ]
-            return {"runs": runs, "runs_root": str(root)}
+            total = len(runs)
+            page = runs[offset : offset + limit]
+            return {
+                "runs": page,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "runs_root": str(root),
+            }
         except HTTPException:
             raise
         except Exception as exc:
@@ -82,6 +120,7 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
     @router.get("/runs/{run_id:path}", dependencies=[Depends(combined_auth)])
     async def get_run(run_id: str) -> dict[str, Any]:
         try:
+            require_eval()
             detail = load_run(root, run_id)
             if detail is None:
                 raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
@@ -96,6 +135,7 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
     @router.post("/refresh", dependencies=[Depends(combined_auth)])
     async def refresh_index() -> dict[str, Any]:
         try:
+            require_eval()
             runs = scan_runs(root)
             return {
                 "indexed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -121,6 +161,7 @@ def create_eval_routes(api_key: Optional[str] = None, runs_root: Optional[Path] 
         WebUI polling responsive while an analysis is in flight.
         """
         try:
+            require_eval()
             detail = load_run(root, run_id)
             if detail is None:
                 raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")

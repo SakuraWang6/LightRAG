@@ -22,11 +22,11 @@ from memory_eval_tests.experiments.common import (
     write_progress,
 )
 from memory_eval_tests.experiments.common.context import group, split_prompt
-from memory_eval_tests.experiments.kg_ablation import (
+from memory_eval_tests.experiments.common.rag_session import (
     DEFAULT_STORAGE,
-    _find_rag,
-    _load_keyword_cache,
-    _query_param,
+    find_rag,
+    load_keyword_cache,
+    query_param,
 )
 from memory_eval_tests.online.answer_eval import score_answer
 
@@ -126,11 +126,11 @@ async def _run(context: RunContext) -> dict[str, Any]:
     if max_cases > 0:
         questions = questions[:max_cases]
     facts_by_id = {fact["fact_id"]: fact for fact in oracle["facts"]}
-    cache = _load_keyword_cache(storage_dir)
+    cache = load_keyword_cache(storage_dir)
     missing = [q["id"] for q in questions if q["question"] not in cache]
     if missing:
         raise RuntimeError(f"Missing cached keywords for {len(missing)} questions; run ingest/cache first")
-    rag = _find_rag()
+    rag = find_rag()
     await rag.initialize_storages()
     rag.llm_response_cache.global_config["enable_llm_cache"] = False
 
@@ -193,7 +193,7 @@ async def _run(context: RunContext) -> dict[str, Any]:
                 high, low = cache[text]
                 prompt = await rag.aquery(
                     text,
-                    param=_query_param(
+                    param=query_param(
                         top_k=top_k,
                         high_keywords=high,
                         low_keywords=low,

@@ -21,6 +21,41 @@ export function formatMetricCell(value: unknown): string {
   return value == null ? '—' : String(value)
 }
 
+export function formatDelta(value: unknown, baseline: unknown): string {
+  if (typeof value !== 'number' || typeof baseline !== 'number') return '—'
+  const delta = value - baseline
+  if (delta === 0) return '0'
+  const formatted = Number(Math.abs(delta)).toFixed(4).replace(/\.?0+$/, '')
+  return `${delta > 0 ? '+' : '-'}${formatted}`
+}
+
+function escapeCsvCell(value: string): string {
+  if (/[",\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`
+  }
+  return value
+}
+
+export function buildCompareCsv(
+  runs: Array<{ id: string; label: string }>,
+  rows: Array<{ key: string; label: string; values: Array<unknown> }>,
+  baselineIndex: number | null
+): string {
+  const headers = [
+    'metric',
+    ...runs.map((run, index) =>
+      index === baselineIndex ? `${run.label} (baseline)` : run.label
+    )
+  ]
+  const lines = [headers.map(escapeCsvCell).join(',')]
+  for (const row of rows) {
+    lines.push(
+      [row.key, ...row.values.map((value) => escapeCsvCell(formatMetricCell(value)))].join(',')
+    )
+  }
+  return lines.join('\n') + '\n'
+}
+
 export function runKindClass(kind: EvalRunKind): string {
   switch (kind) {
     case 'offline':

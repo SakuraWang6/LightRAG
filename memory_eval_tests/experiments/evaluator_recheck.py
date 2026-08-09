@@ -10,7 +10,6 @@ from typing import Any
 from memory_eval_tests.common.dataset_client import DatasetClient
 from memory_eval_tests.online.answer_eval import score_answer
 
-
 DEFAULT_REPORTS = (
     Path("memory_eval_tests/runs/online/rich-smoke-v1-api/answer_mix.json"),
     Path("memory_eval_tests/runs/online/rich-smoke-v1-local-qwen8b-skipkg/answer_mix_top5_ctx8192.json"),

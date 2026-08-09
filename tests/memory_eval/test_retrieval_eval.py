@@ -20,7 +20,14 @@ def _write_oracle(tmp_path, *, questions, facts) -> str:
 
 
 def _fact(fact_id: str, answer: str) -> dict:
-    return {"fact_id": fact_id, "answer": answer, "expected_text": f"{fact_id}: {answer}"}
+    return {
+        "fact_id": fact_id,
+        "answer": answer,
+        "expected_text": f"{fact_id}: {answer}",
+    }
+
+
+pytestmark = pytest.mark.offline
 
 
 def test_api_recall_and_mrr_use_reference_rank(monkeypatch, tmp_path) -> None:
@@ -65,7 +72,9 @@ def test_api_recall_and_mrr_use_reference_rank(monkeypatch, tmp_path) -> None:
             "metadata": {},
         }
 
-    monkeypatch.setattr("memory_eval_tests.online.retrieval_eval._post_json", fake_post_json)
+    monkeypatch.setattr(
+        "memory_eval_tests.online.retrieval_eval._post_json", fake_post_json
+    )
     report = evaluate_api(
         dataset_source=dataset,
         rag_api_url="http://127.0.0.1:9621",
@@ -114,7 +123,9 @@ def test_api_partial_recall_and_context_precision(monkeypatch, tmp_path) -> None
             "metadata": {},
         }
 
-    monkeypatch.setattr("memory_eval_tests.online.retrieval_eval._post_json", fake_post_json)
+    monkeypatch.setattr(
+        "memory_eval_tests.online.retrieval_eval._post_json", fake_post_json
+    )
     report = evaluate_api(
         dataset_source=dataset,
         rag_api_url="http://127.0.0.1:9621",
@@ -186,15 +197,22 @@ def test_api_max_cases_samples_deterministically(monkeypatch, tmp_path) -> None:
         seen.append(payload["query"])
         return {
             "status": "ok",
-            "data": {
-                "references": [{"file_path": "a.docx", "content": ["nothing"]}]
-            },
+            "data": {"references": [{"file_path": "a.docx", "content": ["nothing"]}]},
             "metadata": {},
         }
 
-    monkeypatch.setattr("memory_eval_tests.online.retrieval_eval._post_json", fake_post_json)
-    report = evaluate_api(dataset_source=dataset, rag_api_url="http://127.0.0.1:9621", max_cases=4)
+    monkeypatch.setattr(
+        "memory_eval_tests.online.retrieval_eval._post_json", fake_post_json
+    )
+    report = evaluate_api(
+        dataset_source=dataset, rag_api_url="http://127.0.0.1:9621", max_cases=4
+    )
     assert report["cases"] == 4
-    assert [case["question_id"] for case in report["results"]] == ["Q001", "Q013", "Q024", "Q036"]
+    assert [case["question_id"] for case in report["results"]] == [
+        "Q001",
+        "Q013",
+        "Q024",
+        "Q036",
+    ]
     # Evenly spaced across the oracle, not a front-prefix sample.
     assert seen == ["Question 1?", "Question 13?", "Question 24?", "Question 36?"]

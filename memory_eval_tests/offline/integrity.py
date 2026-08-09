@@ -7,7 +7,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from memory_data_service.schemas import DatasetManifest, OraclePayload
+from memory_data_service.schemas import (
+    DatasetManifest,
+    OraclePayload,
+    check_schema_version,
+)
 from memory_eval_tests.common.dataset_client import DatasetClient
 
 
@@ -15,7 +19,13 @@ def audit_dataset_integrity(source: str) -> dict[str, Any]:
     client = DatasetClient(source)
     manifest = DatasetManifest.model_validate(client.manifest())
     oracle = OraclePayload.model_validate(client.oracle())
+    schema_supported, schema_version = check_schema_version(manifest.schema_version)
     issues: list[str] = []
+    if not schema_supported:
+        issues.append(
+            f"unsupported schema_version {schema_version!r}; "
+            "required-type checks skipped"
+        )
 
     if manifest.dataset_id != oracle.dataset_id:
         issues.append(
@@ -52,117 +62,118 @@ def audit_dataset_integrity(source: str) -> dict[str, Any]:
         fact_types = set(fact_type_counts)
         question_types = set(question_type_counts)
         relation_types = set(relation_type_counts)
-        required_by_modality = {
-            "tables": "table",
-            "figures": "figure",
-            "equations": "equation",
-        }
-        for modality, object_type in required_by_modality.items():
-            if modality in manifest.modalities and object_type not in object_types:
-                issues.append(f"rich dataset declares {modality} but has no {object_type} object")
-        required_question_types = {"direct_numeric", "abstain"}
-        if manifest.pages >= 5:
-            required_question_types.add("multi_hop")
-        if manifest.pages >= 7:
-            required_question_types.add("version_condition")
-        if manifest.pages >= 8 and "figures" in manifest.modalities:
-            required_question_types.add("figure_text")
-        if manifest.pages >= 9:
-            required_question_types.add("conflict_resolution")
-        if manifest.pages >= 11:
-            required_question_types.add("negative_constraint")
-        if "tables" in manifest.modalities:
-            required_question_types.add("table_cell")
-        if "figures" in manifest.modalities:
-            required_question_types.add("figure_caption")
-        if "equations" in manifest.modalities:
-            required_question_types.add("equation")
+        if schema_supported:
+            required_by_modality = {
+                "tables": "table",
+                "figures": "figure",
+                "equations": "equation",
+            }
+            for modality, object_type in required_by_modality.items():
+                if modality in manifest.modalities and object_type not in object_types:
+                    issues.append(f"rich dataset declares {modality} but has no {object_type} object")
+            required_question_types = {"direct_numeric", "abstain"}
             if manifest.pages >= 5:
-                required_question_types.add("formula_variable")
-        for question_type in sorted(required_question_types):
-            if question_type not in question_types:
-                issues.append(f"rich dataset has no {question_type} question")
-        required_fact_types = {
-            "direct_numeric",
-        }
-        if "tables" in manifest.modalities:
-            required_fact_types.add("table_cell")
-        if "figures" in manifest.modalities:
-            required_fact_types.add("figure_caption")
-        if "equations" in manifest.modalities:
-            required_fact_types.add("equation")
-            if manifest.pages >= 5:
-                required_fact_types.add("equation_variable")
-        if manifest.pages >= 7:
-            required_fact_types.add("version_condition")
-        if manifest.pages >= 9:
-            required_fact_types.add("conflict_resolution")
-        if manifest.pages >= 11:
-            required_fact_types.add("negative_constraint")
-        for fact_type in sorted(required_fact_types):
-            if (
-                fact_type == "table_cell"
-                and "tables" not in manifest.modalities
-                or fact_type == "figure_caption"
-                and "figures" not in manifest.modalities
-                or fact_type == "equation"
-                and "equations" not in manifest.modalities
-            ):
-                continue
-            if fact_type not in fact_types:
-                issues.append(f"rich dataset has no {fact_type} fact")
-        required_relation_types = {"contains", "supports", "distracts"}
-        if "tables" in manifest.modalities or "figures" in manifest.modalities:
-            required_relation_types.add("caption_of")
-        if manifest.pages >= 6 and "tables" in manifest.modalities:
-            required_relation_types.add("refers_to")
-        if manifest.pages >= 5 and "equations" in manifest.modalities:
-            required_relation_types.update({"defines", "mentions"})
-        if manifest.pages >= 9:
-            required_relation_types.add("contradicts")
-        for relation_type in sorted(required_relation_types):
-            if relation_type not in relation_types:
-                issues.append(f"rich dataset has no {relation_type} relation")
-        required_object_types = {"footnote", "endnote", "layout_region", "textbox"}
-        for object_type in sorted(required_object_types):
-            if object_type not in object_types:
-                issues.append(f"rich dataset has no {object_type} object")
-        required_labels = {
-            "section_summary",
-            "local_conclusion",
-            "bullet_control",
-            "nested_bullet_control",
-            "cross_page_long_table",
-            "two_column_layout",
-            "textbox",
-            "floating_object",
-            "citation_field",
-            "bibliography_field",
-        }
-        for label in sorted(required_labels):
-            if label not in labels:
-                issues.append(f"rich dataset has no {label} object label")
-        min_facts = max(manifest.pages, 1)
-        min_questions = max(manifest.pages, 1)
-        if len(oracle.facts) < min_facts:
-            issues.append(
-                f"rich dataset has too few facts: {len(oracle.facts)} < {min_facts}"
+                required_question_types.add("multi_hop")
+            if manifest.pages >= 7:
+                required_question_types.add("version_condition")
+            if manifest.pages >= 8 and "figures" in manifest.modalities:
+                required_question_types.add("figure_text")
+            if manifest.pages >= 9:
+                required_question_types.add("conflict_resolution")
+            if manifest.pages >= 11:
+                required_question_types.add("negative_constraint")
+            if "tables" in manifest.modalities:
+                required_question_types.add("table_cell")
+            if "figures" in manifest.modalities:
+                required_question_types.add("figure_caption")
+            if "equations" in manifest.modalities:
+                required_question_types.add("equation")
+                if manifest.pages >= 5:
+                    required_question_types.add("formula_variable")
+            for question_type in sorted(required_question_types):
+                if question_type not in question_types:
+                    issues.append(f"rich dataset has no {question_type} question")
+            required_fact_types = {
+                "direct_numeric",
+            }
+            if "tables" in manifest.modalities:
+                required_fact_types.add("table_cell")
+            if "figures" in manifest.modalities:
+                required_fact_types.add("figure_caption")
+            if "equations" in manifest.modalities:
+                required_fact_types.add("equation")
+                if manifest.pages >= 5:
+                    required_fact_types.add("equation_variable")
+            if manifest.pages >= 7:
+                required_fact_types.add("version_condition")
+            if manifest.pages >= 9:
+                required_fact_types.add("conflict_resolution")
+            if manifest.pages >= 11:
+                required_fact_types.add("negative_constraint")
+            for fact_type in sorted(required_fact_types):
+                if (
+                    fact_type == "table_cell"
+                    and "tables" not in manifest.modalities
+                    or fact_type == "figure_caption"
+                    and "figures" not in manifest.modalities
+                    or fact_type == "equation"
+                    and "equations" not in manifest.modalities
+                ):
+                    continue
+                if fact_type not in fact_types:
+                    issues.append(f"rich dataset has no {fact_type} fact")
+            required_relation_types = {"contains", "supports", "distracts"}
+            if "tables" in manifest.modalities or "figures" in manifest.modalities:
+                required_relation_types.add("caption_of")
+            if manifest.pages >= 6 and "tables" in manifest.modalities:
+                required_relation_types.add("refers_to")
+            if manifest.pages >= 5 and "equations" in manifest.modalities:
+                required_relation_types.update({"defines", "mentions"})
+            if manifest.pages >= 9:
+                required_relation_types.add("contradicts")
+            for relation_type in sorted(required_relation_types):
+                if relation_type not in relation_types:
+                    issues.append(f"rich dataset has no {relation_type} relation")
+            required_object_types = {"footnote", "endnote", "layout_region", "textbox"}
+            for object_type in sorted(required_object_types):
+                if object_type not in object_types:
+                    issues.append(f"rich dataset has no {object_type} object")
+            required_labels = {
+                "section_summary",
+                "local_conclusion",
+                "bullet_control",
+                "nested_bullet_control",
+                "cross_page_long_table",
+                "two_column_layout",
+                "textbox",
+                "floating_object",
+                "citation_field",
+                "bibliography_field",
+            }
+            for label in sorted(required_labels):
+                if label not in labels:
+                    issues.append(f"rich dataset has no {label} object label")
+            min_facts = max(manifest.pages, 1)
+            min_questions = max(manifest.pages, 1)
+            if len(oracle.facts) < min_facts:
+                issues.append(
+                    f"rich dataset has too few facts: {len(oracle.facts)} < {min_facts}"
+                )
+            if len(oracle.questions) < min_questions:
+                issues.append(
+                    f"rich dataset has too few questions: {len(oracle.questions)} < {min_questions}"
+                )
+            rich_density_checks = _audit_rich_density(
+                manifest=manifest,
+                fact_count=len(oracle.facts),
+                question_count=len(oracle.questions),
+                object_count=len(oracle.objects),
+                relation_count=len(oracle.relations),
+                object_type_counts=object_type_counts,
+                object_label_counts=object_label_counts,
+                question_type_counts=question_type_counts,
             )
-        if len(oracle.questions) < min_questions:
-            issues.append(
-                f"rich dataset has too few questions: {len(oracle.questions)} < {min_questions}"
-            )
-        rich_density_checks = _audit_rich_density(
-            manifest=manifest,
-            fact_count=len(oracle.facts),
-            question_count=len(oracle.questions),
-            object_count=len(oracle.objects),
-            relation_count=len(oracle.relations),
-            object_type_counts=object_type_counts,
-            object_label_counts=object_label_counts,
-            question_type_counts=question_type_counts,
-        )
-        issues.extend(rich_density_checks["issues"])
+            issues.extend(rich_density_checks["issues"])
 
     local_checks = _audit_local_files(source, manifest, oracle)
     issues.extend(local_checks["issues"])
@@ -175,6 +186,8 @@ def audit_dataset_integrity(source: str) -> dict[str, Any]:
     return {
         "source": source,
         "dataset_id": manifest.dataset_id,
+        "schema_version": schema_version,
+        "schema_supported": schema_supported,
         "tier": manifest.tier,
         "profile": manifest.profile,
         "pages": manifest.pages,

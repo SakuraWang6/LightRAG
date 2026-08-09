@@ -30,23 +30,23 @@ from pathlib import Path
 from typing import Any
 
 from memory_eval_tests.common.dataset_client import DatasetClient
-from memory_eval_tests.experiments.evidence_selector_experiment import (
-    _chat_ollama,
-    _contains_fact,
-    _parse_selection,
-    _split_prompt,
+from memory_eval_tests.experiments.common.rag_session import (
+    find_rag,
+    load_keyword_cache,
+    query_param,
 )
-from memory_eval_tests.experiments.oracle_upper_bound import (
-    _find_table_for_fact,
-    _load_sidecar_tables,
-    _table_markdown,
+from memory_eval_tests.experiments.common.selectors import (
+    contains_fact,
+    parse_selection,
+    role_prompt,
+    simple_chat_ollama,
+    split_prompt,
 )
-from memory_eval_tests.experiments.kg_ablation import (
-    _find_rag,
-    _load_keyword_cache,
-    _query_param,
+from memory_eval_tests.experiments.common.tables import (
+    find_table_for_fact,
+    load_sidecar_tables,
+    table_markdown,
 )
-from memory_eval_tests.experiments.relation_selector_experiment import _role_prompt
 from memory_eval_tests.online.answer_eval import score_answer
 
 
@@ -140,7 +140,7 @@ def _facts_covered(candidates: list[dict[str, Any]], facts: list[dict[str, Any]]
     return [
         str(fact.get("fact_id") or "")
         for fact in facts
-        if any(_contains_fact(candidate, fact) for candidate in candidates)
+        if any(contains_fact(candidate, fact) for candidate in candidates)
     ]
 
 
@@ -198,7 +198,7 @@ async def _cache_stage(args: argparse.Namespace, rag: Any, questions: list[dict[
     for question in questions:
         await rag.aquery(
             str(question["question"]),
-            param=_query_param(top_k=20, high_keywords=[], low_keywords=[], prompt_only=True),
+            param=query_param(top_k=20, high_keywords=[], low_keywords=[], prompt_only=True),
         )
         done += 1
         print(f"[cache] {done}/{len(questions)} {question['id']}", flush=True)
@@ -211,11 +211,11 @@ async def _eval_stage(args: argparse.Namespace, rag: Any) -> dict[str, Any]:
     if args.max_cases > 0:
         questions = questions[: args.max_cases]
     facts_by_id = {fact["fact_id"]: fact for fact in oracle["facts"]}
-    cache = _load_keyword_cache(args.storage_dir)
+    cache = load_keyword_cache(args.storage_dir)
     missing = [q["id"] for q in questions if q["question"] not in cache]
     if missing:
         raise RuntimeError(f"Missing cached keywords: {', '.join(missing)}")
-    sidecar_tables = _load_sidecar_tables(args.sidecar_tables)
+    sidecar_tables = load_sidecar_tables(args.sidecar_tables)
     rag.llm_response_cache.global_config["enable_llm_cache"] = False
 
     rows: list[dict[str, Any]] = []
@@ -247,7 +247,7 @@ async def _eval_stage(args: argparse.Namespace, rag: Any) -> dict[str, Any]:
             prompt = str(
                 await rag.aquery(
                     text,
-                    param=_query_param(
+                    param=query_param(
                         top_k=20,
                         high_keywords=high,
                         low_keywords=low,
@@ -255,7 +255,7 @@ async def _eval_stage(args: argparse.Namespace, rag: Any) -> dict[str, Any]:
                     ),
                 )
             )
-            prefix, user = _split_prompt(prompt)
+            prefix, user = split_prompt(prompt)
             candidates = _candidates_from_prompt(prompt, limit=20)
             if not candidates:
                 raise RuntimeError(f"No candidates parsed for {question['id']}")
@@ -273,7 +273,7 @@ async def _eval_stage(args: argparse.Namespace, rag: Any) -> dict[str, Any]:
                     if item["method"] == "direct_top20"
                 )
             else:
-                answer = _chat_ollama(
+                answer = simple_chat_ollama(
                     host=args.ollama_url,
                     model=args.model,
                     system=prefix + top20_context,
@@ -299,18 +299,18 @@ async def _eval_stage(args: argparse.Namespace, rag: Any) -> dict[str, Any]:
             selected = []
             selected_covered: list[str] = []
             if args.extra_arms:
-                raw_selector = _chat_ollama(
+                raw_selector = simple_chat_ollama(
                     host=args.ollama_url,
                     model=args.model,
                     system="Follow the requested JSON schema exactly.",
-                    user=_role_prompt(text, candidates, 5),
+                    user=role_prompt(text, candidates, 5),
                     num_predict=160,
                 )
-                ids = _parse_selection(raw_selector, candidates, 5)
+                ids = parse_selection(raw_selector, candidates, 5)
                 selected = [item for item in candidates if item["evidence_id"] in ids]
                 selected_context = _render_candidate_context(selected)
                 selected_covered = _facts_covered(selected, evidence_facts)
-                answer5 = _chat_ollama(
+                answer5 = simple_chat_ollama(
                     host=args.ollama_url,
                     model=args.model,
                     system=prefix + selected_context,
@@ -353,7 +353,7 @@ async def _eval_stage(args: argparse.Namespace, rag: Any) -> dict[str, Any]:
                 matches = [
                     item
                     for item in candidates
-                    if item["evidence_id"] not in guarded_ids and _contains_fact(item, fact)
+                    if item["evidence_id"] not in guarded_ids and contains_fact(item, fact)
                 ]
                 if matches:
                     chosen = max(matches, key=lambda item: len(item["text"]))
@@ -363,7 +363,7 @@ async def _eval_stage(args: argparse.Namespace, rag: Any) -> dict[str, Any]:
                     matched.add(fid)
             if additions and args.extra_arms:
                 guarded_context = _render_candidate_context(guarded)
-                answer_g = _chat_ollama(
+                answer_g = simple_chat_ollama(
                     host=args.ollama_url,
                     model=args.model,
                     system=prefix + guarded_context,
@@ -393,14 +393,14 @@ async def _eval_stage(args: argparse.Namespace, rag: Any) -> dict[str, Any]:
             for fact in evidence_facts:
                 if str(fact.get("object_type") or "") != "table":
                     continue
-                table_match = _find_table_for_fact(fact, sidecar_tables)
+                table_match = find_table_for_fact(fact, sidecar_tables)
                 if table_match:
                     table_id, table = table_match
                     target_ids.add(table_id)
                     chunks.append(
                         {
                             "chunk_id": table_id,
-                            "content": _table_markdown(str(table.get("content") or "")),
+                            "content": table_markdown(str(table.get("content") or "")),
                         }
                     )
             kept = []
@@ -408,12 +408,12 @@ async def _eval_stage(args: argparse.Namespace, rag: Any) -> dict[str, Any]:
                 raw_text = f"{item['entity']} {item['text']}"
                 is_table_row = str(item["entity"]).lower().startswith("table")
                 mentions_target = any(target in raw_text for target in target_ids) or any(
-                    _contains_fact(item, fact) for fact in evidence_facts
+                    contains_fact(item, fact) for fact in evidence_facts
                 )
                 if not is_table_row or mentions_target:
                     kept.append(item)
             combined_context = _render_candidate_context(kept) + _chunks_extra(chunks)
-            answer_c = _chat_ollama(
+            answer_c = simple_chat_ollama(
                 host=args.ollama_url,
                 model=args.model,
                 system=prefix + combined_context,
@@ -526,9 +526,9 @@ def _render_report(rows: list[dict[str, Any]], meta: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-async def _amain(args: argparse.Namespace) -> None:
+async def amain(args: argparse.Namespace) -> None:
     if args.stage == "ingest":
-        rag = _find_rag()
+        rag = find_rag()
         await rag.initialize_storages()
         try:
             result = await _ingest(args, rag)
@@ -540,7 +540,7 @@ async def _amain(args: argparse.Namespace) -> None:
     questions = list(oracle["questions"])
     if args.max_cases > 0:
         questions = questions[: args.max_cases]
-    rag = _find_rag()
+    rag = find_rag()
     await rag.initialize_storages()
     try:
         if args.stage == "cache":
@@ -583,7 +583,7 @@ def main() -> None:
         parser.error("--output-json and --output-md are required for --stage eval")
     if args.stage == "eval" and args.sidecar_tables is None:
         args.sidecar_tables = _default_sidecar_tables(args.dataset)
-    asyncio.run(_amain(args))
+    asyncio.run(amain(args))
 
 
 def _default_sidecar_tables(dataset: Path) -> Path:

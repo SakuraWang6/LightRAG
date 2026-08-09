@@ -7,13 +7,45 @@ from memory_eval_tests.experiments.common import ExperimentSpec
 
 def _specs() -> list[ExperimentSpec]:
     # Lazy imports so a single broken experiment never blocks the registry.
-    from memory_eval_tests.experiments.context_selection import spec as context_selection
+    from memory_eval_tests.experiments.combined_pipeline_experiment import (
+        spec as combined_pipeline,
+    )
+    from memory_eval_tests.experiments.context_selection import (
+        spec as context_selection,
+    )
     from memory_eval_tests.experiments.context_size import spec as context_size
-    from memory_eval_tests.experiments.structure_ablation import spec as structure_ablation
-    from memory_eval_tests.experiments.scale import spec as scale
+    from memory_eval_tests.experiments.evidence_selector_experiment import (
+        spec as evidence_selector,
+    )
+    from memory_eval_tests.experiments.kg_ablation import spec as kg_ablation
     from memory_eval_tests.experiments.online_baseline import spec as online_baseline
+    from memory_eval_tests.experiments.oracle_upper_bound import (
+        spec as oracle_upper_bound,
+    )
+    from memory_eval_tests.experiments.relation_selector_experiment import (
+        spec as relation_selector,
+    )
+    from memory_eval_tests.experiments.scale import spec as scale
+    from memory_eval_tests.experiments.structure_ablation import (
+        spec as structure_ablation,
+    )
+    from memory_eval_tests.experiments.table_packing_experiment import (
+        spec as table_packing,
+    )
 
-    return [context_selection, context_size, structure_ablation, scale, online_baseline]
+    return [
+        context_selection,
+        context_size,
+        structure_ablation,
+        scale,
+        online_baseline,
+        kg_ablation,
+        evidence_selector,
+        relation_selector,
+        table_packing,
+        combined_pipeline,
+        oracle_upper_bound,
+    ]
 
 
 def get_spec(experiment_id: str) -> ExperimentSpec:

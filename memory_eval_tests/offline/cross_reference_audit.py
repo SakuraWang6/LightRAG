@@ -8,11 +8,14 @@ from pathlib import Path
 from typing import Any
 
 from lightrag.chunker.paragraph_semantic import chunking_by_paragraph_semantic
-
 from memory_data_service.schemas import DatasetManifest, OraclePayload
 from memory_eval_tests.common.dataset_client import DatasetClient
+from memory_eval_tests.common.evidence import (
+    blocks_path,
+    load_blocks,
+    normalize_evidence,
+)
 from memory_eval_tests.offline.chunk_traceability import CharacterTokenizer
-from memory_eval_tests.offline.object_traceability import _blocks_path, _load_blocks, _normalize_evidence
 
 
 def audit_cross_references(
@@ -27,11 +30,11 @@ def audit_cross_references(
     docx_file = _select_docx(client, manifest)
     docx_fields = _inspect_docx_ref_fields(docx_file)
 
-    blocks = _load_blocks(parsed_dir)
+    blocks = load_blocks(parsed_dir)
     block_text = "\n".join(str(block.get("content", "")) for block in blocks)
-    normalized_block_text = _normalize_evidence(block_text)
+    normalized_block_text = normalize_evidence(block_text)
     chunks = _load_chunks(parsed_dir, chunk_token_size)
-    normalized_chunks = [_normalize_evidence(str(chunk.get("content", ""))) for chunk in chunks]
+    normalized_chunks = [normalize_evidence(str(chunk.get("content", ""))) for chunk in chunks]
 
     ref_objects = [
         obj
@@ -41,7 +44,7 @@ def audit_cross_references(
     ]
     object_hits = []
     for obj in ref_objects:
-        normalized_text = _normalize_evidence(obj.text or obj.title)
+        normalized_text = normalize_evidence(obj.text or obj.title)
         chunk_hit = bool(normalized_text) and any(
             normalized_text in chunk for chunk in normalized_chunks
         )
@@ -58,7 +61,7 @@ def audit_cross_references(
 
     field_hits = []
     for bookmark in docx_fields["ref_field_bookmarks"]:
-        normalized_bookmark = _normalize_evidence(bookmark)
+        normalized_bookmark = normalize_evidence(bookmark)
         field_hits.append(
             {
                 "bookmark": bookmark,
@@ -139,8 +142,8 @@ def _inspect_docx_ref_fields(docx_file: Path) -> dict[str, Any]:
 
 
 def _load_chunks(parsed_dir: Path, chunk_token_size: int) -> list[dict[str, Any]]:
-    blocks_path = _blocks_path(parsed_dir)
-    blocks = _load_blocks(blocks_path)
+    blocks_path = blocks_path(parsed_dir)
+    blocks = load_blocks(blocks_path)
     merged_content = "\n".join(str(block.get("content", "")) for block in blocks)
     return chunking_by_paragraph_semantic(
         CharacterTokenizer(),

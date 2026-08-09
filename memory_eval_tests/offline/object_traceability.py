@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from lightrag.chunker.paragraph_semantic import chunking_by_paragraph_semantic
-
 from memory_data_service.schemas import OraclePayload
 from memory_eval_tests.common.dataset_client import DatasetClient
-
+from memory_eval_tests.common.evidence import blocks_path as _blocks_path
+from memory_eval_tests.common.evidence import load_blocks as _load_blocks
+from memory_eval_tests.common.evidence import normalize_evidence as _normalize_evidence
 
 SIDECAR_SUFFIXES = {
     "table": ("tables", ".tables.json"),
@@ -108,19 +109,6 @@ def audit_object_traceability(
     }
 
 
-def _load_blocks(parsed_dir: Path) -> list[dict[str, Any]]:
-    blocks_path = parsed_dir if parsed_dir.is_file() else _blocks_path(parsed_dir)
-    rows = [json.loads(line) for line in blocks_path.read_text(encoding="utf-8").splitlines()]
-    return [row for row in rows if row.get("type") == "content"]
-
-
-def _blocks_path(parsed_dir: Path) -> Path:
-    blocks_path = next(parsed_dir.glob("*.blocks.jsonl"), None)
-    if blocks_path is None:
-        raise FileNotFoundError(f"no *.blocks.jsonl found in {parsed_dir}")
-    return blocks_path
-
-
 def _chunk_ref_block_ids(parsed_dir: Path, chunk_token_size: int) -> set[str]:
     blocks_path = _blocks_path(parsed_dir)
     blocks = _load_blocks(blocks_path)
@@ -157,17 +145,6 @@ def _object_text(item: dict[str, Any]) -> str:
         item.get("caption", ""),
     ]
     return "\n".join(str(value) for value in values if value)
-
-
-def _normalize_evidence(text: str) -> str:
-    return (
-        text.replace("\\", "")
-        .replace("{", "")
-        .replace("}", "")
-        .replace(" ", "")
-        .replace("\n", "")
-        .lower()
-    )
 
 
 class CharacterTokenizer:

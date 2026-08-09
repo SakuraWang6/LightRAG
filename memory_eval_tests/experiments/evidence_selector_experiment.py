@@ -9,18 +9,32 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
-import re
-import urllib.request
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 from memory_eval_tests.common.dataset_client import DatasetClient
-from memory_eval_tests.experiments.kg_ablation import DEFAULT_STORAGE, _find_rag, _load_keyword_cache, _query_param
+from memory_eval_tests.experiments.common.rag_session import (
+    DEFAULT_STORAGE,
+    find_rag,
+    load_keyword_cache,
+    query_param,
+)
+from memory_eval_tests.experiments.common.selectors import (
+    contains_fact,
+    entity_rows,
+    group,
+    make_candidates,
+    oracle_candidate_ids,
+    parse_selection,
+    render_context,
+    selector_prompt,
+    simple_chat_ollama,
+    split_prompt,
+)
+from memory_eval_tests.experiments.legacy_adapter import legacy_spec
 from memory_eval_tests.online.answer_eval import score_answer
-
 
 METHODS = (
     ("direct_top3", "Direct Top-3", 3),
@@ -28,157 +42,6 @@ METHODS = (
     ("select3", "Top20 → Select3", 3),
     ("select5", "Top20 → Select5", 5),
 )
-
-
-def _split_prompt(prompt: str) -> tuple[str, str]:
-    marker = "\n\n---User Query---\n"
-    if marker not in prompt:
-        raise ValueError("LightRAG prompt is missing the user-query marker")
-    system, question = prompt.split(marker, 1)
-    context_marker = "---Context---\n"
-    if context_marker not in system:
-        raise ValueError("LightRAG prompt is missing the context marker")
-    prefix = system.split(context_marker, 1)[0]
-    prefix += (
-        "For this controlled evaluation, answer concisely in no more than three sentences "
-        "before the required references section.\n\n"
-    )
-    return prefix + context_marker + "\n", question
-
-
-def _entity_rows(prompt: str, *, limit: int) -> list[dict[str, Any]]:
-    match = re.search(
-        r"Knowledge Graph Data \(Entity\):\s*```json\s*(.*?)\s*```",
-        prompt,
-        flags=re.S,
-    )
-    if not match:
-        return []
-    rows = []
-    for line in match.group(1).splitlines():
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(item, dict) and item.get("entity"):
-            rows.append(item)
-        if len(rows) >= limit:
-            break
-    return rows
-
-
-def _make_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    candidates = []
-    for ordinal, row in enumerate(rows, start=1):
-        payload = json.dumps(row, ensure_ascii=False, sort_keys=True)
-        digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:10]
-        candidates.append(
-            {
-                "evidence_id": f"EVD-E-{ordinal:02d}-{digest}",
-                "object_type": str(row.get("type") or "UNKNOWN"),
-                "entity": str(row.get("entity") or ""),
-                "text": str(row.get("description") or ""),
-                "raw": row,
-            }
-        )
-    return candidates
-
-
-def _render_context(candidates: list[dict[str, Any]]) -> str:
-    rows = [item["raw"] for item in candidates]
-    return "Knowledge Graph Data (Entity):\n\n```json\n" + "\n".join(
-        json.dumps(row, ensure_ascii=False) for row in rows
-    ) + "\n```\n\nKnowledge Graph Data (Relationship):\n\n```json\n\n```\n\nDocument Chunks:\n\n```json\n\n```\n"
-
-
-def _contains_fact(candidate: dict[str, Any], fact: dict[str, Any]) -> bool:
-    text = f"{candidate['entity']} {candidate['text']}".lower()
-    markers = [
-        str(fact.get("fact_id") or ""),
-        str(fact.get("answer") or ""),
-    ]
-    return any(marker and marker.lower() in text for marker in markers)
-
-
-def _oracle_candidate_ids(candidates: list[dict[str, Any]], facts: list[dict[str, Any]]) -> list[str]:
-    return [
-        item["evidence_id"]
-        for item in candidates
-        if any(_contains_fact(item, fact) for fact in facts)
-    ]
-
-
-def _chat_ollama(*, host: str, model: str, system: str, user: str, num_predict: int) -> str:
-    request = urllib.request.Request(
-        f"{host.rstrip('/')}/api/chat",
-        data=json.dumps(
-            {
-                "model": model,
-                "stream": False,
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "options": {"temperature": 0, "num_ctx": 16384, "num_predict": num_predict},
-                "think": False,
-            }
-        ).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=600) as response:
-        body = json.loads(response.read().decode("utf-8"))
-    return str((body.get("message") or {}).get("content") or "")
-
-
-def _selector_prompt(question: str, candidates: list[dict[str, Any]], limit: int) -> str:
-    rendered = [
-        {
-            "evidence_id": item["evidence_id"],
-            "object_type": item["object_type"],
-            "entity": item["entity"],
-            "text": item["text"],
-        }
-        for item in candidates
-    ]
-    return (
-        "You are an evidence selector. Do not answer the question. Select at most "
-        f"{limit} evidence IDs that are sufficient and directly relevant. Prefer authoritative facts "
-        "over distractors. Return ONLY strict JSON with this shape: "
-        '{"selected_evidence_ids":["EVD-..."]}.\n\n'
-        f"Question: {question}\n\nCandidates:\n{json.dumps(rendered, ensure_ascii=False)}"
-    )
-
-
-def _parse_selection(raw: str, candidates: list[dict[str, Any]], limit: int) -> list[str]:
-    candidate_ids = {item["evidence_id"] for item in candidates}
-    match = re.search(r"\{.*?\}", raw, flags=re.S)
-    if match:
-        try:
-            parsed = json.loads(match.group(0))
-            selected = parsed.get("selected_evidence_ids", [])
-            if isinstance(selected, list):
-                valid = [str(item) for item in selected if str(item) in candidate_ids]
-                if valid:
-                    return list(dict.fromkeys(valid))[:limit]
-        except json.JSONDecodeError:
-            pass
-    # The fallback is only for malformed selector output and is recorded in raw
-    # output. It preserves a runnable/reviewable experiment rather than silently
-    # giving the answer model all candidates.
-    return [item["evidence_id"] for item in candidates[:limit]]
-
-
-def _group(question: dict[str, Any]) -> str:
-    if question.get("expected_behavior") == "abstain":
-        return "ABSTAIN"
-    kind = str(question.get("question_type", "")).lower()
-    if "multi" in kind or "cross" in kind:
-        return "MULTIHOP"
-    if "table" in kind:
-        return "TABLE"
-    if "figure" in kind or "fig" in kind:
-        return "FIGURE"
-    if "equation" in kind or "formula" in kind:
-        return "FORMULA"
-    return "FACT"
 
 
 def _average(rows: list[dict[str, Any]], key: str) -> float | None:
@@ -259,11 +122,11 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     if args.max_cases > 0:
         questions = questions[: args.max_cases]
     facts_by_id = {fact["fact_id"]: fact for fact in oracle["facts"]}
-    cache = _load_keyword_cache(args.storage_dir)
+    cache = load_keyword_cache(args.storage_dir)
     missing = [q["id"] for q in questions if q["question"] not in cache]
     if missing:
         raise RuntimeError(f"Missing cached keywords: {', '.join(missing)}")
-    rag = _find_rag()
+    rag = find_rag()
     await rag.initialize_storages()
     rag.llm_response_cache.global_config["enable_llm_cache"] = False
     method_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -314,11 +177,11 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                 continue
             text = str(question["question"])
             high, low = cache[text]
-            top20_prompt = await rag.aquery(text, param=_query_param(top_k=20, high_keywords=high, low_keywords=low, prompt_only=True))
-            top3_prompt = await rag.aquery(text, param=_query_param(top_k=3, high_keywords=high, low_keywords=low, prompt_only=True))
-            prefix, user = _split_prompt(str(top20_prompt))
-            top20 = _make_candidates(_entity_rows(str(top20_prompt), limit=20))
-            top3 = _make_candidates(_entity_rows(str(top3_prompt), limit=3))
+            top20_prompt = await rag.aquery(text, param=query_param(top_k=20, high_keywords=high, low_keywords=low, prompt_only=True))
+            top3_prompt = await rag.aquery(text, param=query_param(top_k=3, high_keywords=high, low_keywords=low, prompt_only=True))
+            prefix, user = split_prompt(str(top20_prompt))
+            top20 = make_candidates(entity_rows(str(top20_prompt), limit=20))
+            top3 = make_candidates(entity_rows(str(top3_prompt), limit=3))
             if not top20 or not top3:
                 raise RuntimeError(f"No entity candidates parsed for {question['id']}")
             evidence_facts = [facts_by_id[fid] for fid in question.get("evidence_fact_ids", []) if fid in facts_by_id]
@@ -327,21 +190,21 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                 "direct_top20": (top20, ""),
             }
             for method, _, limit in METHODS[2:]:
-                raw_selector = _chat_ollama(
+                raw_selector = simple_chat_ollama(
                     host=args.ollama_url,
                     model=args.model,
                     system="Follow the requested JSON schema exactly.",
-                    user=_selector_prompt(text, top20, limit),
+                    user=selector_prompt(text, top20, limit),
                     num_predict=128,
                 )
-                ids = _parse_selection(raw_selector, top20, limit)
+                ids = parse_selection(raw_selector, top20, limit)
                 selections[method] = ([item for item in top20 if item["evidence_id"] in ids], raw_selector)
             for method, label, selected_limit in METHODS:
                 selected, selector_raw = selections[method]
                 candidate_pool = top20 if method != "direct_top3" else top3
-                candidate_context = _render_context(candidate_pool)
-                selected_context = _render_context(selected)
-                answer = _chat_ollama(
+                candidate_context = render_context(candidate_pool)
+                selected_context = render_context(selected)
+                answer = simple_chat_ollama(
                     host=args.ollama_url,
                     model=args.model,
                     system=prefix + selected_context,
@@ -350,16 +213,16 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                 )
                 selected_ids = [item["evidence_id"] for item in selected]
                 oracle_fact_ids = [str(item["fact_id"]) for item in evidence_facts]
-                candidate_oracle_ids = _oracle_candidate_ids(candidate_pool, evidence_facts)
+                candidate_oracle_ids = oracle_candidate_ids(candidate_pool, evidence_facts)
                 matched_candidate_facts = [
                     str(fact["fact_id"])
                     for fact in evidence_facts
-                    if any(_contains_fact(candidate, fact) for candidate in candidate_pool)
+                    if any(contains_fact(candidate, fact) for candidate in candidate_pool)
                 ]
                 matched_selected_facts = [
                     str(fact["fact_id"])
                     for fact in evidence_facts
-                    if any(_contains_fact(candidate, fact) for candidate in selected)
+                    if any(contains_fact(candidate, fact) for candidate in selected)
                 ]
                 relevant_selected = [item for item in selected_ids if item in candidate_oracle_ids]
                 denominator = len(evidence_facts)
@@ -375,7 +238,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                         "question_id": question["id"],
                         "question": text,
                         "question_type": question.get("question_type", ""),
-                        "question_group": _group(question),
+                        "question_group": group(question),
                         "oracle_evidence_ids": oracle_fact_ids,
                         "candidate_evidence_ids": [item["evidence_id"] for item in candidate_pool],
                         "selected_evidence_ids": selected_ids,
@@ -429,3 +292,16 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+spec = legacy_spec(
+    experiment_id="evidence_selector",
+    label="证据选择消融（Top20→Select）",
+    description=(
+        "冻结 KG 索引上的候选选择消融：Direct Top-3/Top-20 与 "
+        "Top20→Select3/Select5，固定答案模型与生成参数。"
+    ),
+    run=_run,
+    artifact_stem="evidence_selector",
+    render_report=_render_report,
+)
