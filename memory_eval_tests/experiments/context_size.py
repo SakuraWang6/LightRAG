@@ -134,9 +134,55 @@ async def _run(context: RunContext) -> dict[str, Any]:
     rag.llm_response_cache.global_config["enable_llm_cache"] = False
 
     rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    resume = context.extra.get("resume", "1") not in {"0", "false", "no"}
+    partial_path = context.output_dir / "partial.json"
+    done: set[tuple[str, str]] = set()
+    if resume and partial_path.exists():
+        try:
+            saved = json.loads(partial_path.read_text(encoding="utf-8"))
+            for item in saved.get("rows", []):
+                rows[item["arm"]].append(item)
+                done.add((item["arm"], item["question_id"]))
+            print(f"[resume] restored {len(done)} completed generations", flush=True)
+        except (OSError, ValueError):
+            pass
     total = len(questions)
     grid_total = len(TOP_K_GRID) * len(NUM_CTX_GRID) * total
-    completed = 0
+    completed = len(done)
+
+    def save_partial(status: str) -> None:
+        payload_rows = [row for arm_rows in rows.values() for row in arm_rows]
+        partial_path.write_text(
+            json.dumps({"status": status, "rows": payload_rows}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        partial_methods = []
+        for arm_key in sorted(rows):
+            arm_rows = rows[arm_key]
+            if not arm_rows:
+                continue
+            top_k = arm_rows[0]["top_k"]
+            num_ctx = arm_rows[0]["num_ctx"]
+            partial_methods.append(
+                {
+                    "method": arm_key,
+                    "label": f"Top-{top_k} / {num_ctx}",
+                    "params": {"top_k": top_k, "num_ctx": num_ctx},
+                    "summary": normalize_summary(_metrics(arm_rows), "selector"),
+                    "results": arm_rows,
+                }
+            )
+        from memory_eval_tests.experiments.common import write_envelope
+
+        write_envelope(
+            context.output_dir,
+            context=context,
+            status=status,
+            methods=partial_methods,
+            report_rel_path=None,
+            write_progress_file=False,
+        )
+
     try:
         for top_k in TOP_K_GRID:
             # Cache retrieval per Top-K; windows only affect generation.
@@ -158,6 +204,8 @@ async def _run(context: RunContext) -> dict[str, Any]:
             for num_ctx in NUM_CTX_GRID:
                 arm = f"top{top_k}_ctx{num_ctx}"
                 for question in questions:
+                    if (arm, question["id"]) in done:
+                        continue
                     prefix, user, retrieved = retrieval[question["id"]]
                     preflight = context_check(prefix + retrieved, num_ctx, arm)
                     answer = chat_ollama(
@@ -209,7 +257,10 @@ async def _run(context: RunContext) -> dict[str, Any]:
                             phase=f"{arm} / {question['id']}",
                         )
                         print(f"[{completed}/{grid_total}] {arm} {question['id']}", flush=True)
+                    if completed % 36 == 0 or completed == grid_total:
+                        save_partial("in_progress")
     finally:
+        save_partial("failed" if not rows else "in_progress")
         await rag.finalize_storages()
 
     methods = []
