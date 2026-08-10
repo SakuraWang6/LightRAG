@@ -36,6 +36,11 @@ def annotate_question_scenarios(questions: list[QuestionRecord]) -> dict[str, in
     for question in questions:
         labels = _QUESTION_SCENARIOS.get(question.question_type, ["single_hop"])
         question.scenario_labels = labels  # type: ignore[assignment]
+        question.question_variants = {
+            "canonical": question.question,
+            "paraphrase": f"According to the document, {question.question}",
+            "evidence_first": f"Use the document evidence to answer: {question.question}",
+        }
         for label in labels:
             counts[label] = counts.get(label, 0) + 1
     return counts

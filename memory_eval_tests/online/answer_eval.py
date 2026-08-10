@@ -40,14 +40,16 @@ def evaluate_answers(
     access_token: str | None = None,
     evaluation_trace: bool = False,
     semantic_scorer: SemanticAnswerScorer | None = None,
+    question_variant: str = "canonical",
 ) -> dict[str, Any]:
     oracle = DatasetClient(dataset_source).oracle()
     facts_by_id = {fact["fact_id"]: fact for fact in oracle.get("facts", [])}
     results = []
     questions = sample_evenly(oracle.get("questions", []), max_cases)
     for question in questions:
+        question_text = _question_variant(question, question_variant)
         payload = {
-            "query": question["question"],
+            "query": question_text,
             "mode": mode,
             "include_references": True,
             "include_chunk_content": True,
@@ -86,6 +88,7 @@ def evaluate_answers(
                 "answer": answer_text,
                 "expected": expected,
                 "question_type": question.get("question_type", ""),
+                "question_variant": question_variant,
                 "scenario_labels": question.get("scenario_labels", []),
                 # References are kept as a response-side observation only. They
                 # are not used as proof of the final prompt context (I2).
@@ -102,6 +105,7 @@ def evaluate_answers(
         "max_total_tokens": max_total_tokens,
         "cases": total,
         "max_cases": max_cases,
+        "question_variant": question_variant,
         "answer_accuracy": sum(bool(r["exact_match"]) for r in decisive) / len(decisive)
         if decisive
         else None,
@@ -219,6 +223,18 @@ def score_answer(
 
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
+
+
+def _question_variant(question: dict[str, Any], variant: str) -> str:
+    if variant == "canonical":
+        return str(question["question"])
+    variants = question.get("question_variants") or {}
+    text = variants.get(variant)
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError(
+            f"question {question.get('id', '<unknown>')} has no {variant!r} variant"
+        )
+    return text
 
 
 def _compact(text: str) -> str:
@@ -494,6 +510,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--chunk-top-k", type=int)
     parser.add_argument("--max-total-tokens", type=int)
     parser.add_argument("--max-cases", type=int)
+    parser.add_argument("--question-variant", default="canonical")
     parser.add_argument("--api-key", default=None, help="X-API-Key header for authenticated servers.")
     parser.add_argument(
         "--access-token",
@@ -512,6 +529,7 @@ def main(argv: list[str] | None = None) -> int:
         max_cases=args.max_cases,
         api_key=args.api_key,
         access_token=args.access_token,
+        question_variant=args.question_variant,
     )
     output = json.dumps(report, ensure_ascii=False, indent=2)
     if args.output:

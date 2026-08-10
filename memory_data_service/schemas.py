@@ -114,6 +114,7 @@ class QuestionRecord(BaseModel):
     evidence_fact_ids: list[str]
     expected_behavior: Literal["answer", "abstain"] = "answer"
     scenario_labels: list[ScenarioName] = Field(default_factory=list)
+    question_variants: dict[str, str] = Field(default_factory=dict)
 
 
 class GenerationProvenance(BaseModel):
