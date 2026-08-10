@@ -38,6 +38,7 @@ try:
     from memory_eval_tests.experiments.supervise import RunParams
 
     from .. import eval_jobs
+    from .. import eval_profiles
     from ..eval_index import clear_scan_cache, default_runs_root, load_run, scan_runs
 
     _EVAL_AVAILABLE = True
@@ -81,6 +82,40 @@ class TemplateRequest(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     extraText: str = ""
     supervise: bool = False
+
+
+class ModelRoleReference(BaseModel):
+    provider: str = Field(min_length=1, max_length=128)
+    model: str = Field(min_length=1, max_length=256)
+    endpoint: str | None = Field(default=None, max_length=1024)
+    secret_ref: str | None = Field(default=None, max_length=256)
+
+    model_config = {"extra": "forbid"}
+
+
+class EnvironmentProfileConfiguration(BaseModel):
+    lightrag_version: str | None = Field(default=None, max_length=256)
+    startup_template: str | None = Field(default=None, max_length=256)
+    extraction: ModelRoleReference | None = None
+    query: ModelRoleReference | None = None
+    answer: ModelRoleReference | None = None
+    embedding: ModelRoleReference
+    vlm: ModelRoleReference | None = None
+    reranker: ModelRoleReference | None = None
+    parser_engine: str = Field(min_length=1, max_length=128)
+    storage_backends: dict[str, str] = Field(default_factory=dict)
+    retrieval_defaults: dict[str, int | float | bool | str] = Field(default_factory=dict)
+    concurrency: dict[str, int] = Field(default_factory=dict)
+
+    model_config = {"extra": "forbid"}
+
+
+class EnvironmentProfileDraftRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    profile_id: str | None = Field(default=None, max_length=64)
+    configuration: EnvironmentProfileConfiguration
+
+    model_config = {"extra": "forbid"}
 
 
 _GENERIC_PARAM_KEYS = {
@@ -391,6 +426,83 @@ def create_eval_routes(
             raise
         except Exception as exc:
             logger.error(f"Error listing experiments: {exc}")
+            raise internal_server_error(exc)
+
+    @router.get("/environment-profiles", dependencies=[Depends(combined_auth)])
+    async def list_environment_profiles() -> dict[str, Any]:
+        try:
+            require_eval()
+            return {"profiles": eval_profiles.list_profiles(root)}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error listing environment profiles: {exc}")
+            raise internal_server_error(exc)
+
+    @router.post("/environment-profiles", dependencies=[Depends(combined_auth)])
+    async def create_environment_profile(
+        request: EnvironmentProfileDraftRequest,
+    ) -> dict[str, Any]:
+        try:
+            require_eval()
+            try:
+                return eval_profiles.create_draft_version(
+                    runs_root=root,
+                    name=request.name,
+                    profile_id=request.profile_id,
+                    configuration=request.configuration.model_dump(),
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error creating environment profile: {exc}")
+            raise internal_server_error(exc)
+
+    @router.get(
+        "/environment-profiles/{profile_id}/versions/{version}",
+        dependencies=[Depends(combined_auth)],
+    )
+    async def get_environment_profile_version(
+        profile_id: str,
+        version: int,
+    ) -> dict[str, Any]:
+        try:
+            require_eval()
+            item = eval_profiles.get_profile_version(root, profile_id, version)
+            if item is None:
+                raise HTTPException(status_code=404, detail="environment profile version not found")
+            return item
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error reading environment profile version: {exc}")
+            raise internal_server_error(exc)
+
+    @router.post(
+        "/environment-profiles/{profile_id}/versions/{version}/publish",
+        dependencies=[Depends(combined_auth)],
+    )
+    async def publish_environment_profile_version(
+        profile_id: str,
+        version: int,
+    ) -> dict[str, Any]:
+        try:
+            require_eval()
+            try:
+                item = eval_profiles.publish_version(
+                    runs_root=root, profile_id=profile_id, version=version
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            if item is None:
+                raise HTTPException(status_code=404, detail="environment profile version not found")
+            return item
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error publishing environment profile version: {exc}")
             raise internal_server_error(exc)
 
     @router.post("/jobs", dependencies=[Depends(combined_auth)])

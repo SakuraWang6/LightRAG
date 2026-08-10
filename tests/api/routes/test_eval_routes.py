@@ -529,6 +529,74 @@ def test_run_detail_surfaces_structured_failure_and_events(runs_tree: Path) -> N
     assert detail["events"][0]["message"] == "token=configured"
 
 
+def test_environment_profiles_are_versioned_published_and_secret_reference_only(
+    runs_tree: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    client = _client(runs_tree, api_key="secret-key")
+    headers = {"X-API-Key": "secret-key"}
+    configuration = {
+        "lightrag_version": "1.0.0",
+        "embedding": {
+            "provider": "openai",
+            "model": "text-embedding-3-large",
+            "endpoint": "https://api.example.test/v1",
+            "secret_ref": "vault://evaluation/openai",
+        },
+        "query": {"provider": "openai", "model": "gpt-4.1", "secret_ref": "vault://evaluation/openai"},
+        "parser_engine": "native",
+        "storage_backends": {"vector": "QdrantVectorDBStorage"},
+        "retrieval_defaults": {"top_k": 5},
+        "concurrency": {"max_async": 2},
+    }
+    first = client.post(
+        "/eval/environment-profiles",
+        headers=headers,
+        json={"name": "OpenAI isolated", "configuration": configuration},
+    )
+    assert first.status_code == 200
+    draft = first.json()
+    assert draft["status"] == "draft"
+    assert draft["version"] == 1
+    profile_id = draft["id"]
+
+    published = client.post(
+        f"/eval/environment-profiles/{profile_id}/versions/1/publish", headers=headers
+    )
+    assert published.status_code == 200
+    assert published.json()["status"] == "published"
+    detail = client.get(
+        f"/eval/environment-profiles/{profile_id}/versions/1", headers=headers
+    )
+    assert detail.status_code == 200
+    assert detail.json()["configuration"]["embedding"]["secret_ref"] == "vault://evaluation/openai"
+
+    second = client.post(
+        "/eval/environment-profiles",
+        headers=headers,
+        json={"name": "OpenAI isolated", "profile_id": profile_id, "configuration": configuration},
+    )
+    assert second.status_code == 200
+    assert second.json()["version"] == 2
+    assert second.json()["status"] == "draft"
+    listed = client.get("/eval/environment-profiles", headers=headers)
+    assert listed.status_code == 200
+    assert [item["version"] for item in listed.json()["profiles"][0]["versions"]] == [1, 2]
+
+    insecure = client.post(
+        "/eval/environment-profiles",
+        headers=headers,
+        json={
+            "name": "insecure",
+            "configuration": {
+                **configuration,
+                "embedding": {"provider": "openai", "model": "embed", "api_key": "plain-secret"},
+            },
+        },
+    )
+    assert insecure.status_code == 422
+
+
 def test_run_log_endpoint_returns_tail(runs_tree: Path, monkeypatch) -> None:
     monkeypatch.setattr(_utils_api, "auth_configured", False)
     client = _client(runs_tree, api_key="secret-key")
