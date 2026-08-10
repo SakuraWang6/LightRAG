@@ -2,11 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CheckSquareIcon,
+  ClipboardListIcon,
   Columns3Icon,
   DatabaseIcon,
+  FlaskConicalIcon,
   PlusIcon,
   RefreshCwIcon,
-  SearchIcon
+  SearchIcon,
+  ShieldCheckIcon,
+  StethoscopeIcon
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -56,6 +60,15 @@ const KIND_OPTIONS: { value: EvalRunKind | 'all'; labelKey: string }[] = [
   { value: 'report', labelKey: 'eval.kindReport' }
 ]
 
+const WORKBENCH_SECTIONS = [
+  { id: 'datasets', label: '数据场景', icon: DatabaseIcon },
+  { id: 'environment', label: '评测环境', icon: ShieldCheckIcon },
+  { id: 'plan', label: '评测计划', icon: ClipboardListIcon },
+  { id: 'runs', label: '运行与对比', icon: Columns3Icon },
+  { id: 'diagnosis', label: '失败诊断', icon: StethoscopeIcon },
+  { id: 'lab', label: '研究实验室', icon: FlaskConicalIcon }
+] as const
+
 export default function EvalConsole() {
   const { t } = useTranslation()
   const [runs, setRuns] = useState<EvalRun[] | null>(null)
@@ -89,6 +102,22 @@ export default function EvalConsole() {
       supervise: false
     })
     setView('new')
+  }, [])
+
+  const openWorkbench = useCallback((section: (typeof WORKBENCH_SECTIONS)[number]['id']) => {
+    if (section === 'datasets' || section === 'environment' || section === 'runs') {
+      setView(section)
+      return
+    }
+    if (section === 'plan' || section === 'lab') {
+      setWizardDraft(null)
+      setWizardMode(section === 'plan' ? 'simple' : 'advanced')
+      setView('new')
+      return
+    }
+    setView('runs')
+    setKindFilter('all')
+    setSearch('diagnosis')
   }, [])
 
   const loadRuns = useCallback(async () => {
@@ -335,6 +364,16 @@ export default function EvalConsole() {
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
         <h1 className="mr-2 text-base font-semibold">{t('eval.title')}</h1>
+        <nav aria-label="评测工作台" className="flex flex-wrap items-center gap-1">
+          {WORKBENCH_SECTIONS.map((section) => {
+            const Icon = section.icon
+            return (
+              <Button key={section.id} size="sm" variant={section.id === 'runs' ? 'default' : 'ghost'} onClick={() => openWorkbench(section.id)}>
+                <Icon className="mr-1 size-3.5" />{section.label}
+              </Button>
+            )
+          })}
+        </nav>
         {KIND_OPTIONS.slice(1).map((option) => (
           <Badge key={option.value} variant="outline" className="text-muted-foreground text-xs">
             {t(option.labelKey)} {runCounts[option.value] ?? 0}
