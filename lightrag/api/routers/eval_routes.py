@@ -458,6 +458,26 @@ def create_eval_routes(
             logger.error(f"Error loading eval run diagnosis '{run_id}': {exc}")
             raise internal_server_error(exc)
 
+    @router.get("/runs/{run_id:path}/oracle-upper-bounds", dependencies=[Depends(combined_auth)])
+    async def list_oracle_upper_bounds(run_id: str) -> dict[str, Any]:
+        """List diagnostic upper-bound runs explicitly linked to this run."""
+        try:
+            require_eval()
+            if load_run(root, run_id) is None:
+                raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+            linked = [
+                item
+                for item in scan_runs(root)
+                if item.get("experiment") == "oracle_upper_bound"
+                and item.get("diagnoses_run_id") == run_id
+            ]
+            return {"run_id": run_id, "oracle_upper_bounds": linked}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error loading oracle upper bounds for '{run_id}': {exc}")
+            raise internal_server_error(exc)
+
     @router.get("/runs/{run_id:path}/diagnosis.csv", dependencies=[Depends(combined_auth)])
     async def export_run_diagnosis(run_id: str) -> Response:
         try:

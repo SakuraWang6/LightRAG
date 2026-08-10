@@ -376,6 +376,8 @@ def _run_record(
         "diagnosis_coverage": envelope.get("diagnosis_coverage"),
         "cause_distribution": envelope.get("cause_distribution"),
         "trace_availability": envelope.get("trace_availability"),
+        "diagnoses_run_id": envelope.get("diagnoses_run_id"),
+        "oracle_upper_bound_contract": envelope.get("oracle_upper_bound_contract"),
         "declared_model": envelope.get("declared_model"),
         "effective_model": envelope.get("effective_model"),
         "configuration_mismatch": envelope.get("configuration_mismatch"),

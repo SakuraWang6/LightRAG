@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from memory_eval_tests.experiments.diagnosis import build_case_traces, build_diagnosis, diagnose_case
+from memory_eval_tests.experiments.common import ExperimentSpec, RunContext
 
 pytestmark = pytest.mark.offline
 
@@ -60,3 +61,26 @@ def test_case_trace_joins_oracle_retrieval_and_answer_without_claiming_prompt_vi
     assert diagnosis["cause_distribution"] == {"unclassified": 1}
     assert diagnosis["diagnosis_coverage"] == 0.0
     assert diagnosis["by_retrieval_mode"]["mix"]["case_count"] == 1
+
+
+def test_oracle_upper_bound_requires_matching_linked_end_to_end_dataset(tmp_path, monkeypatch) -> None:
+    import lightrag.api.eval_index as eval_index
+    from memory_eval_tests.experiments.oracle_upper_bound import _prepare, _result_extra
+
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "manifest.json").write_text('{"dataset_id":"dataset-a"}', encoding="utf-8")
+    context = RunContext(
+        spec=ExperimentSpec(id="oracle_upper_bound", label="upper", description="d", runner=lambda _c: {}),
+        dataset=dataset,
+        output_dir=tmp_path / "out",
+        baseline={}, environment={}, variables=[], run_id="upper-1",
+        extra={"diagnoses_run_id": "e2e-1"}, runs_root=tmp_path / "runs",
+    )
+    monkeypatch.setattr(
+        eval_index, "load_run", lambda *_args: {"experiment": "end_to_end_baseline", "dataset": "dataset-a"}
+    )
+    _prepare(context)
+    extra = _result_extra(context, {"model": "qwen3:8b"})
+    assert extra["diagnoses_run_id"] == "e2e-1"
+    assert extra["oracle_upper_bound_contract"]["final_api_prompt_equivalence"]["value"] == "unknown"

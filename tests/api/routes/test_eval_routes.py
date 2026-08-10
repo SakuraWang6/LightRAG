@@ -685,3 +685,20 @@ def test_run_diagnosis_csv_export_is_safe_and_structured(runs_tree: Path, monkey
     assert response.status_code == 200
     assert "question_id,question_type" in response.text
     assert "Q-1" in response.text
+
+
+def test_oracle_upper_bound_endpoint_only_lists_explicitly_linked_runs(
+    runs_tree: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    payload = _experiment_envelope("oracle-upper")
+    payload["experiment"]["id"] = "oracle_upper_bound"
+    payload["diagnoses_run_id"] = "context-selection-v1"
+    _write(runs_tree / "oracle-upper" / "run.json", payload)
+    client = _client(runs_tree, api_key="secret-key")
+    response = client.get(
+        "/eval/runs/context-selection-v1/oracle-upper-bounds",
+        headers={"X-API-Key": "secret-key"},
+    )
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["oracle_upper_bounds"]] == ["oracle-upper"]

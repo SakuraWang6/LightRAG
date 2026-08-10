@@ -99,6 +99,9 @@ def legacy_spec(
     default_baseline: dict[str, Any] | None = None,
     variables: list[dict[str, Any]] | None = None,
     extra_paths: dict[str, str] | None = None,
+    extra_schema: dict[str, str] | None = None,
+    prepare: Callable[[RunContext], None] | None = None,
+    result_extra: Callable[[RunContext, dict[str, Any]], dict[str, Any]] | None = None,
 ) -> ExperimentSpec:
     """Create an ExperimentSpec wrapping a legacy async runner."""
 
@@ -115,11 +118,13 @@ def legacy_spec(
             encoding="utf-8",
         )
         report_md = render_report(payload)
+        extra = result_extra(context, payload) if result_extra is not None else {}
         args.output_md.write_text(report_md, encoding="utf-8")
         return {
             "methods": methods_from(payload),
             "report": report_md,
             "status": "complete",
+            "extra": extra,
         }
 
     return ExperimentSpec(
@@ -130,4 +135,6 @@ def legacy_spec(
         default_baseline=default_baseline or {},
         variables=variables or [],
         kind="experiment",
+        extra_schema=extra_schema or {},
+        prepare=prepare,
     )

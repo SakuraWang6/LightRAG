@@ -134,6 +134,46 @@ def _format(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.4f}"
 
 
+def _prepare(context) -> None:
+    """Require a parent end-to-end run so this is a diagnostic, not a free report."""
+    parent_id = context.extra.get("diagnoses_run_id")
+    if not parent_id:
+        raise ValueError("oracle_upper_bound requires diagnoses_run_id of an end-to-end run")
+    if context.runs_root is None:
+        raise ValueError("runs_root is required to link oracle_upper_bound")
+    from lightrag.api.eval_index import load_run
+
+    parent = load_run(context.runs_root, str(parent_id))
+    if parent is None or parent.get("experiment") != "end_to_end_baseline":
+        raise ValueError("diagnoses_run_id must reference an end_to_end_baseline run")
+    try:
+        current_dataset = json.loads((context.dataset / "manifest.json").read_text(encoding="utf-8")).get("dataset_id")
+    except (OSError, ValueError):
+        current_dataset = context.dataset.name
+    if parent.get("dataset") != current_dataset:
+        raise ValueError("oracle upper-bound dataset must match the diagnosed end-to-end run")
+
+
+def _result_extra(context, payload: dict[str, Any]) -> dict[str, Any]:
+    # The legacy oracle template is explicit about what can and cannot be
+    # compared to an API answer.  An unavailable prompt contract must never be
+    # used by diagnosis.py as proof of a generation failure.
+    return {
+        "diagnoses_run_id": context.extra["diagnoses_run_id"],
+        "oracle_upper_bound_contract": {
+            "model": payload.get("model"),
+            "prompt_template": "frozen_select5_oracle_pack",
+            "temperature": 0,
+            "num_ctx": 16384,
+            "num_predict": 256,
+            "final_api_prompt_equivalence": {
+                "value": "unknown",
+                "reason": "the public API does not expose the end-to-end final prompt",
+            },
+        },
+    }
+
+
 async def _run(args: argparse.Namespace) -> dict[str, Any]:
     oracle = DatasetClient(str(args.dataset)).oracle()
     questions = list(oracle["questions"])
@@ -299,6 +339,9 @@ spec = legacy_spec(
     run=_run,
     artifact_stem="oracle_upper_bound",
     render_report=_render_report,
+    extra_schema={"diagnoses_run_id": "str"},
+    prepare=_prepare,
+    result_extra=_result_extra,
     extra_paths={
         "frozen_prompts": (
             "memory_eval_tests/runs/online/rich-smoke-v1-kg-ablation/"
