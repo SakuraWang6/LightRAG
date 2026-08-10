@@ -200,6 +200,70 @@ def test_serializer_consistency_cli_vs_api(tmp_path: Path) -> None:
     assert from_cli == from_api
 
 
+def test_list_jobs_queue_position_and_active_count(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(eval_jobs, "_probe_process_start", lambda pid: 12345)
+    root = eval_jobs.jobs_root(tmp_path)
+    root.mkdir(parents=True, exist_ok=True)
+    for job in (
+        {
+            "id": "run-a",
+            "kind": "run",
+            "output_dir": str(tmp_path / "a"),
+            "status": "pending",
+            "created_at": "2026-08-10T00:00:00+00:00",
+        },
+        {
+            "id": "run-b",
+            "kind": "run",
+            "output_dir": str(tmp_path / "b"),
+            "status": "pending",
+            "created_at": "2026-08-10T00:01:00+00:00",
+        },
+        {
+            "id": "run-c",
+            "kind": "run",
+            "output_dir": str(tmp_path / "c"),
+            "status": "running",
+            "pid": os.getpid(),
+            "process_started_at": 12345,
+            "created_at": "2026-08-10T00:02:00+00:00",
+        },
+        {
+            "id": "run-d",
+            "kind": "run",
+            "output_dir": str(tmp_path / "d"),
+            "status": "canceled",
+            "created_at": "2026-08-10T00:03:00+00:00",
+        },
+    ):
+        eval_jobs._write_job(root, job)
+    jobs = eval_jobs.list_jobs(runs_root=tmp_path, datasets_root=tmp_path / "g")
+    by_id = {job["id"]: job for job in jobs}
+    assert by_id["run-c"]["active_count"] == 1
+    assert by_id["run-a"]["queue_position"] == 1
+    assert by_id["run-b"]["queue_position"] == 2
+    assert by_id["run-c"]["queue_position"] is None
+    assert by_id["run-d"]["queue_position"] is None
+
+
+def test_delete_job_removes_audit_dir(tmp_path: Path) -> None:
+    root = eval_jobs.jobs_root(tmp_path)
+    root.mkdir(parents=True, exist_ok=True)
+    eval_jobs._write_job(
+        root,
+        {
+            "id": "run-x",
+            "kind": "run",
+            "output_dir": str(tmp_path / "x"),
+            "status": "canceled",
+        },
+    )
+    assert (root / "run-x").exists()
+    assert eval_jobs.delete_job(runs_root=tmp_path, job_id="run-x") is True
+    assert not (root / "run-x").exists()
+    assert eval_jobs.delete_job(runs_root=tmp_path, job_id="../../etc") is False
+
+
 def test_job_id_validation_blocks_traversal(tmp_path: Path) -> None:
     assert (
         eval_jobs.get_job(

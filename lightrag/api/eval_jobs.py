@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -469,7 +470,11 @@ def start_run_job(
     extra_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     jobs_root(runs_root).mkdir(parents=True, exist_ok=True)
-    params.output_dir = Path(output_dir) if output_dir else _unique_run_dir(runs_root, params.experiment)
+    params.output_dir = (
+        Path(output_dir)
+        if output_dir
+        else _unique_run_dir(runs_root, params.experiment)
+    )
     params.output_dir.mkdir(parents=True, exist_ok=True)
     job = {
         "id": _job_id("run"),
@@ -544,11 +549,42 @@ def list_jobs(*, runs_root: Path, datasets_root: Path) -> list[dict[str, Any]]:
         _refresh_job(job, runs_root=runs_root, datasets_root=datasets_root)
         for job in _raw_jobs(runs_root)
     ]
-    return sorted(
+    jobs = sorted(
         jobs,
         key=lambda job: (job.get("created_at") or "", job.get("id") or ""),
         reverse=True,
     )
+    active_count = sum(1 for job in jobs if job.get("status") == "running")
+    pending = sorted(
+        (job for job in jobs if job.get("status") == "pending"),
+        key=lambda job: (job.get("created_at") or "", job.get("id") or ""),
+    )
+    positions = {job["id"]: index for index, job in enumerate(pending, start=1)}
+    for job in jobs:
+        job["active_count"] = active_count
+        job["queue_position"] = positions.get(job["id"])
+    return jobs
+
+
+def delete_job(*, runs_root: Path, job_id: str) -> bool:
+    """Remove a job's audit directory (``runs/.jobs/<job_id>``)."""
+    if not _valid_job_id(job_id):
+        return False
+    target = jobs_root(runs_root) / job_id
+    if not target.exists():
+        return False
+    shutil.rmtree(target)
+    return True
+
+
+def wait_job_exit(job: dict[str, Any], timeout: float = 35.0) -> bool:
+    """Poll until the job's process is gone; returns False on timeout."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if job_liveness(job) != "alive":
+            return True
+        time.sleep(0.5)
+    return False
 
 
 def get_job(

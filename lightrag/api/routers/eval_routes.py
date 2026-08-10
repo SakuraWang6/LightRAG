@@ -12,6 +12,8 @@ import os
 import re
 import shutil
 import traceback
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -36,7 +38,7 @@ try:
     from memory_eval_tests.experiments.supervise import RunParams
 
     from .. import eval_jobs
-    from ..eval_index import default_runs_root, load_run, scan_runs
+    from ..eval_index import clear_scan_cache, default_runs_root, load_run, scan_runs
 
     _EVAL_AVAILABLE = True
 except ImportError:
@@ -61,14 +63,15 @@ class CreateJobRequest(BaseModel):
     kind: Literal["run", "dataset"] = "run"
     experiment: str | None = None
     dataset: str | None = None
-    output_dir: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
     supervise: bool = False
-    supervision: str = "auto"
-    stale_minutes: int = 60
+    supervision: Literal["auto", "none", "heartbeat"] = "auto"
+    stale_minutes: int = Field(default=60, ge=1)
     max_restarts: int = 3
     poll_seconds: int = 30
     dataset_create: DatasetCreateJobRequest | None = None
+
+    model_config = {"extra": "forbid"}
 
 
 class TemplateRequest(BaseModel):
@@ -157,6 +160,8 @@ def _build_run_params(
         raise ValueError(
             f"experiment requires environment variables: {', '.join(missing_env)}"
         )
+    if not _DATASET_ID_RE.fullmatch(dataset) or dataset in {".", ".."}:
+        raise ValueError("invalid dataset id")
     extra = _extra_pairs(params.get("extra") or [])
     for key in spec.extra_schema:
         if key in params:
@@ -416,7 +421,6 @@ def create_eval_routes(
                     stale_minutes=request.stale_minutes,
                     max_restarts=request.max_restarts,
                     poll_seconds=request.poll_seconds,
-                    output_dir=Path(request.output_dir) if request.output_dir else None,
                 )
                 return job
             if request.dataset_create is None:
@@ -559,6 +563,93 @@ def create_eval_routes(
             raise
         except Exception as exc:
             logger.error(f"Error deleting dataset '{dataset_id}': {exc}")
+            raise internal_server_error(exc)
+
+    @router.delete("/runs/{run_id:path}", dependencies=[Depends(combined_auth)])
+    async def delete_run(run_id: str) -> dict[str, Any]:
+        try:
+            require_eval()
+            detail = load_run(root, run_id)
+            if detail is None:
+                raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+            run_dir = Path(detail["run_dir"])
+            matching = [
+                job
+                for job in eval_jobs.list_jobs(runs_root=root, datasets_root=datasets)
+                if job.get("kind") == "run"
+                and job.get("output_dir") == str(run_dir)
+                and job.get("status") in {"running", "pending"}
+            ]
+            for job in matching:
+                canceled = eval_jobs.cancel_job(
+                    runs_root=root, datasets_root=datasets, job_id=job["id"]
+                )
+                if (
+                    job.get("status") == "running"
+                    and canceled is not None
+                    and not eval_jobs.wait_job_exit(canceled)
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(f"job {job['id']} is still exiting; try again shortly"),
+                    )
+            shutil.rmtree(run_dir)
+            for job in matching:
+                eval_jobs.delete_job(runs_root=root, job_id=job["id"])
+            clear_scan_cache(root)
+            return {"deleted": run_id}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error deleting eval run '{run_id}': {exc}")
+            logger.error(traceback.format_exc())
+            raise internal_server_error(exc)
+
+    @router.get("/models", dependencies=[Depends(combined_auth)])
+    async def list_models() -> dict[str, Any]:
+        try:
+            require_eval()
+            ollama_url = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+            models: list[str] = []
+            embedding_filtered: list[str] = []
+            try:
+                request = urllib.request.Request(
+                    f"{ollama_url.rstrip('/')}/api/tags",
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+            except (OSError, urllib.error.URLError, TimeoutError, ValueError):
+                payload = {}
+            for item in payload.get("models") or []:
+                name = str(item.get("name") or "")
+                if not name:
+                    continue
+                lowered = name.split(":")[0].lower()
+                if any(
+                    marker in lowered
+                    for marker in (
+                        "embed",
+                        "bge",
+                        "mxbai",
+                        "nomic",
+                        "e5-",
+                        "gte",
+                        "text-embedding",
+                        "jina-embeddings",
+                    )
+                ):
+                    embedding_filtered.append(name)
+                else:
+                    models.append(name)
+            return {
+                "models": sorted(set(models)),
+                "embedding_filtered": sorted(set(embedding_filtered)),
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error listing Ollama models: {exc}")
             raise internal_server_error(exc)
 
     @router.get("/templates", dependencies=[Depends(combined_auth)])

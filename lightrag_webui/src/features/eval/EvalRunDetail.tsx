@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 
 import {
   cancelEvalJob,
+  deleteEvalRun,
   listEvalJobs,
   type EvalArtifact,
   type EvalJob,
@@ -58,6 +59,7 @@ function headlineMetrics(run: EvalRunDetail): MetricItem[] {
 interface EvalRunDetailProps {
   run: EvalRunDetail
   onReproduce?: (run: EvalRunDetail) => void
+  onDeleted?: () => void
 }
 
 function formatDuration(seconds: number): string {
@@ -72,12 +74,14 @@ function RunHeader({
   run,
   activeJob,
   onCancel,
-  onReproduce
+  onReproduce,
+  onDelete
 }: {
   run: EvalRunDetail
   activeJob?: EvalJob | null
   onCancel?: () => void
   onReproduce?: () => void
+  onDelete?: () => void
 }) {
   const { t } = useTranslation()
   const elapsedSeconds = useMemo(() => {
@@ -123,6 +127,11 @@ function RunHeader({
         {activeJob ? (
           <Button size="sm" variant="outline" onClick={onCancel} className="ml-auto">
             {t('eval.cancelRun')}
+          </Button>
+        ) : null}
+        {onDelete ? (
+          <Button size="sm" variant="outline" className="text-destructive" onClick={onDelete}>
+            {t('eval.deleteRun')}
           </Button>
         ) : null}
         {onReproduce ? (
@@ -432,7 +441,11 @@ function ExperimentView({ run }: { run: EvalRunDetail }) {
   )
 }
 
-export default function EvalRunDetail({ run, onReproduce }: EvalRunDetailProps) {
+export default function EvalRunDetail({
+  run,
+  onReproduce,
+  onDeleted
+}: EvalRunDetailProps) {
   const { t } = useTranslation()
   const [activeJob, setActiveJob] = useState<EvalJob | null>(null)
 
@@ -456,6 +469,7 @@ export default function EvalRunDetail({ run, onReproduce }: EvalRunDetailProps) 
 
   const cancel = async () => {
     if (!activeJob) return
+    if (!window.confirm(t('eval.cancelRunConfirm'))) return
     try {
       const result = await cancelEvalJob(activeJob.id)
       setActiveJob(null)
@@ -471,11 +485,23 @@ export default function EvalRunDetail({ run, onReproduce }: EvalRunDetailProps) 
     }
   }
 
+  const remove = async () => {
+    if (!window.confirm(t('eval.deleteRunConfirm'))) return
+    try {
+      await deleteEvalRun(run.id)
+      toast.success(t('eval.runDeleted'))
+      onDeleted?.()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const headerProps = {
     run,
     activeJob,
     onCancel: cancel,
-    onReproduce: onReproduce ? () => onReproduce(run) : undefined
+    onReproduce: onReproduce ? () => onReproduce(run) : undefined,
+    onDelete: remove
   }
 
   if (run.kind === 'report') {

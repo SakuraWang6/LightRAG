@@ -328,7 +328,7 @@ NO_PROXY=127.0.0.1,localhost \
 | `GET` | `/eval/jobs` | 列出作业（文件化状态） |
 | `GET` | `/eval/jobs/{id}` | 作业详情 + run.log tail |
 | `POST` | `/eval/jobs/{id}/cancel` | 取消（killpg 整棵进程树；supervise 场景不会自动重启） |
-| `GET/POST/DELETE` | `/eval/datasets` | 数据集列表/生成(job)/删除（生成中 409） |
+| `GET/DELETE` | `/eval/datasets` | 数据集列表/删除（生成中 409）；**生成走 `POST /eval/jobs`（`kind=dataset`）** |
 | `GET/POST/DELETE` | `/eval/templates` | 运行模板 CRUD（name sanitize + 原子写） |
 
 作业权威状态为 `runs/.jobs/<job_id>/job.json`（顶层 pid + 进程启动时间 +
@@ -337,8 +337,10 @@ run 参数白名单拒绝基础设施键（`rag_api_url` / `ollama_url` / `stora
 `api_key` / `access_token`），缺少 `env_required` 环境变量的实验返回 400。
 数据集生成默认 pages 上限 1000，`allow_oversized_generation` 可放开。
 
-> 并发注意：当前多个 job 可同时启动，未做硬限制。Ollama 为单并行，并发实验
-> 会互相影响耗时类指标；计划中的 `MEMORY_EVAL_MAX_ACTIVE_JOBS` 硬限制尚未实现。
+> 并发与队列：作业按 FIFO 排队，`MEMORY_EVAL_MAX_ACTIVE_JOBS`（默认 1）控制
+> 同时运行数，`MEMORY_EVAL_WAIT_FOR_RUN=<run_id>` 可让队列等待指定 run 完成后
+> 再自动启动。后端队列已实现，前端“作业/队列视图”尚未提供（当前只能通过
+> 运行列表间接看到已产出 envelope 的 run）。
 
 ## 8. 长实验看护（supervise）
 

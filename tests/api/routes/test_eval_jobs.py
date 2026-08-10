@@ -234,7 +234,182 @@ def test_delete_rejects_encoded_path_traversal(
     assert not (tmp_path / "rich-smoke-v1").exists()
 
 
-def test_jobs_queue_when_max_active_reached(runs_root: Path, tmp_path: Path, monkeypatch) -> None:
+def _write_run_envelope(runs_root: Path, run_id: str) -> Path:
+    run_dir = runs_root / "online" / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "kind": "online",
+                "run_id": run_id,
+                "created_at": "2026-08-10T00:00:00+00:00",
+                "status": "complete",
+                "experiment": {"id": "x", "label": run_id, "description": ""},
+                "environment": {},
+                "baseline": {"dataset": "rich-smoke-v1"},
+                "variables": [],
+                "methods": [],
+                "reports": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "report.md").write_text("# report", encoding="utf-8")
+    return run_dir
+
+
+def test_delete_run_without_job(runs_root: Path, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    client = _client(runs_root, tmp_path)
+    run_dir = _write_run_envelope(runs_root, "legacy-run")
+    assert client.delete("/eval/runs/legacy-run").status_code == 200
+    assert not run_dir.exists()
+    assert client.delete("/eval/runs/legacy-run").status_code == 404
+
+
+def test_delete_run_cancels_active_job_and_waits(
+    runs_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    client = _client(runs_root, tmp_path)
+    run_dir = _write_run_envelope(runs_root, "active-run")
+    started = eval_jobs._probe_process_start(os.getpid())
+    job = {
+        "id": "run-active",
+        "kind": "run",
+        "output_dir": str(run_dir),
+        "pid": os.getpid(),
+        "process_started_at": started,
+        "status": "running",
+        "created_at": "2026-08-10T00:00:00+00:00",
+    }
+    eval_jobs._write_job(eval_jobs.jobs_root(runs_root), job)
+    monkeypatch.setattr(
+        eval_jobs,
+        "cancel_job",
+        lambda **kwargs: {**job, "status": "canceled"},
+    )
+    monkeypatch.setattr(eval_jobs, "wait_job_exit", lambda job, timeout=35: True)
+    response = client.delete("/eval/runs/active-run")
+    assert response.status_code == 200
+    assert not run_dir.exists()
+    assert not (eval_jobs.jobs_root(runs_root) / "run-active").exists()
+
+
+def test_delete_run_refuses_when_process_still_exiting(
+    runs_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    client = _client(runs_root, tmp_path)
+    run_dir = _write_run_envelope(runs_root, "exiting-run")
+    started = eval_jobs._probe_process_start(os.getpid())
+    job = {
+        "id": "run-exiting",
+        "kind": "run",
+        "output_dir": str(run_dir),
+        "pid": os.getpid(),
+        "process_started_at": started,
+        "status": "running",
+        "created_at": "2026-08-10T00:00:00+00:00",
+    }
+    eval_jobs._write_job(eval_jobs.jobs_root(runs_root), job)
+    monkeypatch.setattr(
+        eval_jobs,
+        "cancel_job",
+        lambda **kwargs: {**job, "status": "canceled"},
+    )
+    monkeypatch.setattr(eval_jobs, "wait_job_exit", lambda job, timeout=35: False)
+    response = client.delete("/eval/runs/exiting-run")
+    assert response.status_code == 409
+    assert run_dir.exists()
+
+
+def test_delete_run_removes_pending_job_record(
+    runs_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    client = _client(runs_root, tmp_path)
+    run_dir = _write_run_envelope(runs_root, "pending-run")
+    job = {
+        "id": "run-pending",
+        "kind": "run",
+        "output_dir": str(run_dir),
+        "status": "pending",
+        "created_at": "2026-08-10T00:00:00+00:00",
+    }
+    eval_jobs._write_job(eval_jobs.jobs_root(runs_root), job)
+    monkeypatch.setattr(
+        eval_jobs,
+        "cancel_job",
+        lambda **kwargs: {**job, "status": "canceled"},
+    )
+    response = client.delete("/eval/runs/pending-run")
+    assert response.status_code == 200
+    assert not run_dir.exists()
+    assert not (eval_jobs.jobs_root(runs_root) / "run-pending").exists()
+
+
+def test_job_validation_gaps(runs_root: Path, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    _write_dataset(tmp_path, "rich-smoke-v1")
+    client = _client(runs_root, tmp_path)
+    base = {
+        "kind": "run",
+        "experiment": "context_size",
+        "dataset": "rich-smoke-v1",
+        "params": {},
+    }
+    assert (
+        client.post("/eval/jobs", json={**base, "output_dir": "/tmp/evil"}).status_code
+        == 422
+    )
+    assert (
+        client.post("/eval/jobs", json={**base, "dataset": "../x"}).status_code == 400
+    )
+    assert (
+        client.post("/eval/jobs", json={**base, "supervision": "bogus"}).status_code
+        == 422
+    )
+    assert (
+        client.post("/eval/jobs", json={**base, "stale_minutes": 0}).status_code == 422
+    )
+
+
+def test_models_endpoint_filters_embeddings(
+    runs_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    client = _client(runs_root, tmp_path)
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"models":[{"name":"qwen3:8b"},{"name":"bge-m3:latest"}]}'
+
+    monkeypatch.setattr(
+        _eval_routes.urllib.request, "urlopen", lambda *a, **k: FakeResponse()
+    )
+    payload = client.get("/eval/models").json()
+    assert payload["models"] == ["qwen3:8b"]
+    assert payload["embedding_filtered"] == ["bge-m3:latest"]
+
+    monkeypatch.setattr(
+        _eval_routes.urllib.request,
+        "urlopen",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("boom")),
+    )
+    assert client.get("/eval/models").json()["models"] == []
+
+
+def test_jobs_queue_when_max_active_reached(
+    runs_root: Path, tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setattr(_utils_api, "auth_configured", False)
     _write_dataset(tmp_path, "rich-smoke-v1")
     client = _client(runs_root, tmp_path)

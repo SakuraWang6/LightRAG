@@ -243,15 +243,17 @@ conda run -n lightrag-memory-eval python -m memory_eval_tests.experiments.superv
   pages 上限提示）、删除（生成中的数据集拒绝删除，返回 409）。
 
 后端接口：`GET /eval/experiments`、`POST/GET /eval/jobs`、`POST
-/eval/jobs/{id}/cancel`、`GET/POST/DELETE /eval/datasets`、
-`GET/POST/DELETE /eval/templates`。作业状态以 `runs/.jobs/<job_id>/job.json`
+/eval/jobs/{id}/cancel`、`GET/DELETE /eval/datasets`（生成走
+`POST /eval/jobs` 的 `kind=dataset`）、`GET/POST/DELETE /eval/templates`。
+作业状态以 `runs/.jobs/<job_id>/job.json`
 （pid + 进程启动时间）为准，API 重启后可恢复取消；job.json 不存凭据。
 数据集生成走同一 job 通道（`kind=dataset`），默认 pages 上限 1000，
 `allow_oversized_generation` 可放开；`/eval` 依赖随 wheel 打包的
 `memory_eval_tests` / `memory_data_service` 包，包缺失时返回 503。
 
-当前并发限制：多个 job 可同时启动，未做硬限制；Ollama 单并行，并发实验会
-互相影响耗时类指标（计划中的 `MEMORY_EVAL_MAX_ACTIVE_JOBS` 尚未实现）。
+并发与队列：作业按 FIFO 排队，`MEMORY_EVAL_MAX_ACTIVE_JOBS`（默认 1）控制
+同时运行数，`MEMORY_EVAL_WAIT_FOR_RUN` 可让队列等待指定 run 完成后自动启动。
+后端队列已实现；前端“作业/队列视图”尚未提供（排队中的 job 目前不在 UI 可见）。
 
 ### 数据集根目录
 

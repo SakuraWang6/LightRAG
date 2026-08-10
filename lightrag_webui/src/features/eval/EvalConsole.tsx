@@ -33,7 +33,9 @@ import EvalRunDetailView from '@/features/eval/EvalRunDetail'
 import EvalCompare from '@/features/eval/EvalCompare'
 import ConditionChips from '@/features/eval/ConditionChips'
 import DatasetsView from '@/features/eval/DatasetsView'
+import JobsView from '@/features/eval/JobsView'
 import NewRunWizard from '@/features/eval/NewRunWizard'
+import SimpleEvalWizard from '@/features/eval/SimpleEvalWizard'
 import type { EvalTemplate } from '@/api/eval'
 import { formatDate, runKindClass, statusBadgeClass, statusLabel } from '@/features/eval/utils'
 
@@ -63,7 +65,8 @@ export default function EvalConsole() {
   const [comparing, setComparing] = useState(false)
   const [compareRuns, setCompareRuns] = useState<EvalRunDetail[]>([])
   const [compareLoading, setCompareLoading] = useState(false)
-  const [view, setView] = useState<'runs' | 'new' | 'datasets'>('runs')
+  const [view, setView] = useState<'runs' | 'new' | 'datasets' | 'jobs'>('runs')
+  const [wizardMode, setWizardMode] = useState<'simple' | 'advanced'>('simple')
   const [wizardDraft, setWizardDraft] = useState<EvalTemplate | null>(null)
 
   const handleReproduce = useCallback((run: EvalRun) => {
@@ -247,19 +250,64 @@ export default function EvalConsole() {
 
   if (view === 'new') {
     return (
-      <NewRunWizard
-        initial={wizardDraft}
-        onBack={() => setView('runs')}
-        onStarted={() => {
-          setView('runs')
-          void loadRuns()
-        }}
-      />
+      <div className="flex h-full flex-col">
+        <div className="flex items-center gap-2 border-b px-4 py-2">
+          <Button
+            size="sm"
+            variant={wizardMode === 'simple' ? 'default' : 'outline'}
+            onClick={() => setWizardMode('simple')}
+          >
+            {t('eval.simpleEval')}
+          </Button>
+          <Button
+            size="sm"
+            variant={wizardMode === 'advanced' ? 'default' : 'outline'}
+            onClick={() => setWizardMode('advanced')}
+          >
+            {t('eval.newRun')}
+          </Button>
+          <div className="ml-auto" />
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setView('runs')
+              void loadRuns()
+            }}
+          >
+            {t('eval.backToDetail')}
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {wizardMode === 'simple' ? (
+            <SimpleEvalWizard
+              onBack={() => setView('runs')}
+              onStarted={() => {
+                setView('runs')
+                void loadRuns()
+              }}
+            />
+          ) : (
+            <NewRunWizard
+              initial={wizardDraft}
+              onBack={() => setView('runs')}
+              onStarted={() => {
+                setView('runs')
+                void loadRuns()
+              }}
+            />
+          )}
+        </div>
+      </div>
     )
   }
 
   if (view === 'datasets') {
     return <DatasetsView onBack={() => setView('runs')} />
+  }
+
+  if (view === 'jobs') {
+    return <JobsView onBack={() => setView('runs')} />
   }
 
   return (
@@ -279,6 +327,9 @@ export default function EvalConsole() {
           <Button size="sm" variant="outline" onClick={() => setView('datasets')}>
             <DatabaseIcon className="mr-1 size-4" />
             {t('eval.datasets')}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setView('jobs')}>
+            {t('eval.jobs')}
           </Button>
           {compareIds.size > 0 && (
             <Button size="sm" onClick={startCompare} disabled={compareLoading}>
@@ -422,7 +473,14 @@ export default function EvalConsole() {
           {detailLoading && !detail ? (
             <div className="flex h-full items-center justify-center text-sm">{t('eval.loading')}</div>
           ) : detail ? (
-            <EvalRunDetailView run={detail} onReproduce={handleReproduce} />
+            <EvalRunDetailView
+              run={detail}
+              onReproduce={handleReproduce}
+              onDeleted={() => {
+                setSelectedId(null)
+                void loadRuns()
+              }}
+            />
           ) : (
             <EmptyCard
               title={t('eval.noSelection')}

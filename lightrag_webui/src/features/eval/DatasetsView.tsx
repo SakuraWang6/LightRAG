@@ -4,6 +4,7 @@ import { ArrowLeftIcon, TrashIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
+  cancelEvalJob,
   createEvalJob,
   deleteDataset,
   listDatasets,
@@ -107,6 +108,20 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
     [refresh, t]
   )
 
+  const cancelDatasetJob = useCallback(
+    async (job: EvalJob) => {
+      if (!window.confirm(t('eval.cancelJobConfirm', { id: job.id }))) return
+      try {
+        await cancelEvalJob(job.id)
+        toast.success(t('eval.jobCanceled'))
+        void refresh()
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : String(error))
+      }
+    },
+    [refresh, t]
+  )
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center gap-3 border-b px-4 py-3">
@@ -177,10 +192,24 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
           </Card>
 
           {activeDatasetJobs.length > 0 ? (
-            <p className="text-muted-foreground text-xs">
-              {t('eval.datasetJobsActive')}:{' '}
-              {activeDatasetJobs.map((job) => job.dataset_id).join(', ')}
-            </p>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-muted-foreground">{t('eval.datasetJobsActive')}:</span>
+              {activeDatasetJobs.map((job) => (
+                <span key={job.id} className="flex items-center gap-1">
+                  <Badge variant="outline" className="text-[10px]">
+                    {job.dataset_id}
+                  </Badge>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-1.5 text-[10px]"
+                    onClick={() => void cancelDatasetJob(job)}
+                  >
+                    {t('eval.cancelRun')}
+                  </Button>
+                </span>
+              ))}
+            </div>
           ) : null}
 
           <Card>

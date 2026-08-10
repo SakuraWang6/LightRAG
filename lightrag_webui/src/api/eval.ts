@@ -118,6 +118,8 @@ export type EvalJob = {
   output_dir: string
   supervise?: boolean
   status: string
+  queue_position?: number | null
+  active_count?: number | null
   created_at?: string | null
   started_at?: string | null
   finished_at?: string | null
@@ -249,6 +251,21 @@ export async function deleteDataset(datasetId: string): Promise<unknown> {
   const response = await evalApiClient.delete(
     `/eval/datasets/${encodeURIComponent(datasetId)}`
   )
+  return response.data
+}
+
+export async function deleteEvalRun(runId: string): Promise<{ deleted: string }> {
+  const response = await evalApiClient.delete(
+    `/eval/runs/${encodeURIComponent(runId)}`
+  )
+  return response.data
+}
+
+export async function listEvalModels(): Promise<{
+  models: string[]
+  embedding_filtered: string[]
+}> {
+  const response = await evalApiClient.get('/eval/models')
   return response.data
 }
 

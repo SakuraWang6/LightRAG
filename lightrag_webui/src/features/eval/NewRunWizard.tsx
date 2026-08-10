@@ -8,6 +8,7 @@ import {
   listDatasets,
   listEvalExperiments,
   listEvalJobs,
+  listEvalModels,
   listEvalTemplates,
   saveEvalTemplate,
   type DatasetSummary,
@@ -34,15 +35,26 @@ interface NewRunWizardProps {
 }
 
 const GENERIC_FIELDS: { key: string; type: 'number' | 'text' }[] = [
-  { key: 'model', type: 'text' },
   { key: 'mode', type: 'text' },
   { key: 'top_k', type: 'number' },
   { key: 'chunk_top_k', type: 'number' },
   { key: 'max_cases', type: 'number' },
   { key: 'num_ctx', type: 'number' },
   { key: 'num_predict', type: 'number' },
-  { key: 'temperature', type: 'number' }
+  { key: 'temperature', type: 'number' },
+  { key: 'engine', type: 'text' }
 ]
+
+const FIELD_LABEL_KEYS: Record<string, string> = {
+  mode: 'eval.paramMode',
+  top_k: 'eval.paramTopK',
+  chunk_top_k: 'eval.paramChunkTopK',
+  max_cases: 'eval.paramMaxCases',
+  num_ctx: 'eval.paramNumCtx',
+  num_predict: 'eval.paramNumPredict',
+  temperature: 'eval.paramTemperature',
+  engine: 'eval.paramEngine'
+}
 
 function fieldInputType(schemaType: string): 'number' | 'text' {
   return schemaType === 'int' || schemaType === 'float' ? 'number' : 'text'
@@ -56,6 +68,9 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
   const [dataset, setDataset] = useState<string>('')
   const [experiment, setExperiment] = useState<string>('')
   const [params, setParams] = useState<Record<string, unknown>>({})
+  const [models, setModels] = useState<string[]>([])
+  const [customModel, setCustomModel] = useState(false)
+  const [pendingCount, setPendingCount] = useState(0)
   const [supervise, setSupervise] = useState(false)
   const [supervision, setSupervision] = useState('auto')
   const [extraText, setExtraText] = useState('')
@@ -66,6 +81,12 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
     void listDatasets().then((data) => setDatasets(data.datasets)).catch(() => undefined)
     void listEvalExperiments().then(setExperiments).catch(() => undefined)
     void listEvalTemplates().then(setTemplates).catch(() => undefined)
+    void listEvalModels()
+      .then((data) => setModels(data.models))
+      .catch(() => setModels([]))
+    void listEvalJobs()
+      .then((jobs) => setPendingCount(jobs.filter((job) => job.status === 'pending').length))
+      .catch(() => undefined)
   }, [])
 
   useEffect(() => {
@@ -231,13 +252,65 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
             <CardHeader className="pb-2">
               <CardTitle className="text-sm">{t('eval.wizardParams')}</CardTitle>
             </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-3">
+            <CardContent className="space-y-3">
+              {pendingCount > 0 ? (
+                <p className="text-amber-600 dark:text-amber-400 text-xs">
+                  {t('eval.jobsQueued', { count: pendingCount })}
+                </p>
+              ) : null}
+              <label className="flex flex-col gap-1 text-xs">
+                <span className="text-muted-foreground">{t('eval.paramModel')}</span>
+                {!customModel ? (
+                  <Select
+                    value={params.model == null ? '' : String(params.model)}
+                    onValueChange={(value) => {
+                      if (value === '__custom__') {
+                        setCustomModel(true)
+                        setParam('model', null)
+                      } else {
+                        setParam('model', value)
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder={t('eval.paramModelPick')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {models.map((name) => (
+                        <SelectItem key={name} value={name}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value="__custom__">{t('eval.paramModelCustom')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    value={params.model == null ? '' : String(params.model)}
+                    onChange={(event) =>
+                      setParam('model', event.target.value === '' ? null : event.target.value)
+                    }
+                    placeholder="qwen3:8b"
+                  />
+                )}
+                {models.length === 0 ? (
+                  <p className="text-muted-foreground text-xs">{t('eval.modelsUnavailable')}</p>
+                ) : null}
+              </label>
+              <div className="grid grid-cols-2 gap-3">
               {GENERIC_FIELDS.map((field) => (
                 <label key={field.key} className="flex flex-col gap-1 text-xs">
-                  <span className="text-muted-foreground">{field.key}</span>
+                  <span className="text-muted-foreground">
+                    {t(FIELD_LABEL_KEYS[field.key] ?? field.key)}
+                  </span>
                   <Input
                     type={field.type}
                     value={params[field.key] == null ? '' : String(params[field.key])}
+                    placeholder={
+                      spec?.default_baseline?.[field.key] != null
+                        ? String(spec.default_baseline[field.key])
+                        : ''
+                    }
                     onChange={(event) => {
                       const raw = event.target.value
                       setParam(field.key, raw === '' ? null : field.type === 'number' ? Number(raw) : raw)
@@ -245,6 +318,15 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
                   />
                 </label>
               ))}
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={params.kg !== false}
+                  onChange={(event) => setParam('kg', event.target.checked)}
+                />
+                {t('eval.paramKg')}
+              </label>
               {spec
                 ? Object.entries(spec.extra_schema).map(([key, schemaType]) => (
                     <label key={key} className="flex flex-col gap-1 text-xs">
@@ -260,7 +342,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
                     </label>
                   ))
                 : null}
-              <label className="col-span-2 flex flex-col gap-1 text-xs">
+              <label className="flex flex-col gap-1 text-xs">
                 <span className="text-muted-foreground">{t('eval.wizardExtra')}</span>
                 <Input
                   value={extraText}
