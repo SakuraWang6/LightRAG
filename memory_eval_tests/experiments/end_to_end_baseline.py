@@ -292,6 +292,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             "status": "complete",
             "methods": methods,
             "report": "# 隔离端到端基线\n\n数据集已在独立执行单元中入库、索引、检索与评分。\n\n"
+            + _answer_stratification_markdown(answer)
             + _diagnosis_markdown(diagnosis),
             "extra": {
                 "ingestion_receipt": "ingestion_receipt.json",
@@ -309,6 +310,30 @@ def _runner(context: RunContext) -> dict[str, Any]:
         raise
     finally:
         finalize_execution_unit(output_dir=context.output_dir, unit=unit, outcome=outcome)
+
+
+def _answer_stratification_markdown(answer: dict[str, Any]) -> str:
+    rows = answer.get("by_scenario") or {}
+    if not rows:
+        return ""
+    lines = [
+        "## 回答评分场景分层",
+        "",
+        "| 场景 | 样本数 | 可判定 | 待复核 | Accuracy | Groundedness |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for name, summary in sorted(rows.items()):
+        accuracy = summary.get("answer_accuracy")
+        groundedness = summary.get("groundedness")
+        accuracy_value = f"{accuracy:.4f}" if isinstance(accuracy, (int, float)) else "—"
+        groundedness_value = (
+            f"{groundedness:.4f}" if isinstance(groundedness, (int, float)) else "—"
+        )
+        lines.append(
+            f"| {name} | {summary.get('cases', 0)} | {summary.get('decisive_cases', 0)} | "
+            f"{summary.get('uncertain', 0)} | {accuracy_value} | {groundedness_value} |"
+        )
+    return "\n".join(lines) + "\n\n"
 
 
 spec = ExperimentSpec(
