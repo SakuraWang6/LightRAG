@@ -289,6 +289,7 @@ def _refresh_job(
             # stale copy over a new claim made by another API worker.
             return job
         job.pop("claim", None)
+        job["lease_expires_at"] = None
         job["recovered_at"] = _now_iso()
     if job["status"] in _TERMINAL_STATUSES and not job.get(
         "finished_at"
@@ -361,6 +362,7 @@ def _renew_job_lease(
                 return
             claim["lease_expires_at"] = _lease_expires_at()
             job["claim"] = claim
+            job["lease_expires_at"] = claim["lease_expires_at"]
             _write_job(jobs, job)
 
 
@@ -432,6 +434,7 @@ def _spawn_run_job(
         }
     )
     job["claim"]["lease_expires_at"] = _lease_expires_at()
+    job["lease_expires_at"] = job["claim"]["lease_expires_at"]
     _write_job(jobs, job)
     threading.Thread(
         target=_renew_job_lease,
@@ -507,6 +510,7 @@ def _spawn_dataset_job(
         }
     )
     job["claim"]["lease_expires_at"] = _lease_expires_at()
+    job["lease_expires_at"] = job["claim"]["lease_expires_at"]
     _write_job(jobs, job)
     threading.Thread(
         target=_renew_job_lease,
@@ -548,7 +552,13 @@ def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
             pending.sort(key=lambda j: (j.get("created_at") or "", j.get("id") or ""))
             job = pending[0]
             claim = _claim_owner()
-            job.update({"status": "claiming", "claim": claim})
+            job.update(
+                {
+                    "status": "claiming",
+                    "claim": claim,
+                    "lease_expires_at": claim["lease_expires_at"],
+                }
+            )
             _write_job(jobs, job)
             try:
                 if job["kind"] == "run":
@@ -659,6 +669,9 @@ def start_run_job(
         "stale_minutes": stale_minutes,
         "max_restarts": max_restarts,
         "poll_seconds": poll_seconds,
+        "claim": None,
+        "lease_expires_at": None,
+        "events_path": str(params.output_dir / "events.jsonl"),
     }
     _write_job(jobs_root(runs_root), job)
     _dispatch(runs_root, datasets_root)
@@ -706,6 +719,9 @@ def start_dataset_job(
             "force": force,
             "allow_oversized_generation": allow_oversized_generation,
         },
+        "claim": None,
+        "lease_expires_at": None,
+        "events_path": str(job_dir / "events.jsonl"),
     }
     _write_job(jobs_root(runs_root), job)
     _dispatch(runs_root, datasets_root)

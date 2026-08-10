@@ -103,6 +103,10 @@ def test_start_run_job_does_not_persist_credentials(
     )
     assert "api_key" not in stored["params"]
     assert "super-secret" not in json.dumps(stored)
+    assert stored["claim"]["owner_id"]
+    assert stored["claim"]["pid"] == os.getpid()
+    assert stored["lease_expires_at"] == stored["claim"]["lease_expires_at"]
+    assert stored["events_path"].endswith("events.jsonl")
     assert captured["cmd"][1:4] == [
         "-m",
         "memory_eval_tests.experiments.supervise",
@@ -152,6 +156,7 @@ def test_dataset_job_builds_cli_command(tmp_path: Path, monkeypatch) -> None:
     assert "--force" in cmd
     assert cmd[cmd.index("--pages") + 1] == "12"
     assert (tmp_path / ".jobs" / job["id"] / "run.log").parent.is_dir()
+    assert job["events_path"].endswith("events.jsonl")
 
 
 def test_unique_run_dirs_do_not_collide(tmp_path: Path) -> None:
@@ -367,6 +372,7 @@ def test_expired_claim_is_recovered_for_another_worker(tmp_path: Path) -> None:
     )
     assert refreshed["status"] == "pending"
     assert "claim" not in refreshed
+    assert refreshed["lease_expires_at"] is None
     assert refreshed["recovered_at"]
 
 
