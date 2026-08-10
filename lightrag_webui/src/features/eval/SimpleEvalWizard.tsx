@@ -118,7 +118,7 @@ export default function SimpleEvalWizard({ onBack, onStarted, onManageDatasets, 
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              <p className="text-muted-foreground text-sm">使用本机 Ollama 模型，在独立 workspace 与 storage 中自动完成入库、索引、检索、回答和诊断。</p>
+              <p className="text-muted-foreground text-sm">使用服务器当前已配置的模型服务，在独立 workspace 与 storage 中自动完成入库、索引、检索、回答和诊断。</p>
               <p className="text-muted-foreground text-xs">不会创建镜像，也不会把测试文档上传到当前全局知识库。</p>
             </CardContent>
           </Card>

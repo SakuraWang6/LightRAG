@@ -83,11 +83,40 @@ def _write_child_state(output_dir: Path, proc: subprocess.Popen) -> None:
         return
     path = output_dir / _CHILD_STATE_NAME
     tmp = output_dir / f"{_CHILD_STATE_NAME}.tmp"
+    # PID alone is not an identity: it can be recycled after a supervisor
+    # restart.  The API job manager refuses to signal this group unless this
+    # start-time token still matches the live process.
     tmp.write_text(
-        json.dumps({"pid": pid, "pgid": pid}, ensure_ascii=False) + "\n",
+        json.dumps(
+            {"pid": pid, "pgid": pid, "process_started_at": _process_start_identity(pid)},
+            ensure_ascii=False,
+        )
+        + "\n",
         encoding="utf-8",
     )
     tmp.replace(path)
+
+
+def _process_start_identity(pid: int) -> int | None:
+    """Return the platform's stable process-start token, when available."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as handle:
+            return int(handle.read().split()[21])
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "lstart=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        value = result.stdout.strip()
+        if value:
+            return int(datetime.strptime(value, "%a %b %d %H:%M:%S %Y").timestamp())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return None
 
 
 def _clear_child_state(output_dir: Path, pid: int | None = None) -> None:

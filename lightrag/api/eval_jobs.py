@@ -763,7 +763,7 @@ def delete_job(*, runs_root: Path, job_id: str) -> bool:
 
 
 def _tracked_child_pids(job: dict[str, Any]) -> list[int]:
-    """Read supervisor-owned process groups without trusting arbitrary paths."""
+    """Read a verified supervisor child group, refusing stale PID records."""
     output_dir = job.get("output_dir")
     if not isinstance(output_dir, str):
         return []
@@ -771,8 +771,20 @@ def _tracked_child_pids(job: dict[str, Any]) -> list[int]:
         payload = json.loads((Path(output_dir) / ".supervise-child.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
-    pid = payload.get("pid") if isinstance(payload, dict) else None
-    return [pid] if isinstance(pid, int) and pid > 0 else []
+    if not isinstance(payload, dict):
+        return []
+    pid = payload.get("pid")
+    pgid = payload.get("pgid")
+    started = payload.get("process_started_at")
+    if (
+        not isinstance(pid, int)
+        or pid <= 0
+        or not isinstance(pgid, int)
+        or pgid != pid
+        or not isinstance(started, int)
+    ):
+        return []
+    return [pgid] if _probe_process_start(pid) == started else []
 
 
 def wait_job_exit(job: dict[str, Any], timeout: float = 35.0) -> bool:

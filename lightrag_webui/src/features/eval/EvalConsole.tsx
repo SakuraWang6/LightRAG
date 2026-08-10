@@ -140,13 +140,15 @@ export default function EvalConsole() {
     try {
       const result = await refreshEvalIndex()
       toast.success(`${result.run_count} runs indexed`)
+      detailCache.current.clear()
       await loadRuns()
+      if (selectedId) await loadDetail(selectedId, true)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
     } finally {
       setRefreshing(false)
     }
-  }, [loadRuns])
+  }, [loadDetail, loadRuns, selectedId])
 
   const filteredRuns = useMemo(() => {
     if (!runs) return []

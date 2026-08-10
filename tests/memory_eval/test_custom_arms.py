@@ -25,6 +25,8 @@ class _FakeBase:
                 "model": context.baseline.get("model"),
                 "top_k": context.baseline.get("top_k"),
                 "dir": context.output_dir.name,
+                "runs_root": context.runs_root,
+                "arm_overrides": context.extra.get("arm_overrides"),
             }
         )
         if self.fail_all or (
@@ -138,14 +140,23 @@ def test_all_arms_failed_marks_parent_failed(monkeypatch, tmp_path: Path) -> Non
     assert all(m["summary"]["status"] == "failed" for m in payload["methods"])
 
 
-def test_partial_failure_stays_complete_with_report_marker(
+def test_arms_propagate_run_root_and_declared_overrides(monkeypatch, tmp_path: Path) -> None:
+    context, fake = _context(tmp_path, axes={"embedding_model": ["e1", "e2"]})
+    context.runs_root = tmp_path / "runs"
+    _monkeypatch_base(monkeypatch, fake)
+    _run_custom_arms(context)
+    assert fake.calls[0]["runs_root"] == context.runs_root
+    assert json.loads(fake.calls[0]["arm_overrides"]) == {"embedding_model": "e1"}
+
+
+def test_partial_failure_marks_parent_failed_with_report_marker(
     monkeypatch, tmp_path: Path
 ) -> None:
     context, fake = _context(tmp_path, axes={"top_k": ["5", "10"]})
     fake.fail_when = "10"
     _monkeypatch_base(monkeypatch, fake)
     payload = _run_custom_arms(context)
-    assert payload["status"] == "complete"
+    assert payload["status"] == "failed"
     assert payload["methods"][0]["summary"]["status"] == "complete"
     assert payload["methods"][1]["summary"]["status"] == "failed"
     assert "1/2 臂失败" in payload["report"]
@@ -163,7 +174,6 @@ def test_custom_arms_registered(monkeypatch, tmp_path: Path) -> None:
         "max_arms": "int",
         "comparison_type": "str",
         "frozen_context_run_id": "str",
-        "source_run_id": "str",
         "environment_profile_id": "str",
         "environment_profile_version": "int",
     }

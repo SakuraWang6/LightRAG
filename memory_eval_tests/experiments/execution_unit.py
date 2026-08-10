@@ -82,23 +82,38 @@ def load_execution_unit(output_dir: Path) -> dict[str, Any] | None:
 
 
 def _profile_environment(profile: dict[str, Any], unit: dict[str, Any]) -> dict[str, str]:
-    """Map non-secret profile references to the server's configured roles."""
+    """Map the supported, non-secret profile settings to child-server env vars."""
     config = profile.get("configuration") or {}
-    query = config.get("query") or config.get("extraction") or {}
-    embedding = config.get("embedding") or {}
+    primary = config.get("query") or config.get("extraction") or {}
     env = dict(os.environ)
-    if query.get("provider"):
-        env["LLM_BINDING"] = str(query["provider"])
-    if query.get("model"):
-        env["LLM_MODEL"] = str(query["model"])
-    if query.get("endpoint"):
-        env["LLM_BINDING_HOST"] = str(query["endpoint"])
-    if embedding.get("provider"):
-        env["EMBEDDING_BINDING"] = str(embedding["provider"])
-    if embedding.get("model"):
-        env["EMBEDDING_MODEL"] = str(embedding["model"])
-    if embedding.get("endpoint"):
-        env["EMBEDDING_BINDING_HOST"] = str(embedding["endpoint"])
+    _set_role_environment(env, primary, prefix="LLM")
+    for name, prefix in (("extraction", "EXTRACT_LLM"), ("query", "QUERY_LLM"), ("vlm", "VLM_LLM")):
+        role = config.get(name)
+        if isinstance(role, dict):
+            _set_role_environment(env, role, prefix=prefix)
+    embedding = config.get("embedding") or {}
+    _set_role_environment(env, embedding, prefix="EMBEDDING")
+    reranker = config.get("reranker")
+    if isinstance(reranker, dict):
+        _set_role_environment(env, reranker, prefix="RERANK")
+    parser_engine = config.get("parser_engine")
+    if isinstance(parser_engine, str) and parser_engine:
+        env["LIGHTRAG_PARSER"] = f"*:{parser_engine}"
+    storage_prefixes = {
+        "kv": "LIGHTRAG_KV_STORAGE",
+        "vector": "LIGHTRAG_VECTOR_STORAGE",
+        "graph": "LIGHTRAG_GRAPH_STORAGE",
+        "doc_status": "LIGHTRAG_DOC_STATUS_STORAGE",
+    }
+    for key, env_name in storage_prefixes.items():
+        value = (config.get("storage_backends") or {}).get(key)
+        if value:
+            env[env_name] = str(value)
+    concurrency = config.get("concurrency") or {}
+    if concurrency.get("max_async_llm"):
+        env["MAX_ASYNC_LLM"] = str(concurrency["max_async_llm"])
+    if concurrency.get("max_parallel_insert"):
+        env["MAX_PARALLEL_INSERT"] = str(concurrency["max_parallel_insert"])
     # The managed child is bound to 127.0.0.1 on an unguessable transient
     # port.  It must not inherit the main WebUI's login requirement: the
     # runner owns this process and needs an authenticated configuration
@@ -109,6 +124,20 @@ def _profile_environment(profile: dict[str, Any], unit: dict[str, Any]) -> dict[
     env["LIGHTRAG_API_KEY"] = ""
     env["WORKSPACE"] = str(unit["workspace_id"])
     return env
+
+
+def _set_role_environment(env: dict[str, str], role: dict[str, Any], *, prefix: str) -> None:
+    """Set one provider/model pair without accepting profile-supplied endpoints.
+
+    Endpoint and secret references are rejected when the profile is saved.  The
+    child therefore uses the trusted deployment endpoint and credential already
+    configured for its provider, rather than sending inherited credentials to
+    an arbitrary user-supplied host.
+    """
+    if role.get("provider"):
+        env[f"{prefix}_BINDING"] = str(role["provider"])
+    if role.get("model"):
+        env[f"{prefix}_MODEL"] = str(role["model"])
 
 
 def _provider_endpoint(role: dict[str, Any], *, prefix: str) -> str:

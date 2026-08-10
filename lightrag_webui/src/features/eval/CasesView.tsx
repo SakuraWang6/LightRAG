@@ -119,6 +119,10 @@ function normalize(row: Record<string, unknown>): NormalizedCase {
   } else if (typeof row.grounded === 'boolean' && row.exact_match === undefined) {
     passed = null // retrieval-style rows only carry recall, not pass/fail
   }
+  const diagnosis =
+    typeof row.diagnosis === 'object' && row.diagnosis !== null && !Array.isArray(row.diagnosis)
+      ? row.diagnosis as Record<string, unknown>
+      : {}
   return {
     id: String(row.question_id ?? question ?? ''),
     question,
@@ -128,7 +132,7 @@ function normalize(row: Record<string, unknown>): NormalizedCase {
     group: String(row.question_group ?? ''),
     type: String(row.question_type ?? ''),
     scenario: Array.isArray(row.scenario_labels) ? row.scenario_labels.map(String).join(' · ') : String(row.scenario ?? ''),
-    failureCategory: String(row.failure_category ?? row.primary_cause ?? row.diagnosis?.primary_cause ?? ''),
+    failureCategory: String(row.failure_category ?? row.primary_cause ?? diagnosis.primary_cause ?? ''),
     method: String(row.method ?? row.arm ?? ''),
     raw: row
   }

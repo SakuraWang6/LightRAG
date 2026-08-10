@@ -11,7 +11,7 @@ ComparisonType = Literal[
 _TEMPLATES: dict[str, dict[str, Any]] = {
     "answer_model": {
         "label": "回答模型比较",
-        "allowed_variables": {"answer_model", "answer_prompt", "temperature", "num_predict", "seed"},
+        "allowed_variables": {"answer_model"},
         "required_inputs": {"frozen_context_run_id"},
         "index_requirement": "reuse_frozen_final_context",
         "dependencies": ["freeze_final_context"],
@@ -19,13 +19,17 @@ _TEMPLATES: dict[str, dict[str, Any]] = {
     "retrieval_configuration": {
         "label": "检索配置比较",
         "allowed_variables": {"retrieval_mode", "top_k", "chunk_top_k", "reranker", "max_total_tokens"},
-        "required_inputs": {"source_run_id"},
-        "index_requirement": "reuse_same_index",
-        "dependencies": ["verify_source_index"],
+        # Each parameter arm owns a complete isolated execution unit.  The
+        # current runner does not expose a safe immutable-index handoff, so
+        # do not claim source-index reuse merely because a source run ID was
+        # supplied by an older UI.
+        "required_inputs": set(),
+        "index_requirement": "rebuild_isolated_index_per_arm",
+        "dependencies": ["allocate_isolated_workspace_per_arm", "ingest_and_index_per_arm"],
     },
     "embedding": {
         "label": "Embedding 比较",
-        "allowed_variables": {"embedding_model", "embedding_dimensions", "embedding_batch_size"},
+        "allowed_variables": {"embedding_model"},
         "required_inputs": {"environment_profile_id", "environment_profile_version"},
         "index_requirement": "rebuild_isolated_index_per_arm",
         "dependencies": ["allocate_isolated_workspace_per_arm", "ingest_and_index_per_arm"],
@@ -33,8 +37,8 @@ _TEMPLATES: dict[str, dict[str, Any]] = {
     "full_pipeline": {
         "label": "完整链路比较",
         "allowed_variables": {
-            "parser_engine", "extraction_model", "embedding_model", "query_model", "answer_model",
-            "retrieval_mode", "reranker", "answer_prompt", "temperature", "num_predict",
+            "parser_engine", "extraction_model", "embedding_model", "query_model",
+            "retrieval_mode", "top_k", "chunk_top_k", "max_total_tokens", "reranker",
         },
         "required_inputs": {"environment_profile_id", "environment_profile_version"},
         "index_requirement": "rebuild_isolated_pipeline_per_arm",
@@ -99,7 +103,7 @@ def validate_plan(
         "arm_count": arm_count,
         "index_requirement": spec["index_requirement"],
         "execution_dependencies": list(spec["dependencies"]),
-        "reuse_permitted": comparison_type in {"answer_model", "retrieval_configuration"},
+        "reuse_permitted": comparison_type == "answer_model",
     }
 
 
@@ -111,6 +115,7 @@ def compare_contract(envelopes: list[dict[str, Any]]) -> dict[str, Any]:
         "dataset_fingerprint": lambda run: ((run.get("execution_manifest") or {}).get("dataset") or {}).get("manifest_sha256"),
         "case_set": lambda run: sorted((run.get("launch_params") or {}).get("case_ids") or []),
         "environment_version": lambda run: ((run.get("execution_manifest") or {}).get("execution_unit") or {}).get("profile"),
+        "environment_configuration": lambda run: ((run.get("execution_manifest") or {}).get("execution_unit") or {}).get("configuration_fingerprint"),
         "experiment_type": lambda run: ((run.get("experiment") or {}).get("id")),
         "scorer_version": lambda run: run.get("scorer_version"),
         "repetitions": lambda run: (run.get("comparison_settings") or {}).get("repetitions", 1),

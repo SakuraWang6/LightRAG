@@ -22,6 +22,7 @@ def _profile(mode: str = "assigned") -> dict:
             "runtime_endpoint": "http://assigned.test:9621" if mode == "assigned" else None,
             "query": {"provider": "openai", "model": "query-model"},
             "embedding": {"provider": "openai", "model": "embed-model"},
+            "parser_engine": "native",
         },
     }
 
@@ -50,6 +51,25 @@ def test_managed_unit_does_not_inherit_main_server_auth(tmp_path: Path, monkeypa
     environment = execution_unit._profile_environment(_profile("managed_local"), unit)
     assert environment["AUTH_ACCOUNTS"] == ""
     assert environment["LIGHTRAG_API_KEY"] == ""
+
+
+def test_managed_unit_applies_supported_profile_settings(tmp_path: Path) -> None:
+    profile = _profile("managed_local")
+    profile["configuration"].update(
+        {
+            "extraction": {"provider": "openai", "model": "extract-model"},
+            "storage_backends": {"kv": "JsonKVStorage", "vector": "NanoVectorDBStorage"},
+            "concurrency": {"max_async_llm": 2, "max_parallel_insert": 4},
+        }
+    )
+    unit = execution_unit.allocate_execution_unit(
+        run_id="end-to-end", output_dir=tmp_path / "run", profile=profile
+    )
+    environment = execution_unit._profile_environment(profile, unit)
+    assert environment["LLM_MODEL"] == "query-model"
+    assert environment["EXTRACT_LLM_MODEL"] == "extract-model"
+    assert environment["LIGHTRAG_PARSER"] == "*:native"
+    assert environment["MAX_ASYNC_LLM"] == "2"
 
 
 def test_managed_unit_preflight_rejects_missing_ollama(tmp_path: Path, monkeypatch) -> None:
@@ -214,6 +234,38 @@ def test_prepare_binds_workspace_to_immutable_execution_manifest(
     bound = context.execution_manifest["execution_unit"]
     assert bound["workspace_id"] == context.execution_unit["workspace_id"]
     assert bound["storage_id"] == context.execution_unit["storage_id"]
+    assert len(bound["configuration_fingerprint"]) == 64
+    assert bound["effective_configuration"]["parser_engine"] == "native"
+
+
+def test_profile_defaults_and_model_override_are_effective(tmp_path: Path, monkeypatch) -> None:
+    import memory_eval_tests.experiments.end_to_end_baseline as end_to_end
+
+    profile = {**_profile("managed_local"), "status": "published"}
+    profile["configuration"]["retrieval_defaults"] = {"top_k": 9, "mode": "hybrid"}
+    context = RunContext(
+        spec=ExperimentSpec(id="end_to_end_baseline", label="E2E", description="d", runner=lambda _c: {}),
+        dataset=tmp_path / "dataset",
+        output_dir=tmp_path / "run",
+        baseline={"model": "query-override", "top_k": 5, "mode": "mix"},
+        environment={}, variables=[], run_id="e2e-run",
+        extra={"environment_profile_id": "profile-a", "environment_profile_version": "2"},
+        runs_root=tmp_path / "runs",
+        execution_manifest={
+            "parameters": {
+                "top_k": {"value": 5, "source": "default"},
+                "mode": {"value": "mix", "source": "user"},
+            }
+        },
+    )
+    context.output_dir.mkdir()
+    monkeypatch.setattr(end_to_end, "preflight_execution_unit", lambda _profile: None)
+    monkeypatch.setattr(end_to_end.eval_profiles, "get_profile_version", lambda *_args: profile)
+    end_to_end._prepare(context)
+    assert context.environment_profile["configuration"]["query"]["model"] == "query-override"
+    assert context.baseline["top_k"] == 9
+    assert context.baseline["mode"] == "mix"  # user-selected values win over profile defaults
+    assert context.execution_manifest["parameters"]["top_k"]["source"] == "profile"
 
 
 def test_end_to_end_uses_every_created_manifest_format(tmp_path: Path) -> None:

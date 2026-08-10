@@ -16,6 +16,95 @@ from typing import Any
 
 _STORE_NAME = "environment_profiles.json"
 _PROFILE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_PARSER_ENGINE_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_ROLE_NAMES = {"extraction", "query", "embedding", "vlm", "reranker"}
+_STORAGE_KEYS = {"kv", "vector", "graph", "doc_status"}
+_RETRIEVAL_KEYS = {"mode", "top_k", "chunk_top_k", "max_total_tokens", "max_cases"}
+_CONCURRENCY_KEYS = {"max_async_llm", "max_parallel_insert"}
+
+
+def _non_empty(value: Any) -> bool:
+    return value is not None and (not isinstance(value, str) or bool(value.strip()))
+
+
+def validate_profile_configuration(configuration: dict[str, Any]) -> None:
+    """Reject profile fields the isolated runner cannot apply faithfully.
+
+    Environment profiles are evidence for a run's execution conditions.  A
+    stored field that is silently ignored is worse than an unavailable field:
+    it makes two results look comparable when they are not.  Keep this
+    validation next to the append-only store so both draft creation and
+    publication reject unsupported or unsafe configurations.
+    """
+    if not isinstance(configuration, dict):
+        raise ValueError("environment profile configuration must be an object")
+    mode = str(configuration.get("execution_mode") or "managed_local")
+    if mode not in {"managed_local", "assigned"}:
+        raise ValueError("execution_mode must be managed_local or assigned")
+    endpoint = configuration.get("runtime_endpoint")
+    if mode == "assigned" and not isinstance(endpoint, str):
+        raise ValueError("assigned environment profile requires runtime_endpoint")
+    if mode == "managed_local" and _non_empty(endpoint):
+        raise ValueError("managed_local environment profiles cannot set runtime_endpoint")
+    for field in ("lightrag_version", "startup_template", "answer"):
+        if _non_empty(configuration.get(field)):
+            raise ValueError(f"environment profile field {field!r} is not supported by isolated runs")
+
+    parser_engine = configuration.get("parser_engine")
+    if not isinstance(parser_engine, str) or not _PARSER_ENGINE_RE.fullmatch(parser_engine):
+        raise ValueError("parser_engine must be a simple installed parser engine name")
+    for role_name in _ROLE_NAMES:
+        role = configuration.get(role_name)
+        if role is None:
+            continue
+        if not isinstance(role, dict):
+            raise ValueError(f"{role_name} must be an object")
+        if not isinstance(role.get("provider"), str) or not role["provider"].strip():
+            raise ValueError(f"{role_name}.provider is required")
+        if not isinstance(role.get("model"), str) or not role["model"].strip():
+            raise ValueError(f"{role_name}.model is required")
+        # There is no secret resolver in the runner.  Allowing an arbitrary
+        # endpoint while inherited process credentials remain available would
+        # also permit credential exfiltration.
+        if _non_empty(role.get("endpoint")) or _non_empty(role.get("secret_ref")):
+            raise ValueError(
+                f"{role_name}.endpoint and {role_name}.secret_ref are not supported by isolated runs"
+            )
+    embedding = configuration.get("embedding")
+    if not isinstance(embedding, dict):
+        raise ValueError("embedding is required")
+    primary_llm = configuration.get("query") or configuration.get("extraction")
+    if not isinstance(primary_llm, dict):
+        raise ValueError("query or extraction is required")
+    primary_provider = str(primary_llm["provider"]).strip().lower()
+    for role_name in ("extraction", "query", "vlm"):
+        role = configuration.get(role_name)
+        if isinstance(role, dict) and str(role["provider"]).strip().lower() != primary_provider:
+            raise ValueError(
+                f"{role_name}.provider must match the primary query/extraction provider; "
+                "cross-provider role credentials are not supported by isolated runs"
+            )
+
+    storage = configuration.get("storage_backends") or {}
+    if not isinstance(storage, dict) or set(storage) - _STORAGE_KEYS:
+        raise ValueError("storage_backends only supports: kv, vector, graph, doc_status")
+    if any(not isinstance(value, str) or not value.strip() for value in storage.values()):
+        raise ValueError("storage backend values must be non-empty strings")
+    retrieval = configuration.get("retrieval_defaults") or {}
+    if not isinstance(retrieval, dict) or set(retrieval) - _RETRIEVAL_KEYS:
+        raise ValueError(
+            "retrieval_defaults only supports: mode, top_k, chunk_top_k, max_total_tokens, max_cases"
+        )
+    if "mode" in retrieval and str(retrieval["mode"]) not in {"naive", "local", "global", "hybrid", "mix"}:
+        raise ValueError("retrieval_defaults.mode is invalid")
+    for key in _RETRIEVAL_KEYS - {"mode"}:
+        if key in retrieval and (not isinstance(retrieval[key], int) or isinstance(retrieval[key], bool) or retrieval[key] < 0):
+            raise ValueError(f"retrieval_defaults.{key} must be a non-negative integer")
+    concurrency = configuration.get("concurrency") or {}
+    if not isinstance(concurrency, dict) or set(concurrency) - _CONCURRENCY_KEYS:
+        raise ValueError("concurrency only supports: max_async_llm, max_parallel_insert")
+    if any(not isinstance(value, int) or isinstance(value, bool) or value < 1 for value in concurrency.values()):
+        raise ValueError("concurrency values must be positive integers")
 
 
 def _now() -> str:
@@ -99,6 +188,7 @@ def create_draft_version(
     profile_id: str | None = None,
 ) -> dict[str, Any]:
     """Append a draft; existing versions are never edited in place."""
+    validate_profile_configuration(configuration)
     payload = _read(runs_root)
     identifier = _profile_id(profile_id, name)
     profile = next(
@@ -135,6 +225,7 @@ def publish_version(*, runs_root: Path, profile_id: str, version: int) -> dict[s
                 return {"id": profile_id, "name": profile.get("name"), **item}
             if item.get("status") != "draft":
                 raise ValueError("only draft environment profile versions can be published")
+            validate_profile_configuration(item.get("configuration") or {})
             item["status"] = "published"
             item["published_at"] = _now()
             _write(runs_root, payload)

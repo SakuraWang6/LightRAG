@@ -349,6 +349,30 @@ def _build_run_params(
         if not frozen_path.is_file():
             raise ValueError("frozen_context_run_id has no frozen_context.json artifact")
         extra.append(f"prompts={frozen_path}")
+    if spec.id == "custom_arms" and params.get("comparison_type"):
+        try:
+            axes = json.loads(str(params.get("axes") or "{}"))
+        except ValueError as exc:
+            raise ValueError("axes must be a JSON object") from exc
+        if not isinstance(axes, dict):
+            raise ValueError("axes must be a JSON object")
+        eval_comparison.validate_plan(
+            comparison_type=str(params["comparison_type"]),
+            variables=axes,
+            inputs=params,
+        )
+        base_id = str(params.get("base_experiment") or "")
+        allowed_bases = {
+            "answer_model": {"frozen_prompt_llm_eval"},
+            "retrieval_configuration": {"end_to_end_baseline"},
+            "embedding": {"end_to_end_baseline"},
+            "full_pipeline": {"end_to_end_baseline"},
+        }
+        if base_id not in allowed_bases[str(params["comparison_type"])]:
+            raise ValueError(
+                f"{params['comparison_type']} comparison requires base_experiment "
+                f"in {sorted(allowed_bases[str(params['comparison_type'])])}"
+            )
     if spec.id == "end_to_end_baseline" and (
         params.get("environment_profile_id") is not None
         or params.get("environment_profile_version") is not None
@@ -366,6 +390,7 @@ def _build_run_params(
             raise ValueError("environment profile version was not found")
         if profile.get("status") != "published":
             raise ValueError("end-to-end runs may only use a published environment profile")
+        eval_profiles.validate_profile_configuration(profile.get("configuration") or {})
     dataset_dir = datasets_root / dataset
     if not (dataset_dir / "manifest.json").exists():
         raise ValueError(f"dataset not found under generated root: {dataset}")

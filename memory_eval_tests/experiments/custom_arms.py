@@ -81,6 +81,14 @@ def _run_custom_arms(context: RunContext) -> dict[str, Any]:
             raise ValueError(
                 "answer_model comparisons must use frozen_prompt_llm_eval as base_experiment"
             )
+        if comparison_type in {"embedding", "full_pipeline"} and base.id != "end_to_end_baseline":
+            raise ValueError(
+                f"{comparison_type} comparisons must use end_to_end_baseline as base_experiment"
+            )
+        if comparison_type == "retrieval_configuration" and base.id != "end_to_end_baseline":
+            raise ValueError(
+                "retrieval_configuration comparisons must use end_to_end_baseline as base_experiment"
+            )
     max_arms = int(extra.get("max_arms") or DEFAULT_MAX_ARMS)
     if max_arms < 1 or max_arms > MAX_ARMS_CAP:
         raise ValueError(f"max_arms must be between 1 and {MAX_ARMS_CAP}")
@@ -106,6 +114,8 @@ def _run_custom_arms(context: RunContext) -> dict[str, Any]:
         child_arm_values = dict(arm_values)
         if comparison_type == "answer_model" and "answer_model" in child_arm_values:
             child_arm_values["model"] = child_arm_values.pop("answer_model")
+        if comparison_type == "retrieval_configuration" and "retrieval_mode" in child_arm_values:
+            child_arm_values["mode"] = child_arm_values.pop("retrieval_mode")
         child_baseline = {
             **dict(base.default_baseline),
             **dict(context.baseline),
@@ -118,10 +128,14 @@ def _run_custom_arms(context: RunContext) -> dict[str, Any]:
             dataset=context.dataset,
             output_dir=child_dir,
             baseline=child_baseline,
-            environment=context.environment,
+            environment=dict(context.environment),
             variables=[],
             run_id=f"{context.run_id}-arm-{index}",
-            extra=context.extra,
+            extra={
+                **context.extra,
+                "arm_overrides": json.dumps(arm_values, ensure_ascii=False, sort_keys=True),
+            },
+            runs_root=context.runs_root,
             started_at=context.started_at,
         )
         context.progress("running", index - 1, total, phase=f"arm {index}: {label}")
@@ -159,7 +173,7 @@ def _run_custom_arms(context: RunContext) -> dict[str, Any]:
             (child_dir / "report.md").write_text(child_report, encoding="utf-8")
         context.progress("running", index, total, phase=f"arm {index}: {label}")
 
-    status = "failed" if failures == total else "complete"
+    status = "failed" if failures else "complete"
     paired = paired_case_deltas(methods)
     if paired:
         report_lines.extend(
@@ -180,8 +194,8 @@ def _run_custom_arms(context: RunContext) -> dict[str, Any]:
         [
             "",
             (
-                f"**{failures}/{total} 臂失败**；全部失败时整体标记为 failed，"
-                "部分失败时整体标记为 complete，失败臂见上表。"
+                f"**{failures}/{total} 臂失败**；为避免把不完整样本当作实验结果，"
+                "任一臂失败时整体标记为 failed，失败臂见上表。"
                 if failures
                 else "全部臂完成。"
             ),
@@ -221,7 +235,6 @@ spec = ExperimentSpec(
         "max_arms": "int",
         "comparison_type": "str",
         "frozen_context_run_id": "str",
-        "source_run_id": "str",
         "environment_profile_id": "str",
         "environment_profile_version": "int",
     },

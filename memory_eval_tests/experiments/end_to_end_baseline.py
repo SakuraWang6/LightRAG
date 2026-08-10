@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -36,7 +38,7 @@ def _profile(context: RunContext) -> dict[str, Any]:
         llm_provider = context.environment.get("llm_binding") or "ollama"
         llm_model = context.environment.get("llm_model") or "qwen3:8b"
         embedding_model = context.environment.get("embedding_model") or "bge-m3:latest"
-        return {
+        profile = {
             "id": "server-default",
             "name": "当前服务器默认配置",
             "version": 1,
@@ -49,6 +51,7 @@ def _profile(context: RunContext) -> dict[str, Any]:
                 "parser_engine": context.baseline.get("engine") or "native",
             },
         }
+        return _apply_run_overrides(profile, context)
     if not profile_id or not raw_version:
         raise IngestionFailure("environment_profile_id and environment_profile_version must be supplied together")
     try:
@@ -62,7 +65,69 @@ def _profile(context: RunContext) -> dict[str, Any]:
         raise IngestionFailure("environment profile version was not found")
     if profile.get("status") != "published":
         raise IngestionFailure("end-to-end runs may only use a published environment profile")
-    return profile
+    try:
+        eval_profiles.validate_profile_configuration(profile.get("configuration") or {})
+    except ValueError as exc:
+        raise IngestionFailure(str(exc)) from exc
+    return _apply_run_overrides(profile, context)
+
+
+def _apply_run_overrides(profile: dict[str, Any], context: RunContext) -> dict[str, Any]:
+    """Apply declared experiment controls to the otherwise immutable profile."""
+    effective = copy.deepcopy(profile)
+    configuration = effective.setdefault("configuration", {})
+    overrides = context.extra.get("arm_overrides")
+    if isinstance(overrides, str):
+        try:
+            overrides = json.loads(overrides)
+        except ValueError as exc:
+            raise IngestionFailure("arm_overrides must be JSON") from exc
+    overrides = overrides if isinstance(overrides, dict) else {}
+    model = overrides.get("query_model") or context.baseline.get("model")
+    if isinstance(model, str) and model.strip():
+        primary = configuration.get("query") or configuration.get("extraction")
+        if not isinstance(primary, dict):
+            raise IngestionFailure("profile has no query/extraction role to override")
+        query = dict(configuration.get("query") or primary)
+        query["model"] = model.strip()
+        configuration["query"] = query
+    for role_name, override_key in (("extraction", "extraction_model"), ("embedding", "embedding_model")):
+        model = overrides.get(override_key)
+        if model is None:
+            continue
+        role = configuration.get(role_name)
+        if not isinstance(role, dict):
+            raise IngestionFailure(f"{override_key} requires {role_name} in the environment profile")
+        role = dict(role)
+        role["model"] = str(model)
+        configuration[role_name] = role
+    for profile_key, arm_key in (("parser_engine", "parser_engine"),):
+        if arm_key in overrides:
+            configuration[profile_key] = str(overrides[arm_key])
+    if "reranker" in overrides:
+        role = configuration.get("reranker")
+        if not isinstance(role, dict):
+            raise IngestionFailure("reranker comparison requires reranker in the environment profile")
+        role = dict(role)
+        role["model"] = str(overrides["reranker"])
+        configuration["reranker"] = role
+    try:
+        eval_profiles.validate_profile_configuration(configuration)
+    except ValueError as exc:
+        raise IngestionFailure(str(exc)) from exc
+    return effective
+
+
+def _apply_profile_retrieval_defaults(context: RunContext, profile: dict[str, Any]) -> None:
+    defaults = (profile.get("configuration") or {}).get("retrieval_defaults") or {}
+    parameters = context.execution_manifest.get("parameters") or {}
+    for key, value in defaults.items():
+        declaration = parameters.get(key)
+        if isinstance(declaration, dict) and declaration.get("source") not in {"default", "profile"}:
+            continue
+        context.baseline[key] = value
+        if isinstance(declaration, dict):
+            declaration.update({"value": value, "source": "profile"})
 
 
 def _receipt(upload: dict[str, Any], unit: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -177,6 +242,7 @@ def _diagnosis_markdown(diagnosis: dict[str, Any]) -> str:
 def _prepare(context: RunContext) -> None:
     """Allocate once before the initial envelope makes the manifest immutable."""
     profile = context.environment_profile or _profile(context)
+    _apply_profile_retrieval_defaults(context, profile)
     preflight_execution_unit(profile)
     unit = context.execution_unit or load_execution_unit(context.output_dir)
     if unit is None:
@@ -191,6 +257,10 @@ def _prepare(context: RunContext) -> None:
         "mode": unit.get("mode"),
         "profile": unit.get("profile"),
         "retention_policy": unit.get("retention_policy"),
+        "configuration_fingerprint": hashlib.sha256(
+            json.dumps(profile.get("configuration") or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "effective_configuration": profile.get("configuration"),
     }
 
 

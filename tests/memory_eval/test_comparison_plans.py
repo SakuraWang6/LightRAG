@@ -29,9 +29,45 @@ def test_embedding_plan_requires_isolated_rebuild_per_arm() -> None:
     assert "allocate_isolated_workspace_per_arm" in plan["execution_dependencies"]
 
 
+def test_retrieval_plan_does_not_claim_index_reuse() -> None:
+    plan = validate_plan(
+        comparison_type="retrieval_configuration",
+        variables={"top_k": ["3", "5"]},
+        inputs={},
+    )
+    assert plan["reuse_permitted"] is False
+    assert plan["index_requirement"] == "rebuild_isolated_index_per_arm"
+
+
 def test_contract_blocks_ranking_when_dataset_fingerprints_differ() -> None:
     run = {"execution_manifest": {"dataset": {"manifest_sha256": "a"}}, "experiment": {"id": "x"}}
     other = {"execution_manifest": {"dataset": {"manifest_sha256": "b"}}, "experiment": {"id": "x"}}
     result = compare_contract([run, other])
     assert result["ranking_permitted"] is False
     assert "dataset_fingerprint" in result["incompatible_fields"]
+
+
+def test_contract_blocks_dynamic_profiles_with_different_effective_configurations() -> None:
+    base = {
+        "execution_manifest": {
+            "dataset": {"manifest_sha256": "a"},
+            "execution_unit": {
+                "profile": {"id": "server-default", "version": 1},
+                "configuration_fingerprint": "one",
+            },
+        },
+        "experiment": {"id": "end_to_end_baseline"},
+    }
+    other = {
+        **base,
+        "execution_manifest": {
+            **base["execution_manifest"],
+            "execution_unit": {
+                **base["execution_manifest"]["execution_unit"],
+                "configuration_fingerprint": "two",
+            },
+        },
+    }
+    result = compare_contract([base, other])
+    assert result["ranking_permitted"] is False
+    assert "environment_configuration" in result["incompatible_fields"]

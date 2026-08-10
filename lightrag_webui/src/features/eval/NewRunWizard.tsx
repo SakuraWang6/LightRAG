@@ -63,6 +63,13 @@ const FIELD_LABEL_KEYS: Record<string, string> = {
   engine: 'eval.paramEngine'
 }
 
+const COMPARISON_BASE_EXPERIMENTS: Record<string, string[]> = {
+  answer_model: ['frozen_prompt_llm_eval'],
+  retrieval_configuration: ['end_to_end_baseline'],
+  embedding: ['end_to_end_baseline'],
+  full_pipeline: ['end_to_end_baseline']
+}
+
 function fieldInputType(schemaType: string): 'number' | 'text' {
   return schemaType === 'int' || schemaType === 'float' ? 'number' : 'text'
 }
@@ -139,6 +146,8 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
     () => comparisonTemplates.find((item) => item.type === comparisonType),
     [comparisonTemplates, comparisonType]
   )
+  const eligibleBaseExperimentIds =
+    COMPARISON_BASE_EXPERIMENTS[comparisonType] ?? []
 
   const modelValue = params.model == null ? '' : String(params.model)
   const modelInList = modelValue !== '' && models.includes(modelValue)
@@ -375,7 +384,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
                       </SelectTrigger>
                       <SelectContent>
                         {experiments
-                          .filter((item) => item.id !== 'custom_arms')
+                          .filter((item) => eligibleBaseExperimentIds.includes(item.id))
                           .map((item) => (
                             <SelectItem key={item.id} value={item.id} disabled={!item.env_ready}>
                               {item.label} {item.env_ready ? '' : `(${t('eval.envMissing')})`}

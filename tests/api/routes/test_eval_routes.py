@@ -577,25 +577,22 @@ def test_run_detail_surfaces_structured_failure_and_events(runs_tree: Path) -> N
     assert detail["events"][0]["message"] == "token=configured"
 
 
-def test_environment_profiles_are_versioned_published_and_secret_reference_only(
+def test_environment_profiles_are_versioned_published_and_execution_ready(
     runs_tree: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(_utils_api, "auth_configured", False)
     client = _client(runs_tree, api_key="secret-key")
     headers = {"X-API-Key": "secret-key"}
     configuration = {
-        "lightrag_version": "1.0.0",
         "embedding": {
             "provider": "openai",
             "model": "text-embedding-3-large",
-            "endpoint": "https://api.example.test/v1",
-            "secret_ref": "vault://evaluation/openai",
         },
-        "query": {"provider": "openai", "model": "gpt-4.1", "secret_ref": "vault://evaluation/openai"},
+        "query": {"provider": "openai", "model": "gpt-4.1"},
         "parser_engine": "native",
         "storage_backends": {"vector": "QdrantVectorDBStorage"},
         "retrieval_defaults": {"top_k": 5},
-        "concurrency": {"max_async": 2},
+        "concurrency": {"max_async_llm": 2},
     }
     first = client.post(
         "/eval/environment-profiles",
@@ -617,7 +614,7 @@ def test_environment_profiles_are_versioned_published_and_secret_reference_only(
         f"/eval/environment-profiles/{profile_id}/versions/1", headers=headers
     )
     assert detail.status_code == 200
-    assert detail.json()["configuration"]["embedding"]["secret_ref"] == "vault://evaluation/openai"
+    assert detail.json()["configuration"]["embedding"]["model"] == "text-embedding-3-large"
 
     second = client.post(
         "/eval/environment-profiles",
@@ -643,6 +640,23 @@ def test_environment_profiles_are_versioned_published_and_secret_reference_only(
         },
     )
     assert insecure.status_code == 422
+
+    unsafe_endpoint = client.post(
+        "/eval/environment-profiles",
+        headers=headers,
+        json={
+            "name": "unsafe endpoint",
+            "configuration": {
+                **configuration,
+                "embedding": {
+                    "provider": "openai",
+                    "model": "embed",
+                    "endpoint": "https://untrusted.example.test/v1",
+                },
+            },
+        },
+    )
+    assert unsafe_endpoint.status_code == 400
 
 
 def test_run_log_endpoint_returns_tail(runs_tree: Path, monkeypatch) -> None:
