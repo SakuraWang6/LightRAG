@@ -4,11 +4,26 @@ import argparse
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from memory_eval_tests.common.dataset_client import DatasetClient
 from memory_eval_tests.common.http import post_json as _http_post_json
 from memory_eval_tests.common.sampling import sample_evenly
+
+SCORER_NAME = "deterministic-answer-rules"
+SCORER_VERSION = "1.0"
+
+
+class SemanticAnswerScorer(Protocol):
+    """Optional pluggable scorer for valid non-literal answer expressions."""
+
+    name: str
+    version: str
+
+    def score(
+        self, *, answer_text: str, expected: str, question: dict[str, Any]
+    ) -> tuple[str, str]:
+        """Return a ``pass``/``fail``/``uncertain`` verdict and its reason."""
 
 
 def evaluate_answers(
@@ -23,6 +38,7 @@ def evaluate_answers(
     api_key: str | None = None,
     access_token: str | None = None,
     evaluation_trace: bool = False,
+    semantic_scorer: SemanticAnswerScorer | None = None,
 ) -> dict[str, Any]:
     oracle = DatasetClient(dataset_source).oracle()
     facts_by_id = {fact["fact_id"]: fact for fact in oracle.get("facts", [])}
@@ -60,6 +76,7 @@ def evaluate_answers(
             question=question,
             evidence_facts=evidence_facts,
             references_blob=references_blob,
+            semantic_scorer=semantic_scorer,
         )
         results.append(
             {
@@ -67,6 +84,8 @@ def evaluate_answers(
                 **scores,
                 "answer": answer_text,
                 "expected": expected,
+                "question_type": question.get("question_type", ""),
+                "scenario_labels": question.get("scenario_labels", []),
                 # References are kept as a response-side observation only. They
                 # are not used as proof of the final prompt context (I2).
                 "response_references": response.get("references", []),
@@ -74,6 +93,7 @@ def evaluate_answers(
             }
         )
     total = len(results)
+    decisive = [row for row in results if row.get("answer_verdict") != "uncertain"]
     return {
         "mode": mode,
         "top_k": top_k,
@@ -81,7 +101,11 @@ def evaluate_answers(
         "max_total_tokens": max_total_tokens,
         "cases": total,
         "max_cases": max_cases,
-        "answer_accuracy": sum(r["exact_match"] for r in results) / total if total else 0.0,
+        "answer_accuracy": sum(bool(r["exact_match"]) for r in decisive) / len(decisive)
+        if decisive
+        else None,
+        "answer_accuracy_denominator": len(decisive),
+        "uncertain_answers": total - len(decisive),
         "numeric_unit_accuracy": _average(results, "numeric_unit_correct"),
         "formula_accuracy": _average(results, "formula_correct"),
         "table_cell_accuracy": _average(results, "table_cell_correct"),
@@ -89,8 +113,12 @@ def evaluate_answers(
         "evidence_available": _average(results, "evidence_available"),
         "citation_presence": _average(results, "citation_presence"),
         "citation_correctness": _average(results, "citation_correctness"),
-        "groundedness": sum(r["grounded"] for r in results) / total if total else 0.0,
-        "ungrounded_rate": sum(r["ungrounded"] for r in results) / total if total else 0.0,
+        "groundedness": _rate(results, "grounded"),
+        "ungrounded_rate": _rate(results, "ungrounded"),
+        "by_scenario": _stratify(results, "scenario_labels"),
+        "by_question_type": _stratify(results, "question_type"),
+        "metric_definitions": _metric_definitions(),
+        "scorers": _scorer_inventory(results),
         "results": results,
     }
 
@@ -103,10 +131,27 @@ def score_answer(
     evidence_facts: list[dict[str, Any]],
     references_blob: str,
     evidence_available_override: bool | None = None,
-) -> dict[str, bool | None]:
+    semantic_scorer: SemanticAnswerScorer | None = None,
+) -> dict[str, Any]:
     question_type = question.get("question_type", "")
     expected_behavior = question.get("expected_behavior", "answer")
-    exact = _answer_match(expected, answer_text, evidence_facts, question_type=question_type)
+    deterministic_exact = _answer_match(expected, answer_text, evidence_facts, question_type=question_type)
+    scoring_mode = question.get("scoring_mode", "deterministic")
+    verdict = "pass" if deterministic_exact else "fail"
+    scorer_name, scorer_version = SCORER_NAME, SCORER_VERSION
+    reason = "deterministic answer rule matched" if deterministic_exact else "deterministic answer rule did not match"
+    if scoring_mode in {"semantic", "hybrid"} and not deterministic_exact:
+        if semantic_scorer is None:
+            verdict = "uncertain"
+            reason = "semantic scoring required but no semantic scorer is configured"
+        else:
+            verdict, reason = semantic_scorer.score(
+                answer_text=answer_text, expected=expected, question=question
+            )
+            if verdict not in {"pass", "fail", "uncertain"}:
+                raise ValueError("semantic scorer must return pass, fail, or uncertain")
+            scorer_name, scorer_version = semantic_scorer.name, semantic_scorer.version
+    exact = verdict == "pass"
     evidence_available = (
         evidence_available_override
         if evidence_available_override is not None
@@ -128,6 +173,8 @@ def score_answer(
     if expected_behavior == "abstain":
         abstention_correct = _looks_like_abstain(answer_text)
         exact = abstention_correct
+        verdict = "pass" if abstention_correct else "fail"
+        reason = "deterministic abstention rule matched" if abstention_correct else "deterministic abstention rule did not match"
         # Refusing an unanswerable question has no oracle evidence and needs no
         # citation.  Keep evidence_available as None so abstain questions are
         # excluded from the evidence-availability rate instead of inflating it.
@@ -137,15 +184,25 @@ def score_answer(
 
     # Groundedness means the answer is correct and its oracle evidence was
     # supplied to the model; a correct abstain is grounded without evidence.
-    grounded = bool(
-        exact and (True if evidence_available is None else evidence_available)
+    grounded: bool | None = (
+        None
+        if verdict == "uncertain"
+        else bool(exact and (True if evidence_available is None else evidence_available))
     )
     ungrounded = bool(expected_behavior == "abstain" and not abstention_correct)
-    if expected_behavior != "abstain":
+    if expected_behavior != "abstain" and verdict != "uncertain":
         ungrounded = not grounded
 
     return {
         "exact_match": bool(exact),
+        "answer_verdict": verdict,
+        "review_required": verdict == "uncertain",
+        "scorer": {
+            "name": scorer_name,
+            "version": scorer_version,
+            "mode": scoring_mode,
+            "reason": reason,
+        },
         "numeric_unit_correct": numeric_unit_correct,
         "formula_correct": formula_correct,
         "table_cell_correct": table_cell_correct,
@@ -271,6 +328,62 @@ def _average(results: list[dict[str, Any]], key: str) -> float | None:
     if not applicable:
         return None
     return sum(bool(value) for value in applicable) / len(applicable)
+
+
+def _stratify(results: list[dict[str, Any]], key: str) -> dict[str, dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in results:
+        labels = row.get(key)
+        labels = labels if isinstance(labels, list) else [labels]
+        for label in labels:
+            if isinstance(label, str) and label:
+                groups.setdefault(label, []).append(row)
+    return {
+        label: {
+            "cases": len(rows),
+            "decisive_cases": sum(row.get("answer_verdict") != "uncertain" for row in rows),
+            "uncertain": sum(row.get("answer_verdict") == "uncertain" for row in rows),
+            "answer_accuracy": _rate(rows, "exact_match"),
+            "groundedness": _rate(rows, "grounded"),
+        }
+        for label, rows in sorted(groups.items())
+    }
+
+
+def _rate(rows: list[dict[str, Any]], key: str) -> float | None:
+    applicable = [row.get(key) for row in rows if row.get(key) is not None]
+    return sum(bool(value) for value in applicable) / len(applicable) if applicable else None
+
+
+def _metric_definitions() -> dict[str, dict[str, str]]:
+    return {
+        "answer_accuracy": {
+            "definition": "回答被评分器判为 pass 的比例",
+            "denominator": "所有非 uncertain 的回答",
+            "scope": "所有可回答题；语义待复核题不计入分母",
+            "limitation": "不代表证据是否进入最终上下文",
+        },
+        "evidence_available": {
+            "definition": "oracle 证据在候选检索引用中可见的比例",
+            "denominator": "有 oracle 证据的非拒答题",
+            "scope": "检索候选层",
+            "limitation": "不证明证据进入最终上下文或回答引用正确",
+        },
+        "citation_correctness": {
+            "definition": "回答中稳定 ID 引用覆盖 oracle 事实的比例",
+            "denominator": "包含稳定 ID 引用的可回答题",
+            "scope": "回答层",
+            "limitation": "无引用时不可适用，不记为零",
+        },
+    }
+
+
+def _scorer_inventory(results: list[dict[str, Any]]) -> list[dict[str, str]]:
+    seen = {
+        (str((row.get("scorer") or {}).get("name")), str((row.get("scorer") or {}).get("version")))
+        for row in results
+    }
+    return [{"name": name, "version": version} for name, version in sorted(seen)]
 
 
 def _looks_like_abstain(text: str) -> bool:
