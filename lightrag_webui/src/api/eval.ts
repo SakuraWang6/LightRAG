@@ -43,6 +43,23 @@ export type EvalRunProgress = {
   updated_at?: string | null
 }
 
+export type EvalRunEvent = {
+  timestamp: string
+  phase: string
+  severity: string
+  message: string
+  error_type?: string
+}
+
+export type EvalRunFailure = {
+  phase: string
+  error_type: string
+  summary: string
+  retryable: boolean | null
+  recommendation: string
+  log_offset: number
+}
+
 export type VariableArm = {
   arm: string
   label?: string
@@ -91,10 +108,16 @@ export type EvalRun = {
   failed_checks?: string[]
   headline: Record<string, MetricItem>
   artifact_titles: string[]
+  declared_model?: unknown
+  effective_model?: unknown
+  configuration_mismatch?: boolean | null
+  failure?: EvalRunFailure | null
+  events_path?: string | null
 }
 
 export type EvalRunDetail = EvalRun & {
   artifacts: EvalArtifact[]
+  events?: EvalRunEvent[]
 }
 
 export type EvalExperiment = {

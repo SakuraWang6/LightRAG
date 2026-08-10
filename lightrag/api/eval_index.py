@@ -16,7 +16,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from memory_eval_tests.experiments.common.envelope import build_conditions
+from memory_eval_tests.experiments.common.envelope import (
+    build_conditions,
+    redact_sensitive_text,
+)
 from memory_eval_tests.experiments.common.metrics import normalize_metric_key
 
 _OFFLINE_LABELS = {
@@ -224,6 +227,26 @@ def _read_progress(run_dir: Path) -> dict[str, Any]:
         return {}
 
 
+def _read_events(run_dir: Path, limit: int = 500) -> list[dict[str, Any]]:
+    """Read bounded, well-formed lifecycle events for a run detail view."""
+    try:
+        lines = (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    events: list[dict[str, Any]] = []
+    for line in lines[-limit:]:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if isinstance(event.get("message"), str):
+            event["message"] = redact_sensitive_text(event["message"])
+        events.append(event)
+    return events
+
+
 def _duration_seconds(envelope: dict[str, Any]) -> float | None:
     started = envelope.get("started_at")
     finished = envelope.get("finished_at")
@@ -338,6 +361,13 @@ def _run_record(
         else {metric["key"]: metric for metric in _summary_metrics(methods)},
         "variables": envelope.get("variables") or [],
         "artifact_titles": [],
+        "execution_manifest": envelope.get("execution_manifest"),
+        "runtime_snapshot": envelope.get("runtime_snapshot"),
+        "declared_model": envelope.get("declared_model"),
+        "effective_model": envelope.get("effective_model"),
+        "configuration_mismatch": envelope.get("configuration_mismatch"),
+        "failure": envelope.get("failure"),
+        "events_path": envelope.get("events_path"),
     }
     if not with_artifacts:
         record["artifact_titles"] = [
@@ -402,6 +432,7 @@ def _run_record(
     if report:
         artifacts.append(report)
     record["artifacts"] = artifacts
+    record["events"] = _read_events(run_dir)
     record["artifact_titles"] = [artifact["title"] for artifact in artifacts]
     return record
 

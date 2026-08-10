@@ -20,10 +20,13 @@ from typing import Any, Iterator
 from memory_eval_tests.experiments.common import (
     BASELINE_DEFAULTS,
     RunContext,
+    append_run_event,
+    build_failure,
     build_execution_manifest,
     capture_runtime_snapshot,
     capture_environment,
     redact_launch_extra,
+    redact_sensitive_text,
     write_envelope,
     write_progress,
 )
@@ -120,7 +123,7 @@ def _log(output_dir: Path, message: str) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / "run.log").open("a", encoding="utf-8") as handle:
         handle.write(
-            f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] {message}\n"
+            f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] {redact_sensitive_text(message)}\n"
         )
 
 
@@ -327,6 +330,12 @@ def main() -> None:
         args.output_dir,
         f"starting experiment={spec.id} run_id={run_id} dataset={args.dataset}",
     )
+    append_run_event(
+        args.output_dir,
+        phase="starting",
+        severity="info",
+        message=f"starting experiment {spec.id} for dataset {args.dataset.name}",
+    )
     # Publish an initial envelope immediately so the console can supervise the
     # run while it is in progress; the final write below replaces it.
     write_envelope(
@@ -373,8 +382,36 @@ def main() -> None:
                 args.output_dir,
                 f"finished status={status} cases={sum(len(m.get('results') or []) for m in methods)}",
             )
+            append_run_event(
+                args.output_dir,
+                phase="complete",
+                severity="info",
+                message=f"run finished with status {status}",
+            )
         except Exception as exc:  # keep the failure visible for the console monitor
             _log(args.output_dir, f"failed {type(exc).__name__}: {exc}")
+            offset = append_run_event(
+                args.output_dir,
+                phase="execution",
+                severity="error",
+                message=f"{type(exc).__name__}: {exc}",
+                error_type=type(exc).__name__,
+            )
+            failure = build_failure(
+                phase="execution",
+                error=exc,
+                retryable=False,
+                recommendation="inspect the error summary and run.log; fix the environment or input before retrying",
+                log_offset=offset,
+            )
+            write_envelope(
+                args.output_dir,
+                context=context,
+                status="failed",
+                methods=[],
+                extra={"launch_params": launch_params, "failure": failure},
+                runs_root=runs_root,
+            )
             write_progress(
                 args.output_dir,
                 status="failed",
@@ -383,7 +420,7 @@ def main() -> None:
                 phase="failed",
                 message=f"{type(exc).__name__}: {exc}",
             )
-            print(traceback.format_exc())
+            print(redact_sensitive_text(traceback.format_exc()))
             raise
         finally:
             stop_heartbeat.set()

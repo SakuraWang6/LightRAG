@@ -486,6 +486,37 @@ def test_run_record_surfaces_legacy_and_timing(runs_tree: Path) -> None:
     assert detail["duration_seconds"] == pytest.approx(300.0)
 
 
+def test_run_detail_surfaces_structured_failure_and_events(runs_tree: Path) -> None:
+    from lightrag.api.eval_index import load_run
+
+    run_dir = runs_tree / "context-selection-v1"
+    payload = _experiment_envelope()
+    payload.update(
+        {
+            "failure": {
+                "phase": "retrieval",
+                "error_type": "TimeoutError",
+                "summary": "request timed out",
+                "retryable": True,
+                "recommendation": "retry after checking the API",
+                "log_offset": 2,
+            },
+            "events_path": "events.jsonl",
+        }
+    )
+    _write(run_dir / "run.json", payload)
+    _write(
+        run_dir / "events.jsonl",
+        '{"timestamp":"2026-08-10T00:00:00+00:00","phase":"retrieval","severity":"error","message":"token=secret"}\n',
+    )
+
+    detail = load_run(runs_tree, "context-selection-v1")
+    assert detail is not None
+    assert detail["failure"]["phase"] == "retrieval"
+    assert detail["events_path"] == "events.jsonl"
+    assert detail["events"][0]["message"] == "token=configured"
+
+
 def test_run_log_endpoint_returns_tail(runs_tree: Path, monkeypatch) -> None:
     monkeypatch.setattr(_utils_api, "auth_configured", False)
     client = _client(runs_tree, api_key="secret-key")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -279,6 +280,112 @@ def test_runtime_snapshot_uses_authenticated_health_and_flags_model_mismatch(
     assert persisted["configuration_mismatch"] is True
     assert "api-secret" not in json.dumps(persisted)
     assert "token-secret" not in json.dumps(persisted)
+
+
+def test_failed_envelope_preserves_structured_failure_and_append_only_events(
+    tmp_path: Path,
+) -> None:
+    from memory_eval_tests.experiments.common import (
+        append_run_event,
+        build_failure,
+        write_simple_envelope,
+    )
+
+    run_dir = tmp_path / "run"
+    offset = append_run_event(
+        run_dir,
+        phase="upload",
+        severity="error",
+        message="Api_Key=super-secret upload failed",
+        error_type="ConnectionError",
+    )
+    failure = build_failure(
+        phase="upload",
+        error="access_token=super-secret upload failed",
+        retryable=True,
+        recommendation="check the evaluated service and retry",
+        log_offset=offset,
+    )
+    write_simple_envelope(
+        run_dir,
+        kind="offline",
+        run_id="failed-run",
+        experiment={"id": "offline_audit"},
+        baseline={},
+        environment={},
+        methods=[],
+        status="failed",
+        extra={"failure": failure},
+    )
+    first = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    events = (run_dir / "events.jsonl").read_text(encoding="utf-8")
+    assert first["events_path"] == "events.jsonl"
+    assert first["failure"]["phase"] == "upload"
+    assert first["failure"]["retryable"] is True
+    assert "super-secret" not in events
+    assert "super-secret" not in json.dumps(first)
+
+    write_simple_envelope(
+        run_dir,
+        kind="offline",
+        run_id="failed-run",
+        experiment={"id": "offline_audit"},
+        baseline={},
+        environment={},
+        methods=[],
+        status="failed",
+        extra={"failure": {}},
+    )
+    final = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert final["failure"] == first["failure"]
+
+
+def test_harness_exception_writes_failure_envelope_and_event(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import memory_eval_tests.experiments.run as harness
+    from memory_eval_tests.experiments.common import ExperimentSpec
+
+    def _fail(_context):
+        raise RuntimeError("token=never-persist-this")
+
+    spec = ExperimentSpec(
+        id="failing_experiment",
+        label="Failing",
+        description="test failure capture",
+        runner=_fail,
+    )
+    run_dir = tmp_path / "run"
+    monkeypatch.setattr(harness, "get_spec", lambda _id: spec)
+    monkeypatch.setattr(
+        harness,
+        "capture_runtime_snapshot",
+        lambda **_kwargs: {"status": "unavailable", "reason": "test"},
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run.py",
+            "--experiment",
+            spec.id,
+            "--dataset",
+            str(tmp_path / "dataset"),
+            "--output-dir",
+            str(run_dir),
+        ],
+    )
+    with pytest.raises(RuntimeError, match="never-persist-this"):
+        harness.main()
+
+    envelope = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    events = (run_dir / "events.jsonl").read_text(encoding="utf-8")
+    assert envelope["status"] == "failed"
+    assert envelope["failure"]["phase"] == "execution"
+    assert envelope["failure"]["error_type"] == "RuntimeError"
+    assert "never-persist-this" not in json.dumps(envelope)
+    assert "never-persist-this" not in events
+    assert "never-persist-this" not in (run_dir / "run.log").read_text(encoding="utf-8")
 
 
 def test_envelope_records_started_and_finished(tmp_path: Path) -> None:

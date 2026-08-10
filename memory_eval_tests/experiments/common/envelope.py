@@ -18,6 +18,9 @@ from typing import Any, Callable
 SCHEMA_VERSION = "2.0"
 _SCAN_INDEX_NAME = ".eval_index.json"
 _SENSITIVE_EXTRA_RE = re.compile(r"(key|token|secret|authorization)", re.IGNORECASE)
+_SENSITIVE_EVENT_VALUE_RE = re.compile(
+    r"(?i)\b(api[_ -]?key|access[_ -]?token|token|secret|authorization|password)\b\s*([=:])\s*[^\s,;]+"
+)
 
 BASELINE_DEFAULTS: dict[str, Any] = {
     "mode": "mix",
@@ -463,6 +466,72 @@ def redact_launch_extra(extra: list[str]) -> list[str]:
     return redacted
 
 
+def redact_sensitive_text(value: str) -> str:
+    """Remove credential-shaped values before writing human-readable artifacts."""
+    return _SENSITIVE_EVENT_VALUE_RE.sub(r"\1\2configured", value)
+
+
+def append_run_event(
+    output_dir: Path,
+    *,
+    phase: str,
+    severity: str,
+    message: str,
+    error_type: str | None = None,
+) -> int:
+    """Append a redacted lifecycle event and return its one-based log offset."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "events.jsonl"
+    try:
+        with path.open("a+", encoding="utf-8") as handle:
+            handle.seek(0)
+            offset = sum(1 for _ in handle) + 1
+            handle.seek(0, os.SEEK_END)
+            event = {
+                "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "phase": phase,
+                "severity": severity,
+                "message": redact_sensitive_text(message),
+            }
+            if error_type:
+                event["error_type"] = error_type
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+        return offset
+    except OSError:
+        return 0
+
+
+def _existing_failure(output_dir: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads((output_dir / "run.json").read_text(encoding="utf-8")).get(
+            "failure"
+        )
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) and value else None
+
+
+def build_failure(
+    *,
+    phase: str,
+    error: BaseException | str,
+    retryable: bool,
+    recommendation: str,
+    log_offset: int,
+) -> dict[str, Any]:
+    """Create the failure record that is safe to render in the console."""
+    error_type = type(error).__name__ if isinstance(error, BaseException) else "Error"
+    message = str(error)
+    return {
+        "phase": phase,
+        "error_type": error_type,
+        "summary": redact_sensitive_text(message),
+        "retryable": retryable,
+        "recommendation": recommendation,
+        "log_offset": log_offset,
+    }
+
+
 def capture_environment(**overrides: Any) -> dict[str, Any]:
     try:
         from lightrag._version import __api_version__ as api_version
@@ -606,6 +675,19 @@ def write_envelope(
         envelope["last_restart_resume"] = context.last_restart_resume
     if extra:
         envelope.update(extra)
+    if status == "failed":
+        failure = envelope.get("failure") or _existing_failure(output_dir)
+        if not failure:
+            failure = {
+                "phase": "unknown",
+                "error_type": "UnknownError",
+                "summary": "failure details were not recorded by this runner",
+                "retryable": None,
+                "recommendation": "inspect events.jsonl and run.log before retrying",
+                "log_offset": 0,
+            }
+        envelope["failure"] = failure
+    envelope["events_path"] = "events.jsonl"
     path = output_dir / "run.json"
     path.write_text(
         json.dumps(envelope, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -693,6 +775,19 @@ def write_simple_envelope(
         envelope["finished_at"] = finished_at or now
     if extra:
         envelope.update(extra)
+    if status == "failed":
+        failure = envelope.get("failure") or _existing_failure(output_dir)
+        if not failure:
+            failure = {
+                "phase": "unknown",
+                "error_type": "UnknownError",
+                "summary": "failure details were not recorded by this runner",
+                "retryable": None,
+                "recommendation": "inspect events.jsonl and run.log before retrying",
+                "log_offset": 0,
+            }
+        envelope["failure"] = failure
+    envelope["events_path"] = "events.jsonl"
     path = output_dir / "run.json"
     path.write_text(
         json.dumps(envelope, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

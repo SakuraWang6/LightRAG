@@ -177,6 +177,13 @@ function RunHeader({
         {run.artifacts.length} {t('eval.artifactLabel')}
       </p>
       {run.description ? <p className="text-muted-foreground mt-1 text-sm">{run.description}</p> : null}
+      {run.failure ? (
+        <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm">
+          <span className="font-medium">{t('eval.failed')} · {run.failure.phase}: </span>
+          {run.failure.summary}
+          <span className="text-muted-foreground"> · {run.failure.recommendation}</span>
+        </div>
+      ) : null}
       <div className="mt-2">
         <ConditionChips conditions={run.conditions} limit={10} />
       </div>
@@ -362,7 +369,7 @@ function StandardRunView({ run }: { run: EvalRunDetail }) {
         </TabsContent>
 
         <TabsContent value="log" forceMount={false} className="mt-3">
-          <RunLog runId={run.id} />
+          <RunLog runId={run.id} events={run.events} />
         </TabsContent>
       </Tabs>
     </div>
@@ -451,7 +458,7 @@ function ExperimentView({ run }: { run: EvalRunDetail }) {
         </TabsContent>
 
         <TabsContent value="log" forceMount={false} className="mt-3">
-          <RunLog runId={run.id} />
+          <RunLog runId={run.id} events={run.events} />
         </TabsContent>
       </Tabs>
     </div>
