@@ -202,6 +202,85 @@ def test_execution_manifest_fingerprints_inputs_and_is_immutable(tmp_path: Path)
     assert final["execution_manifest"] == first["execution_manifest"]
 
 
+def test_runtime_snapshot_uses_authenticated_health_and_flags_model_mismatch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from memory_eval_tests.experiments.common import (
+        capture_runtime_snapshot,
+        write_simple_envelope,
+    )
+    import memory_eval_tests.experiments.common.envelope as envelope_module
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "core_version": "1.2.3",
+                    "api_version": "1.2.3",
+                    "configuration": {
+                        "llm_binding": "openai",
+                        "llm_model": "actual-model",
+                        "llm_binding_host": "https://key:secret@models.test/v1?token=nope",
+                        "embedding_binding": "openai",
+                        "embedding_model": "embed-1",
+                        "embedding_binding_host": "https://embed.test/v1",
+                        "vlm_process_enable": False,
+                        "enable_rerank": False,
+                        "workspace": "evaluated-workspace",
+                        "kv_storage": "JsonKVStorage",
+                        "doc_status_storage": "JsonDocStatusStorage",
+                        "graph_storage": "NetworkXStorage",
+                        "vector_storage": "NanoVectorDBStorage",
+                        "parser_routing": "docx:native",
+                    },
+                }
+            ).encode("utf-8")
+
+    captured = {}
+
+    def _urlopen(request, timeout):
+        captured["headers"] = dict(request.headers)
+        captured["timeout"] = timeout
+        return _Response()
+
+    monkeypatch.setattr(envelope_module.urllib.request, "urlopen", _urlopen)
+    snapshot = capture_runtime_snapshot(
+        rag_api_url="https://rag.test/api",
+        api_key="api-secret",
+        access_token="token-secret",
+    )
+    assert snapshot["status"] == "captured"
+    assert snapshot["llm"]["model"] == "actual-model"
+    assert snapshot["llm"]["endpoint"] == "https://models.test/v1"
+    assert snapshot["storage"]["workspace"] == "evaluated-workspace"
+    assert captured["headers"]["X-api-key"] == "api-secret"
+    assert captured["headers"]["Authorization"] == "Bearer token-secret"
+
+    monkeypatch.setattr(envelope_module, "capture_runtime_snapshot", lambda **_kwargs: snapshot)
+    path = write_simple_envelope(
+        tmp_path / "run",
+        kind="online",
+        run_id="run-1",
+        experiment={"id": "online_answer"},
+        baseline={"model": "declared-model"},
+        environment={"rag_api_url": "https://rag.test/api", "api_key": "api-secret"},
+        methods=[],
+        status="complete",
+    )
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["declared_model"] == "declared-model"
+    assert persisted["effective_model"] == "actual-model"
+    assert persisted["configuration_mismatch"] is True
+    assert "api-secret" not in json.dumps(persisted)
+    assert "token-secret" not in json.dumps(persisted)
+
+
 def test_envelope_records_started_and_finished(tmp_path: Path) -> None:
     from memory_eval_tests.experiments.common import (
         ExperimentSpec,

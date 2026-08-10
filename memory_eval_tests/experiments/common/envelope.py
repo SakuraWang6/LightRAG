@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
-import hashlib
 import subprocess
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -98,6 +101,7 @@ class RunContext:
     restarts: int = 0
     last_restart_resume: bool | None = None
     execution_manifest: dict[str, Any] = field(default_factory=dict)
+    runtime_snapshot: dict[str, Any] = field(default_factory=dict)
     started_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
     )
@@ -275,6 +279,159 @@ def _existing_execution_manifest(output_dir: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _existing_runtime_snapshot(output_dir: Path) -> dict[str, Any] | None:
+    """Keep the actual environment observation stable across envelope rewrites."""
+    try:
+        value = json.loads((output_dir / "run.json").read_text(encoding="utf-8")).get(
+            "runtime_snapshot"
+        )
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _endpoint_identifier(value: Any) -> str | dict[str, str]:
+    """Persist a routable endpoint identity without query strings or credentials."""
+    if not isinstance(value, str) or not value.strip():
+        return _unknown("provider endpoint is not configured")
+    parsed = urllib.parse.urlsplit(value)
+    if not parsed.scheme or not parsed.hostname:
+        return _unknown("provider endpoint is not a valid absolute URL")
+    host = parsed.hostname
+    try:
+        port = parsed.port
+    except ValueError:
+        return _unknown("provider endpoint has an invalid port")
+    if port is not None:
+        host = f"{host}:{port}"
+    return urllib.parse.urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+
+
+def _runtime_unavailable(reason: str) -> dict[str, Any]:
+    return {
+        "snapshot_version": "1.0",
+        "status": "unavailable",
+        "reason": reason,
+        "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def capture_runtime_snapshot(
+    *,
+    rag_api_url: str | None,
+    api_key: str | None = None,
+    access_token: str | None = None,
+    timeout_seconds: float = 5,
+) -> dict[str, Any]:
+    """Read the tested LightRAG instance's authenticated ``/health`` snapshot.
+
+    The browser-declared model is intentionally not an input here.  A failed or
+    unauthenticated observation stays explicit so reports cannot present it as
+    an effective configuration.
+    """
+    if not rag_api_url:
+        return _runtime_unavailable("RAG API URL was not supplied")
+    health_url = f"{rag_api_url.rstrip('/')}/health"
+    headers: dict[str, str] = {"Accept": "application/json"}
+    if api_key:
+        headers["X-API-Key"] = api_key
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+    try:
+        request = urllib.request.Request(health_url, headers=headers)
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, ValueError, urllib.error.URLError) as exc:
+        return _runtime_unavailable(f"health snapshot request failed: {type(exc).__name__}")
+
+    configuration = payload.get("configuration")
+    if not isinstance(configuration, dict):
+        return _runtime_unavailable(
+            "health response did not expose authenticated runtime configuration"
+        )
+    roles = configuration.get("role_llm_config")
+    query_role = roles.get("query") if isinstance(roles, dict) else {}
+    effective_model = (
+        query_role.get("model")
+        if isinstance(query_role, dict) and query_role.get("model")
+        else configuration.get("llm_model")
+    )
+    return {
+        "snapshot_version": "1.0",
+        "status": "captured",
+        "source": "authenticated_health",
+        "source_endpoint": _endpoint_identifier(health_url),
+        "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "lightrag": {
+            "core_version": payload.get("core_version")
+            or _unknown("health response omitted core_version"),
+            "api_version": payload.get("api_version")
+            or _unknown("health response omitted api_version"),
+        },
+        "llm": {
+            "provider": configuration.get("llm_binding")
+            or _unknown("health response omitted llm_binding"),
+            "model": effective_model or _unknown("health response omitted effective LLM model"),
+            "endpoint": _endpoint_identifier(configuration.get("llm_binding_host")),
+        },
+        "embedding": {
+            "provider": configuration.get("embedding_binding")
+            or _unknown("health response omitted embedding_binding"),
+            "model": configuration.get("embedding_model")
+            or _unknown("health response omitted embedding_model"),
+            "endpoint": _endpoint_identifier(configuration.get("embedding_binding_host")),
+        },
+        "vlm": {
+            "enabled": bool(configuration.get("vlm_process_enable")),
+            "model": configuration.get("vlm_model")
+            or _unknown("health response omitted VLM model"),
+        },
+        "reranker": {
+            "enabled": bool(configuration.get("enable_rerank")),
+            "provider": configuration.get("rerank_binding")
+            or _unknown("reranker is not configured"),
+            "model": configuration.get("rerank_model")
+            or _unknown("reranker is not configured"),
+            "endpoint": _endpoint_identifier(configuration.get("rerank_binding_host")),
+        },
+        "parser": {
+            "routing": configuration.get("parser_routing")
+            or _unknown("health response omitted parser routing"),
+        },
+        "storage": {
+            "workspace": configuration.get("workspace")
+            or _unknown("health response omitted workspace"),
+            "backends": {
+                key: configuration.get(key)
+                or _unknown(f"health response omitted {key}")
+                for key in (
+                    "kv_storage",
+                    "doc_status_storage",
+                    "graph_storage",
+                    "vector_storage",
+                )
+            },
+        },
+        "retrieval_defaults": {
+            "top_k": _unknown("health response has no query top_k default"),
+            "chunk_top_k": _unknown("health response has no query chunk_top_k default"),
+            "max_total_tokens": _unknown(
+                "health response has no query max_total_tokens default"
+            ),
+        },
+    }
+
+
+def _model_identity(
+    *, baseline: dict[str, Any], runtime_snapshot: dict[str, Any]
+) -> tuple[Any, Any, bool | None]:
+    declared = baseline.get("model") or _unknown("run has no declared model")
+    effective = (runtime_snapshot.get("llm") or {}).get("model")
+    if not isinstance(declared, str) or not isinstance(effective, str):
+        return declared, effective or _unknown("runtime snapshot has no effective model"), None
+    return declared, effective, declared != effective
+
+
 def _redact_environment(environment: dict[str, Any]) -> dict[str, Any]:
     """Strip live credentials before an environment dict is persisted.
 
@@ -408,6 +565,17 @@ def write_envelope(
             parameters=context.baseline,
             started_at=context.started_at,
         )
+    runtime_snapshot = _existing_runtime_snapshot(output_dir) or context.runtime_snapshot
+    if not runtime_snapshot:
+        runtime_snapshot = capture_runtime_snapshot(
+            rag_api_url=context.environment.get("rag_api_url"),
+            api_key=context.environment.get("api_key"),
+            access_token=context.environment.get("access_token"),
+        )
+    declared_model, effective_model, configuration_mismatch = _model_identity(
+        baseline=context.baseline,
+        runtime_snapshot=runtime_snapshot,
+    )
     envelope: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "kind": context.spec.kind,
@@ -427,6 +595,10 @@ def write_envelope(
         "methods": methods,
         "reports": {"report.md": report_rel_path} if report_rel_path else {},
         "execution_manifest": execution_manifest,
+        "runtime_snapshot": runtime_snapshot,
+        "declared_model": declared_model,
+        "effective_model": effective_model,
+        "configuration_mismatch": configuration_mismatch,
     }
     if status in {"complete", "failed"}:
         envelope["finished_at"] = now
@@ -476,6 +648,26 @@ def write_simple_envelope(
         parameter_sources=parameter_sources,
         started_at=started_at or now,
     )
+    runtime_snapshot = _existing_runtime_snapshot(output_dir)
+    if runtime_snapshot is None:
+        runtime_snapshot = (
+            {
+                "snapshot_version": "1.0",
+                "status": "not_applicable",
+                "reason": "offline runs do not measure a LightRAG server instance",
+                "captured_at": now,
+            }
+            if kind == "offline"
+            else capture_runtime_snapshot(
+                rag_api_url=environment.get("rag_api_url"),
+                api_key=environment.get("api_key"),
+                access_token=environment.get("access_token"),
+            )
+        )
+    declared_model, effective_model, configuration_mismatch = _model_identity(
+        baseline=baseline,
+        runtime_snapshot=runtime_snapshot,
+    )
     envelope = {
         "schema_version": SCHEMA_VERSION,
         "kind": kind,
@@ -490,6 +682,10 @@ def write_simple_envelope(
         "methods": methods,
         "reports": {"report.md": report_rel_path} if report_rel_path else {},
         "execution_manifest": execution_manifest,
+        "runtime_snapshot": runtime_snapshot,
+        "declared_model": declared_model,
+        "effective_model": effective_model,
+        "configuration_mismatch": configuration_mismatch,
     }
     if started_at is not None:
         envelope["started_at"] = started_at

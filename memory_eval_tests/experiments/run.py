@@ -21,6 +21,7 @@ from memory_eval_tests.experiments.common import (
     BASELINE_DEFAULTS,
     RunContext,
     build_execution_manifest,
+    capture_runtime_snapshot,
     capture_environment,
     redact_launch_extra,
     write_envelope,
@@ -314,6 +315,11 @@ def main() -> None:
         parameters=baseline,
         parameter_sources=parameter_sources,
         started_at=context.started_at,
+    )
+    context.runtime_snapshot = capture_runtime_snapshot(
+        rag_api_url=args.rag_api_url,
+        api_key=args.api_key,
+        access_token=args.access_token,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     _install_sigterm_handler(args.output_dir)
