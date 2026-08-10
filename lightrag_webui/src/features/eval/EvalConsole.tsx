@@ -14,6 +14,7 @@ import {
   getEvalRun,
   listEvalRuns,
   refreshEvalIndex,
+  validateRunComparison,
   type EvalRun,
   type EvalRunDetail,
   type EvalRunKind
@@ -213,8 +214,13 @@ export default function EvalConsole() {
     const ids = Array.from(compareIds)
     if (ids.length === 0) return
     setCompareLoading(true)
-    setComparing(true)
     try {
+      const contract = await validateRunComparison(ids)
+      if (!contract.ranking_permitted) {
+        toast.error(`不可并列排名：${contract.incompatible_fields.join('、')}`)
+        return
+      }
+      setComparing(true)
       const loaded = await Promise.all(
         ids.map(async (id) => {
           const cached = detailCache.current.get(id)

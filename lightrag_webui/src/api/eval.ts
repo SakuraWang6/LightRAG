@@ -323,6 +323,18 @@ export async function validateComparisonPlan(payload: {
   return response.data
 }
 
+export type RunComparisonContract = {
+  comparable: boolean
+  ranking_permitted: boolean
+  incompatible_fields: string[]
+  observed_values: Record<string, unknown[]>
+}
+
+export async function validateRunComparison(runIds: string[]): Promise<RunComparisonContract> {
+  const response = await evalApiClient.post('/eval/comparisons/validate', { run_ids: runIds })
+  return response.data
+}
+
 export async function saveEvalTemplate(
   template: EvalTemplate
 ): Promise<{ saved: string }> {
