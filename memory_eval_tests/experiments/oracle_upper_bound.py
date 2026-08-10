@@ -152,6 +152,25 @@ def _prepare(context) -> None:
         current_dataset = context.dataset.name
     if parent.get("dataset") != current_dataset:
         raise ValueError("oracle upper-bound dataset must match the diagnosed end-to-end run")
+    parent_model = parent.get("effective_model") or parent.get("declared_model")
+    if not isinstance(parent_model, str) or parent_model != context.baseline.get("model"):
+        raise ValueError("oracle upper-bound model must match the diagnosed run's effective model")
+    launch = parent.get("launch_params") or {}
+    if int(launch.get("num_predict") or 0) != int(context.baseline.get("num_predict") or 0):
+        raise ValueError("oracle upper-bound num_predict must match the diagnosed run")
+    parent_dir = Path(parent["run_dir"])
+    try:
+        traces = json.loads((parent_dir / "case_trace.json").read_text(encoding="utf-8")).get("cases") or []
+    except (OSError, ValueError):
+        traces = []
+    observed = [
+        row for row in traces
+        if ((row.get("final_context") or {}).get("status") == "observed")
+        and (row.get("final_context") or {}).get("system_prompt")
+    ]
+    if not observed:
+        raise ValueError("diagnosed run has no controlled final-context traces to reuse")
+    context.extra["_diagnoses_run_dir"] = str(parent_dir)
 
 
 def _result_extra(context, payload: dict[str, Any]) -> dict[str, Any]:
@@ -162,13 +181,13 @@ def _result_extra(context, payload: dict[str, Any]) -> dict[str, Any]:
         "diagnoses_run_id": context.extra["diagnoses_run_id"],
         "oracle_upper_bound_contract": {
             "model": payload.get("model"),
-            "prompt_template": "frozen_select5_oracle_pack",
+            "prompt_template": "parent_final_prompt_with_oracle_context",
             "temperature": 0,
             "num_ctx": 16384,
-            "num_predict": 256,
+            "num_predict": context.baseline.get("num_predict"),
             "final_api_prompt_equivalence": {
-                "value": "unknown",
-                "reason": "the public API does not expose the end-to-end final prompt",
+                "value": "verified",
+                "reason": "the oracle context replaces the captured parent final context in the same system prompt template",
             },
         },
     }
@@ -188,6 +207,9 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         if rel.get("relation_type") == "supports" and str(rel.get("target_id", "")).startswith("FACT") and rel.get("evidence_text")
     }
     tables = load_sidecar_tables(args.sidecar_parsed_dir)
+    parent_traces = _load_parent_traces(getattr(args, "diagnoses_run_dir", None))
+    if parent_traces:
+        questions = [question for question in questions if question["id"] in parent_traces]
     frozen = json.loads(args.frozen_prompts.read_text(encoding="utf-8"))
     prefix, _ = split_prompt(str(frozen["prompts"][0]["prompt"]))
     selector_baseline: dict[str, Any] | None = None
@@ -255,12 +277,13 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                     tables=tables,
                     arm=arm,
                 )
+                system = _parent_oracle_system_prompt(parent_traces.get(question["id"]), context)
                 answer = simple_chat_ollama(
                     host=args.ollama_url,
                     model=args.model,
-                    system=prefix + context,
+                    system=system if system is not None else prefix + context,
                     user=str(question["question"]),
-                    num_predict=256,
+                    num_predict=getattr(args, "num_predict", 256),
                 )
                 metrics = score_answer(
                     answer_text=answer,
@@ -294,6 +317,29 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     return payload("complete")
 
 
+def _load_parent_traces(path: str | None) -> dict[str, dict[str, Any]]:
+    if not path:
+        return {}
+    try:
+        cases = json.loads((Path(path) / "case_trace.json").read_text(encoding="utf-8")).get("cases") or []
+    except (OSError, ValueError):
+        return {}
+    return {str(case.get("question_id")): case for case in cases if isinstance(case, dict)}
+
+
+def _parent_oracle_system_prompt(parent_trace: dict[str, Any] | None, oracle_context: str) -> str | None:
+    if parent_trace is None:
+        return None
+    final = parent_trace.get("final_context") or {}
+    system_prompt = final.get("system_prompt")
+    captured_context = final.get("content")
+    if not isinstance(system_prompt, str) or not isinstance(captured_context, str):
+        raise ValueError("parent trace lacks an observed system prompt/context")
+    if captured_context not in system_prompt:
+        raise ValueError("parent final context cannot be located in its captured system prompt")
+    return system_prompt.replace(captured_context, oracle_context, 1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=Path("memory_data_service/generated/rich-smoke-v1"))
@@ -314,6 +360,7 @@ def main() -> None:
     )
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--model", default="qwen3:8b")
+    parser.add_argument("--num-predict", type=int, default=256)
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--output-md", type=Path, required=True)
     parser.add_argument("--max-cases", type=int, default=0)

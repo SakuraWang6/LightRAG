@@ -231,6 +231,8 @@ def _final_context(
             "status": _OBSERVED,
             "content": context,
             "chars": trace.get("final_context_chars"),
+            "system_prompt": trace.get("system_prompt"),
+            "user_query": trace.get("user_query"),
             "truncation": trace.get("truncation"),
             "contains_all_oracle_evidence": _contains_oracle_evidence(
                 str(context or ""), evidence_facts

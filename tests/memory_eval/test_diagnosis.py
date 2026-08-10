@@ -101,10 +101,32 @@ def test_oracle_upper_bound_requires_matching_linked_end_to_end_dataset(tmp_path
         baseline={}, environment={}, variables=[], run_id="upper-1",
         extra={"diagnoses_run_id": "e2e-1"}, runs_root=tmp_path / "runs",
     )
-    monkeypatch.setattr(
-        eval_index, "load_run", lambda *_args: {"experiment": "end_to_end_baseline", "dataset": "dataset-a"}
+    parent_dir = tmp_path / "parent"
+    parent_dir.mkdir()
+    (parent_dir / "case_trace.json").write_text(
+        '{"cases":[{"question_id":"Q1","final_context":{"status":"observed","content":"old context","system_prompt":"prefix old context suffix"}}]}',
+        encoding="utf-8",
     )
+    monkeypatch.setattr(
+        eval_index,
+        "load_run",
+        lambda *_args: {
+            "experiment": "end_to_end_baseline", "dataset": "dataset-a", "effective_model": "qwen3:8b",
+            "launch_params": {"num_predict": 128}, "run_dir": str(parent_dir),
+        },
+    )
+    context.baseline = {"model": "qwen3:8b", "num_predict": 128}
     _prepare(context)
     extra = _result_extra(context, {"model": "qwen3:8b"})
     assert extra["diagnoses_run_id"] == "e2e-1"
-    assert extra["oracle_upper_bound_contract"]["final_api_prompt_equivalence"]["value"] == "unknown"
+    assert extra["oracle_upper_bound_contract"]["final_api_prompt_equivalence"]["value"] == "verified"
+
+
+def test_oracle_upper_bound_replaces_only_parent_final_context_in_prompt() -> None:
+    from memory_eval_tests.experiments.oracle_upper_bound import _parent_oracle_system_prompt
+
+    rendered = _parent_oracle_system_prompt(
+        {"final_context": {"content": "retrieved", "system_prompt": "prefix retrieved suffix"}},
+        "oracle evidence",
+    )
+    assert rendered == "prefix oracle evidence suffix"

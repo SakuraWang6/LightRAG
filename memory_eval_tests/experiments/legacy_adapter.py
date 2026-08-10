@@ -53,10 +53,13 @@ def namespace_from_context(
             or "http://127.0.0.1:11434"
         ),
         "model": str(baseline.get("model") or extra.get("model") or "qwen3:8b"),
+        "num_predict": int(baseline.get("num_predict") or 256),
         "max_cases": int(extra.get("max_cases") or baseline.get("max_cases") or 0),
         "resume": _as_bool(extra.get("resume")),
         "output_json": context.output_dir / f"{artifact_stem}_results.json",
         "output_md": context.output_dir / f"{artifact_stem}_report.md",
+        "diagnoses_run_id": extra.get("diagnoses_run_id"),
+        "diagnoses_run_dir": extra.get("_diagnoses_run_dir"),
     }
     for key, default in (extra_paths or {}).items():
         namespaces[key] = Path(extra.get(key) or default)
