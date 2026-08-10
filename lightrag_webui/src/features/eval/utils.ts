@@ -151,14 +151,16 @@ export function diffParams(
 }
 
 export function compareCompatible(
-  runs: Array<{ kind?: string; dataset?: string | null }>
+  runs: Array<{ kind?: string; dataset?: string | null; legacy?: boolean; compatibility_level?: string }>
 ): boolean {
   if (runs.length < 2) return true
   const first = runs[0]
   return runs.every(
     (run) =>
       run.kind === first.kind &&
-      (run.dataset ?? null) === (first.dataset ?? null)
+      (run.dataset ?? null) === (first.dataset ?? null) &&
+      Boolean(run.legacy) === Boolean(first.legacy) &&
+      (run.compatibility_level ?? 'legacy') === (first.compatibility_level ?? 'legacy')
   )
 }
 

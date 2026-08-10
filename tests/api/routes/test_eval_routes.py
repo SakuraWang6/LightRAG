@@ -476,6 +476,7 @@ def test_run_record_surfaces_legacy_and_timing(runs_tree: Path) -> None:
     detail = load_run(runs_tree, "legacy-run")
     assert detail is not None
     assert detail["legacy"] is True
+    assert detail["compatibility_level"] == "legacy"
     assert detail["restarts"] == 2
     assert detail["last_restart_resume"] is True
     assert detail["launch_params"] == {
@@ -484,6 +485,17 @@ def test_run_record_surfaces_legacy_and_timing(runs_tree: Path) -> None:
         "extra": ["stage=eval"],
     }
     assert detail["duration_seconds"] == pytest.approx(300.0)
+
+
+def test_run_without_trust_contract_is_legacy_even_without_old_marker(
+    runs_tree: Path,
+) -> None:
+    from lightrag.api.eval_index import load_run
+
+    detail = load_run(runs_tree, "context-selection-v1")
+    assert detail is not None
+    assert detail["legacy"] is True
+    assert detail["compatibility_level"] == "legacy"
 
 
 def test_run_detail_surfaces_structured_failure_and_events(runs_tree: Path) -> None:

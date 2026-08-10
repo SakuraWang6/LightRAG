@@ -326,6 +326,15 @@ def _run_record(
     )
     progress = _read_progress(run_dir)
     run_id = envelope.get("run_id") or run_dir.name
+    has_trust_contract = isinstance(envelope.get("execution_manifest"), dict) and isinstance(
+        envelope.get("runtime_snapshot"), dict
+    )
+    compatibility_level = envelope.get("compatibility_level")
+    if not isinstance(compatibility_level, str):
+        compatibility_level = "current" if has_trust_contract else "legacy"
+    legacy = bool(envelope.get("legacy", False)) or not has_trust_contract
+    if legacy:
+        compatibility_level = "legacy"
     failed_checks: list[str] = []
     if kind == "offline":
         failed_checks = [
@@ -340,7 +349,8 @@ def _run_record(
         "id": run_id,
         "run_dir": str(run_dir),
         "kind": kind,
-        "legacy": bool(envelope.get("legacy", False)),
+        "legacy": legacy,
+        "compatibility_level": compatibility_level,
         "restarts": int(envelope.get("restarts") or 0),
         "last_restart_resume": envelope.get("last_restart_resume"),
         "launch_params": envelope.get("launch_params"),

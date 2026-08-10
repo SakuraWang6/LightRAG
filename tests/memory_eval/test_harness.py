@@ -138,6 +138,7 @@ def test_envelope_roundtrip(tmp_path: Path) -> None:
     assert envelope["schema_version"] == "2.0"
     assert envelope["kind"] == "offline"
     assert envelope["methods"][0]["summary"]["passed"] is True
+    assert envelope["compatibility_level"] == "current"
     assert envelope["execution_manifest"]["dataset"]["dataset_id"]["value"] == "unknown"
 
 

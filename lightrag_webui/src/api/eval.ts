@@ -90,6 +90,7 @@ export type EvalRun = {
   run_dir?: string
   kind: EvalRunKind
   legacy?: boolean
+  compatibility_level?: 'legacy' | 'current' | string
   restarts?: number
   last_restart_resume?: boolean | null
   label: string
