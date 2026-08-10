@@ -41,6 +41,8 @@ def annotate_question_scenarios(questions: list[QuestionRecord]) -> dict[str, in
             "canonical": question.question,
             "paraphrase": f"According to the document, {question.question}",
             "evidence_first": f"Use the document evidence to answer: {question.question}",
+            "entity_alias": f"For the referenced record, {question.question}",
+            "word_order": f"From the document, answer this request: {question.question}",
         }
         for label in labels:
             counts[label] = counts.get(label, 0) + 1

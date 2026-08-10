@@ -51,6 +51,7 @@ def test_question_scenarios_cover_table_and_unanswerable_cases() -> None:
     ]
     counts = annotate_question_scenarios(questions)
     assert questions[0].scenario_labels == ["table"]
+    assert {"paraphrase", "entity_alias", "word_order"} <= set(questions[0].question_variants)
     assert questions[1].scenario_labels == ["unanswerable"]
     assert counts == {"table": 1, "unanswerable": 1}
 
