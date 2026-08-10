@@ -20,6 +20,7 @@ import json
 from typing import Any
 
 from memory_eval_tests.experiments.common import ExperimentSpec, RunContext
+from memory_eval_tests.experiments.comparison_stats import paired_case_deltas
 
 DEFAULT_MAX_ARMS = 8
 MAX_ARMS_CAP = 16
@@ -142,6 +143,22 @@ def _run_custom_arms(context: RunContext) -> dict[str, Any]:
         context.progress("running", index, total, phase=f"arm {index}: {label}")
 
     status = "failed" if failures == total else "complete"
+    paired = paired_case_deltas(methods)
+    if paired:
+        report_lines.extend(
+            [
+                "",
+                "## 配对 case 差异（相对首臂）",
+                "",
+                "| 候选臂 | 共享 case | 平均差异 | 胜/平/负 | 证据 |",
+                "|---|---:|---:|---:|---|",
+                *[
+                    "| {candidate} | {case_count} | {mean_delta:.4f} | "
+                    "{wins}/{ties}/{losses} | {evidence} |".format(**item)
+                    for item in paired
+                ],
+            ]
+        )
     report_lines.extend(
         [
             "",
@@ -154,7 +171,12 @@ def _run_custom_arms(context: RunContext) -> dict[str, Any]:
             "",
         ]
     )
-    return {"methods": methods, "report": "\n".join(report_lines), "status": status}
+    return {
+        "methods": methods,
+        "report": "\n".join(report_lines),
+        "paired_case_deltas": paired,
+        "status": status,
+    }
 
 
 spec = ExperimentSpec(

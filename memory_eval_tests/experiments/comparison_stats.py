@@ -36,3 +36,46 @@ def _distribution(values: list[float]) -> dict[str, Any]:
     deviation = stdev(values)
     half_width = 1.96 * deviation / math.sqrt(len(values))
     return {"mean": avg, "stddev": deviation, "p50": median(values), "p95": ordered[p95_index], "confidence_interval": [avg - half_width, avg + half_width], "evidence": "estimated"}
+
+
+def paired_case_deltas(
+    methods: list[dict[str, Any]], *, metric: str = "exact_match"
+) -> list[dict[str, Any]]:
+    """Compare every arm with the first arm on their shared question IDs only."""
+    if len(methods) < 2:
+        return []
+    baseline = _case_values(methods[0].get("results") or [], metric)
+    if not baseline:
+        return []
+    output: list[dict[str, Any]] = []
+    for candidate in methods[1:]:
+        current = _case_values(candidate.get("results") or [], metric)
+        shared = sorted(set(baseline) & set(current))
+        if not shared:
+            continue
+        deltas = [current[case_id] - baseline[case_id] for case_id in shared]
+        output.append(
+            {
+                "metric": metric,
+                "baseline": methods[0].get("label") or methods[0].get("method"),
+                "candidate": candidate.get("label") or candidate.get("method"),
+                "case_count": len(shared),
+                "mean_delta": mean(deltas),
+                "wins": sum(delta > 0 for delta in deltas),
+                "ties": sum(delta == 0 for delta in deltas),
+                "losses": sum(delta < 0 for delta in deltas),
+                "evidence": "estimated" if len(shared) >= 2 else "insufficient",
+            }
+        )
+    return output
+
+
+def _case_values(rows: list[dict[str, Any]], metric: str) -> dict[str, float]:
+    values: dict[str, float] = {}
+    for row in rows:
+        case_id = row.get("question_id")
+        value = row.get(metric)
+        if not isinstance(case_id, str) or isinstance(value, bool) is False and not isinstance(value, (int, float)):
+            continue
+        values[case_id] = float(value)
+    return values
