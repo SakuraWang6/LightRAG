@@ -30,8 +30,8 @@ def chat_ollama(
     num_predict: int,
     num_ctx: int = 16384,
     temperature: float = 0,
-    timeout: int = 600,
-    read_timeout: int = 60,
+    timeout: int = 900,
+    read_timeout: int = 300,
     retries: int = 1,
 ) -> str:
     """Call ``/api/chat`` with explicit context window and decoding options."""
