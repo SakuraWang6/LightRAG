@@ -492,6 +492,7 @@ def _write_envelope(args, report: dict, kind: str) -> None:
             }
         ],
         status="complete",
+        dataset_path=Path(args.dataset),
     )
 
 

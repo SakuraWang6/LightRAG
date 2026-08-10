@@ -134,9 +134,72 @@ def test_envelope_roundtrip(tmp_path: Path) -> None:
         status="passed",
     )
     envelope = json.loads(path.read_text(encoding="utf-8"))
-    assert envelope["schema_version"] == "1.0"
+    assert envelope["schema_version"] == "2.0"
     assert envelope["kind"] == "offline"
     assert envelope["methods"][0]["summary"]["passed"] is True
+    assert envelope["execution_manifest"]["dataset"]["dataset_id"]["value"] == "unknown"
+
+
+def test_execution_manifest_fingerprints_inputs_and_is_immutable(tmp_path: Path) -> None:
+    from memory_eval_tests.experiments.common import (
+        ExperimentSpec,
+        RunContext,
+        build_execution_manifest,
+        write_envelope,
+    )
+
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "source.docx").write_bytes(b"document bytes")
+    (dataset / "oracle.json").write_text('{"facts": []}', encoding="utf-8")
+    (dataset / "manifest.json").write_text(
+        json.dumps(
+            {
+                "dataset_id": "sample-v1",
+                "oracle_file": "oracle.json",
+                "generator_version": "gen-1",
+                "template_version": "template-2",
+                "random_seed": 7,
+                "files": [
+                    {"name": "source.docx", "format": "docx", "status": "created"}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec = ExperimentSpec(id="context_size", label="X", description="d", runner=lambda c: {})
+    context = RunContext(
+        spec=spec,
+        dataset=dataset,
+        output_dir=tmp_path / "run",
+        baseline={"top_k": 5},
+        environment={},
+        variables=[],
+        run_id="run-1",
+        started_at="2026-08-10T00:00:00+00:00",
+        execution_manifest=build_execution_manifest(
+            dataset=dataset,
+            experiment_id=spec.id,
+            experiment_type=spec.kind,
+            parameters={"top_k": 5},
+            parameter_sources={"top_k": "user"},
+            started_at="2026-08-10T00:00:00+00:00",
+        ),
+    )
+    write_envelope(context.output_dir, context=context, status="running", methods=[])
+    first = json.loads((context.output_dir / "run.json").read_text(encoding="utf-8"))
+    assert len(first["execution_manifest"]["dataset"]["manifest_sha256"]) == 64
+    assert len(first["execution_manifest"]["dataset"]["oracle_sha256"]) == 64
+    assert first["execution_manifest"]["dataset"]["document_files"][0]["sha256"]
+    assert first["execution_manifest"]["parameters"]["top_k"] == {
+        "value": 5,
+        "source": "user",
+    }
+
+    context.execution_manifest["parameters"]["top_k"] = {"value": 99, "source": "user"}
+    write_envelope(context.output_dir, context=context, status="complete", methods=[])
+    final = json.loads((context.output_dir / "run.json").read_text(encoding="utf-8"))
+    assert final["execution_manifest"] == first["execution_manifest"]
 
 
 def test_envelope_records_started_and_finished(tmp_path: Path) -> None:

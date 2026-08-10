@@ -20,6 +20,7 @@ from typing import Any, Iterator
 from memory_eval_tests.experiments.common import (
     BASELINE_DEFAULTS,
     RunContext,
+    build_execution_manifest,
     capture_environment,
     redact_launch_extra,
     write_envelope,
@@ -56,6 +57,28 @@ def _launch_params(baseline: dict[str, Any], extra_items: list[str]) -> dict[str
     }
     params["extra"] = redact_launch_extra(list(extra_items))
     return params
+
+
+def _parameter_sources(args: argparse.Namespace, baseline: dict[str, Any]) -> dict[str, str]:
+    """Make default/template/user provenance explicit for every launch value."""
+    sources = {key: "default" for key in baseline}
+    for key, value in (
+        ("model", args.model),
+        ("mode", args.mode),
+        ("top_k", args.top_k),
+        ("chunk_top_k", args.chunk_top_k),
+        ("num_ctx", args.num_ctx),
+        ("num_predict", args.num_predict),
+        ("temperature", args.temperature),
+        ("engine", args.engine),
+    ):
+        if value is not None:
+            sources[key] = "user"
+    if args.skip_kg:
+        sources["kg"] = "user"
+    if args.max_cases:
+        sources["max_cases"] = "user"
+    return sources
 
 
 def _heartbeat_loop(output_dir: Path, stop: threading.Event) -> None:
@@ -247,6 +270,7 @@ def main() -> None:
         key, _, value = item.partition("=")
         extra[key.strip()] = value.strip()
     launch_params = _launch_params(baseline, args.extra)
+    parameter_sources = _parameter_sources(args, baseline)
 
     storage_dir = args.storage_dir or (args.output_dir / "rag_storage")
     # The in-process LightRAG instance resolves its working directory from the
@@ -282,6 +306,14 @@ def main() -> None:
         ),
         started_at=args.original_started_at
         or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    context.execution_manifest = build_execution_manifest(
+        dataset=args.dataset,
+        experiment_id=spec.id,
+        experiment_type=spec.kind,
+        parameters=baseline,
+        parameter_sources=parameter_sources,
+        started_at=context.started_at,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     _install_sigterm_handler(args.output_dir)

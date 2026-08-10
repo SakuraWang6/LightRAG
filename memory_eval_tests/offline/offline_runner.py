@@ -267,6 +267,7 @@ def _write_envelope(args, summary: dict) -> None:
         methods=methods,
         status="complete" if summary.get("passed") else "failed",
         report_rel_path=Path(summary.get("markdown_report", "")).name or None,
+        dataset_path=Path(args.dataset),
     )
 
 

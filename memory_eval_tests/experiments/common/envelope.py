@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import hashlib
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
 _SCAN_INDEX_NAME = ".eval_index.json"
 _SENSITIVE_EXTRA_RE = re.compile(r"(key|token|secret|authorization)", re.IGNORECASE)
 
@@ -95,6 +97,7 @@ class RunContext:
     extra: dict[str, Any] = field(default_factory=dict)
     restarts: int = 0
     last_restart_resume: bool | None = None
+    execution_manifest: dict[str, Any] = field(default_factory=dict)
     started_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
     )
@@ -126,6 +129,150 @@ def _dataset_meta(dataset: Path) -> dict[str, Any]:
         "formats": payload.get("formats"),
         "title": payload.get("title"),
     }
+
+
+def _unknown(reason: str) -> dict[str, str]:
+    """Represent a missing provenance value without inventing a default."""
+    return {"value": "unknown", "reason": reason}
+
+
+def _sha256(path: Path) -> str | dict[str, str]:
+    """Return a content fingerprint, preserving why one cannot be obtained."""
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        return digest.hexdigest()
+    except OSError as exc:
+        return _unknown(f"cannot read {path.name}: {type(exc).__name__}")
+
+
+def _git_commit() -> str | dict[str, str]:
+    try:
+        root = Path(__file__).resolve().parents[3]
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        commit = result.stdout.strip()
+        return commit or _unknown("git returned an empty revision")
+    except (OSError, subprocess.SubprocessError):
+        return _unknown("git revision is unavailable")
+
+
+def _manifest_value(payload: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, ""):
+            return value
+    return _unknown(f"dataset manifest has none of: {', '.join(keys)}")
+
+
+def build_execution_manifest(
+    *,
+    dataset: Path | None,
+    experiment_id: str,
+    experiment_type: str,
+    parameters: dict[str, Any],
+    parameter_sources: dict[str, str] | None = None,
+    started_at: str | None = None,
+) -> dict[str, Any]:
+    """Build the immutable, secret-free statement of an evaluation's inputs.
+
+    This is deliberately best-effort: callers may use an old or remote dataset,
+    but absence must remain explicit instead of being silently replaced with a
+    local default.  The returned object contains no endpoint credentials.
+    """
+    dataset_path = Path(dataset) if dataset is not None else None
+    manifest_path = dataset_path / "manifest.json" if dataset_path else None
+    manifest: dict[str, Any] = {}
+    manifest_error: str | None = None
+    if manifest_path is None:
+        manifest_error = "dataset path was not supplied by this runner"
+    else:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            manifest_error = f"cannot read dataset manifest: {type(exc).__name__}"
+
+    source = parameter_sources or {}
+    declared_parameters = {
+        key: {"value": value, "source": source.get(key, "unknown")}
+        for key, value in parameters.items()
+    }
+    document_files: list[dict[str, Any]] = []
+    if manifest and dataset_path is not None:
+        for item in manifest.get("files") or []:
+            if not isinstance(item, dict) or item.get("status") != "created":
+                continue
+            file_format = str(item.get("format") or "").lower()
+            if file_format not in {"docx", "pdf", "txt", "md", "html"}:
+                continue
+            name = str(item.get("name") or "")
+            path = dataset_path / name
+            document_files.append(
+                {
+                    "name": name or _unknown("manifest file entry has no name"),
+                    "format": file_format,
+                    "sha256": _sha256(path),
+                }
+            )
+
+    try:
+        from memory_eval_tests import __version__ as framework_version
+    except Exception:
+        framework_version = _unknown("evaluation framework version is unavailable")
+
+    oracle_name = str(manifest.get("oracle_file") or "oracle.json")
+    return {
+        "manifest_version": "1.0",
+        "captured_at": started_at
+        or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "dataset": {
+            "dataset_id": _manifest_value(manifest, "dataset_id")
+            if manifest
+            else _unknown(manifest_error or "dataset manifest is unavailable"),
+            "manifest_sha256": _sha256(manifest_path)
+            if manifest_path is not None
+            else _unknown(manifest_error or "dataset manifest is unavailable"),
+            "oracle_sha256": _sha256(dataset_path / oracle_name)
+            if dataset_path is not None and manifest
+            else _unknown(manifest_error or "oracle path is unavailable"),
+            "document_files": document_files
+            if manifest
+            else _unknown(manifest_error or "document file list is unavailable"),
+            "generator_version": _manifest_value(
+                manifest, "generator_version", "generator_code_version"
+            )
+            if manifest
+            else _unknown(manifest_error or "dataset manifest is unavailable"),
+            "template_version": _manifest_value(manifest, "template_version")
+            if manifest
+            else _unknown(manifest_error or "dataset manifest is unavailable"),
+            "random_seed": _manifest_value(manifest, "random_seed", "seed")
+            if manifest
+            else _unknown(manifest_error or "dataset manifest is unavailable"),
+        },
+        "experiment": {"id": experiment_id, "type": experiment_type},
+        "code": {"git_commit": _git_commit(), "framework_version": framework_version},
+        "parameters": declared_parameters,
+    }
+
+
+def _existing_execution_manifest(output_dir: Path) -> dict[str, Any] | None:
+    """Keep a manifest immutable when the harness rewrites ``run.json``."""
+    try:
+        value = json.loads((output_dir / "run.json").read_text(encoding="utf-8")).get(
+            "execution_manifest"
+        )
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def _redact_environment(environment: dict[str, Any]) -> dict[str, Any]:
@@ -252,6 +399,15 @@ def write_envelope(
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    execution_manifest = _existing_execution_manifest(output_dir) or context.execution_manifest
+    if not execution_manifest:
+        execution_manifest = build_execution_manifest(
+            dataset=context.dataset,
+            experiment_id=context.spec.id,
+            experiment_type=context.spec.kind,
+            parameters=context.baseline,
+            started_at=context.started_at,
+        )
     envelope: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "kind": context.spec.kind,
@@ -270,6 +426,7 @@ def write_envelope(
         "variables": context.variables,
         "methods": methods,
         "reports": {"report.md": report_rel_path} if report_rel_path else {},
+        "execution_manifest": execution_manifest,
     }
     if status in {"complete", "failed"}:
         envelope["finished_at"] = now
@@ -305,10 +462,20 @@ def write_simple_envelope(
     finished_at: str | None = None,
     restarts: int = 0,
     runs_root: Path | None = None,
+    dataset_path: Path | None = None,
+    parameter_sources: dict[str, str] | None = None,
 ) -> Path:
     """Envelope writer for non-registry runs (offline/online evaluators)."""
     output_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    execution_manifest = _existing_execution_manifest(output_dir) or build_execution_manifest(
+        dataset=dataset_path,
+        experiment_id=str(experiment.get("id") or "unknown"),
+        experiment_type=kind,
+        parameters=baseline,
+        parameter_sources=parameter_sources,
+        started_at=started_at or now,
+    )
     envelope = {
         "schema_version": SCHEMA_VERSION,
         "kind": kind,
@@ -322,6 +489,7 @@ def write_simple_envelope(
         "variables": [],
         "methods": methods,
         "reports": {"report.md": report_rel_path} if report_rel_path else {},
+        "execution_manifest": execution_manifest,
     }
     if started_at is not None:
         envelope["started_at"] = started_at
