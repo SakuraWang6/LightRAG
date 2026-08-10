@@ -12,7 +12,11 @@ from memory_data_service.resource_guard import (
     enforce_generation_limits,
     estimate_generation_resources,
 )
-from memory_data_service.provenance import annotate_question_scenarios, build_provenance
+from memory_data_service.provenance import (
+    annotate_question_scenarios,
+    build_provenance,
+    resolve_scenario_quotas,
+)
 from memory_data_service.schemas import (
     DatasetCreateRequest,
     DatasetManifest,
@@ -44,6 +48,9 @@ def generate_dataset(
     with GenerationResourceMonitor() as resource_monitor:
         facts, questions = _write_docx(request, docx_path, pages)
         scenario_counts = annotate_question_scenarios(questions)
+        scenario_quotas = resolve_scenario_quotas(
+            requested=request.scenario_quotas, observed=scenario_counts
+        )
         if "pdf" in request.formats:
             pdf_record = _convert_pdf(docx_path, dataset_path)
         else:
@@ -86,7 +93,7 @@ def generate_dataset(
         modalities=request.modalities,
         title=request.title,
         split=request.split,
-        scenario_quotas=request.scenario_quotas,
+        scenario_quotas=scenario_quotas,
         scenario_counts=scenario_counts,
         dataset_fingerprint=fingerprint,
         generation_provenance=provenance,
@@ -100,7 +107,10 @@ def generate_dataset(
 
 
 def _stable_dataset_id(request: DatasetCreateRequest, pages: int) -> str:
-    raw = f"{request.tier}:{pages}:{request.formats}:{request.modalities}:{request.seed}"
+    raw = (
+        f"{request.tier}:{pages}:{request.formats}:{request.modalities}:{request.seed}:"
+        f"{request.split}:{sorted(request.scenario_quotas.items())}"
+    )
     digest = hashlib.md5(raw.encode("utf-8")).hexdigest()[:10]
     return f"{request.tier}-{pages}p-{digest}"
 

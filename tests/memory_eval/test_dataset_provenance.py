@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from memory_data_service.provenance import annotate_question_scenarios, build_provenance
+import pytest
+
+from memory_data_service.provenance import (
+    annotate_question_scenarios,
+    build_provenance,
+    resolve_scenario_quotas,
+)
 from memory_data_service.schemas import DatasetCreateRequest, QuestionRecord
 
 
@@ -45,3 +51,9 @@ def test_question_scenarios_cover_table_and_unanswerable_cases() -> None:
     assert questions[0].scenario_labels == ["table"]
     assert questions[1].scenario_labels == ["unanswerable"]
     assert counts == {"table": 1, "unanswerable": 1}
+
+
+def test_scenario_quotas_are_recorded_or_rejected() -> None:
+    assert resolve_scenario_quotas(requested={}, observed={"table": 2}) == {"table": 2}
+    with pytest.raises(ValueError, match="did not meet scenario quotas"):
+        resolve_scenario_quotas(requested={"multi_hop": 1}, observed={"table": 2})

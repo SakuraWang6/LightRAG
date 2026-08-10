@@ -41,6 +41,24 @@ def annotate_question_scenarios(questions: list[QuestionRecord]) -> dict[str, in
     return counts
 
 
+def resolve_scenario_quotas(
+    *, requested: dict[str, int], observed: dict[str, int]
+) -> dict[str, int]:
+    """Enforce requested lower bounds; otherwise record the generated quota."""
+    missing = {
+        name: quota
+        for name, quota in requested.items()
+        if quota < 0 or observed.get(name, 0) < quota
+    }
+    if missing:
+        details = ", ".join(
+            f"{name}: requested {quota}, observed {observed.get(name, 0)}"
+            for name, quota in sorted(missing.items())
+        )
+        raise ValueError("generated dataset did not meet scenario quotas: " + details)
+    return dict(requested) if requested else dict(sorted(observed.items()))
+
+
 def build_provenance(
     *, request: DatasetCreateRequest, pages: int, generator: str, template_version: str, source_file: Path
 ) -> tuple[str, GenerationProvenance]:
