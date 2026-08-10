@@ -297,7 +297,7 @@ export default function CasesView({ rows }: CasesViewProps) {
                   </TableRow>
                   {isExpanded ? (
                     <TableRow className="bg-muted/40">
-                      <TableCell colSpan={5} className="px-3 py-2">
+                      <TableCell colSpan={6} className="px-3 py-2">
                         <CaseDetail c={c} />
                       </TableCell>
                     </TableRow>
@@ -307,7 +307,7 @@ export default function CasesView({ rows }: CasesViewProps) {
             })}
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground h-24 text-center">
+                <TableCell colSpan={6} className="text-muted-foreground h-24 text-center">
                   {t('eval.noCases')}
                 </TableCell>
               </TableRow>
