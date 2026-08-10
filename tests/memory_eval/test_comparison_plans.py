@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from lightrag.api.eval_comparison import validate_plan
+from lightrag.api.eval_comparison import compare_contract, validate_plan
 
 pytestmark = pytest.mark.offline
 
@@ -27,3 +27,11 @@ def test_embedding_plan_requires_isolated_rebuild_per_arm() -> None:
     assert plan["reuse_permitted"] is False
     assert plan["index_requirement"] == "rebuild_isolated_index_per_arm"
     assert "allocate_isolated_workspace_per_arm" in plan["execution_dependencies"]
+
+
+def test_contract_blocks_ranking_when_dataset_fingerprints_differ() -> None:
+    run = {"execution_manifest": {"dataset": {"manifest_sha256": "a"}}, "experiment": {"id": "x"}}
+    other = {"execution_manifest": {"dataset": {"manifest_sha256": "b"}}, "experiment": {"id": "x"}}
+    result = compare_contract([run, other])
+    assert result["ranking_permitted"] is False
+    assert "dataset_fingerprint" in result["incompatible_fields"]

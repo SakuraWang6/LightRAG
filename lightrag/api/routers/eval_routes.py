@@ -139,6 +139,11 @@ class FreezeContextRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class CompareRunsRequest(BaseModel):
+    run_ids: list[str] = Field(min_length=2, max_length=32)
+    model_config = {"extra": "forbid"}
+
+
 _GENERIC_PARAM_KEYS = {
     "model",
     "mode",
@@ -659,6 +664,22 @@ def create_eval_routes(
         except Exception as exc:
             logger.error(f"Error freezing comparison context: {exc}")
             raise internal_server_error(exc)
+
+    @router.post("/comparisons/validate", dependencies=[Depends(combined_auth)])
+    async def validate_run_comparison(request: CompareRunsRequest) -> dict[str, Any]:
+        try:
+            require_eval()
+            runs = []
+            for run_id in request.run_ids:
+                detail = load_run(root, run_id)
+                if detail is None:
+                    raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+                runs.append(json.loads((Path(detail["run_dir"]) / "run.json").read_text(encoding="utf-8")))
+            return eval_comparison.compare_contract(runs)
+        except HTTPException:
+            raise
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.post("/environment-profiles", dependencies=[Depends(combined_auth)])
     async def create_environment_profile(
