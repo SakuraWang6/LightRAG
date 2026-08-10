@@ -36,6 +36,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATASET_PAGE_CAP = 1000
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _DISPATCH_LOCK = threading.Lock()
+_DISPATCH_LOOP_STARTED = False
 
 
 def _now_iso() -> str:
@@ -47,6 +48,22 @@ def _max_active_jobs() -> int:
     if raw and raw.strip().isdigit():
         return max(1, int(raw.strip()))
     return 1
+
+
+def _hold_blocks(runs_root: Path) -> bool:
+    """True while MEMORY_EVAL_WAIT_FOR_RUN has not reached status complete."""
+    hold = os.getenv("MEMORY_EVAL_WAIT_FOR_RUN")
+    if not hold:
+        return False
+    hold_path = Path(hold)
+    if not hold_path.is_absolute():
+        hold_path = _REPO_ROOT / hold_path
+    try:
+        envelope = json.loads((hold_path / "run.json").read_text(encoding="utf-8"))
+        return envelope.get("status") != "complete"
+    except (OSError, ValueError):
+        # The gate run does not exist (yet): keep waiting rather than skip.
+        return True
 
 
 def jobs_root(runs_root: Path) -> Path:
@@ -370,8 +387,11 @@ def _spawn_dataset_job(
 
 def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
     """Start the oldest pending job when a slot is free (FIFO queue)."""
+    _start_dispatch_loop(runs_root, datasets_root)
     with _DISPATCH_LOCK:
         datasets_root = datasets_root or _default_datasets_root(runs_root)
+        if _hold_blocks(runs_root):
+            return
         jobs = jobs_root(runs_root)
         while True:
             raw = [
@@ -413,6 +433,25 @@ def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
                     failed["status"] = "failed"
                     failed["finished_at"] = _now_iso()
                     _write_job(jobs, failed)
+
+
+def _start_dispatch_loop(runs_root: Path, datasets_root: Path | None = None) -> None:
+    """Daemon poller so queued jobs auto-start when a hold gate clears."""
+    global _DISPATCH_LOOP_STARTED
+    if _DISPATCH_LOOP_STARTED:
+        return
+    _DISPATCH_LOOP_STARTED = True
+    datasets_root = datasets_root or _default_datasets_root(runs_root)
+
+    def _loop() -> None:
+        while True:
+            time.sleep(60)
+            try:
+                _dispatch(runs_root, datasets_root)
+            except Exception:
+                pass
+
+    threading.Thread(target=_loop, daemon=True).start()
 
 
 def start_run_job(
