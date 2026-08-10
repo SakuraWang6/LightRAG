@@ -17,11 +17,13 @@ import os
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,6 +40,9 @@ DEFAULT_DATASET_PAGE_CAP = 1000
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _DISPATCH_LOCK = threading.Lock()
 _DISPATCH_LOOP_STARTED = False
+_CLAIM_LOCK_FILE = ".claim.lock"
+_TERMINAL_STATUSES = frozenset({"complete", "failed", "cancelled", "stale"})
+_ACTIVE_STATUSES = frozenset({"claiming", "running", "cancelling"})
 
 
 def _now_iso() -> str:
@@ -49,6 +54,72 @@ def _max_active_jobs() -> int:
     if raw and raw.strip().isdigit():
         return max(1, int(raw.strip()))
     return 1
+
+
+def _lease_seconds() -> int:
+    raw = os.getenv("MEMORY_EVAL_JOB_LEASE_SECONDS")
+    if raw and raw.strip().isdigit():
+        return max(30, int(raw.strip()))
+    return 120
+
+
+def _lease_expires_at() -> str:
+    return datetime.fromtimestamp(
+        time.time() + _lease_seconds(), timezone.utc
+    ).isoformat(timespec="seconds")
+
+
+def _lease_is_expired(claim: Any) -> bool:
+    if not isinstance(claim, dict):
+        return True
+    value = claim.get("lease_expires_at")
+    if not isinstance(value, str):
+        return True
+    try:
+        return datetime.fromisoformat(value) <= datetime.now(timezone.utc)
+    except ValueError:
+        return True
+
+
+def _claim_owner() -> dict[str, Any]:
+    pid = os.getpid()
+    process_started_at = _probe_process_start(pid)
+    owner_id = f"{socket.gethostname()}:{pid}:{process_started_at or 'unknown'}:{uuid.uuid4().hex}"
+    return {
+        "owner_id": owner_id,
+        "pid": pid,
+        "process_started_at": process_started_at,
+        "claimed_at": _now_iso(),
+        "lease_expires_at": _lease_expires_at(),
+    }
+
+
+@contextmanager
+def _claim_file_lock(runs_root: Path):
+    """Cross-process lock for the pending → claiming → running transition."""
+    root = jobs_root(runs_root)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / _CLAIM_LOCK_FILE
+    with path.open("a+", encoding="utf-8") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write("0")
+        handle.flush()
+        try:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            unlock = lambda: fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except ImportError:  # pragma: no cover - exercised on Windows only
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            unlock = lambda: msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        try:
+            yield
+        finally:
+            unlock()
 
 
 def _hold_blocks(runs_root: Path) -> bool:
@@ -167,11 +238,18 @@ def _derive_status(
     runs_root: Path,
     datasets_root: Path,
 ) -> str:
-    if job.get("status") in {"canceled", "stale", "pending"}:
-        return job["status"]
+    status = {"canceled": "cancelled", "succeeded": "complete"}.get(
+        job.get("status"), job.get("status")
+    )
+    if status in _TERMINAL_STATUSES or status == "pending":
+        return status
+    if status == "claiming":
+        return "pending" if _lease_is_expired(job.get("claim")) else "claiming"
     liveness = job_liveness(job)
     if liveness == "reused":
         return "stale"
+    if status == "cancelling":
+        return "cancelling" if liveness == "alive" else "cancelled"
     if liveness == "alive":
         return "running"
     exit_code = job.get("exit_code")
@@ -179,8 +257,8 @@ def _derive_status(
         dataset_id = job.get("dataset_id")
         manifest = datasets_root / str(dataset_id) / "manifest.json"
         if exit_code is not None:
-            return "succeeded" if exit_code == 0 and manifest.exists() else "failed"
-        return "succeeded" if manifest.exists() else "failed"
+            return "complete" if exit_code == 0 and manifest.exists() else "failed"
+        return "complete" if manifest.exists() else "failed"
     try:
         envelope = json.loads(
             (Path(job["output_dir"]) / "run.json").read_text(encoding="utf-8")
@@ -189,8 +267,8 @@ def _derive_status(
     except (OSError, ValueError):
         status = None
     if exit_code is not None:
-        return "succeeded" if exit_code == 0 else "failed"
-    return "succeeded" if status == "complete" else "failed"
+        return "complete" if exit_code == 0 else "failed"
+    return "complete" if status == "complete" else "failed"
 
 
 def _refresh_job(
@@ -198,11 +276,21 @@ def _refresh_job(
     *,
     runs_root: Path,
     datasets_root: Path,
+    recover_expired_claim: bool = False,
 ) -> dict[str, Any]:
+    previous = job.get("status")
     job["status"] = _derive_status(
         job, runs_root=runs_root, datasets_root=datasets_root
     )
-    if job["status"] in {"succeeded", "failed", "canceled", "stale"} and not job.get(
+    if previous == "claiming" and job["status"] == "pending":
+        if not recover_expired_claim:
+            # Only the dispatcher holds the cross-process claim lock.  A read
+            # endpoint may report this job as reclaimable, but must not write a
+            # stale copy over a new claim made by another API worker.
+            return job
+        job.pop("claim", None)
+        job["recovered_at"] = _now_iso()
+    if job["status"] in _TERMINAL_STATUSES and not job.get(
         "finished_at"
     ):
         job["finished_at"] = _now_iso()
@@ -240,15 +328,40 @@ def _record_exit(
         code = proc.wait()
     except Exception:
         return
-    job = _read_job(jobs_root, job_id)
-    if job is not None:
-        job["exit_code"] = code
-        _write_job(jobs_root, job)
+    with _claim_file_lock(jobs_root.parent):
+        job = _read_job(jobs_root, job_id)
+        if job is not None:
+            job["exit_code"] = code
+            _write_job(jobs_root, job)
     # A finished job frees a slot: start the next queued job, if any.
     _dispatch(
         jobs_root.parent,
         datasets_root=datasets_root or _default_datasets_root(jobs_root.parent),
     )
+
+
+def _renew_job_lease(
+    *, jobs: Path, job_id: str, proc: subprocess.Popen, owner_id: str
+) -> None:
+    """Renew a running job's lease while its direct child remains alive."""
+    poll = getattr(proc, "poll", None)
+    if not callable(poll):
+        return
+    interval = max(10, _lease_seconds() // 3)
+    while poll() is None:
+        time.sleep(interval)
+        with _claim_file_lock(jobs.parent):
+            job = _read_job(jobs, job_id)
+            if job is None:
+                return
+            claim = job.get("claim") or {}
+            if job.get("status") not in {"running", "cancelling"} or claim.get(
+                "owner_id"
+            ) != owner_id:
+                return
+            claim["lease_expires_at"] = _lease_expires_at()
+            job["claim"] = claim
+            _write_job(jobs, job)
 
 
 def _unique_run_dir(runs_root: Path, experiment: str) -> Path:
@@ -279,11 +392,16 @@ def _spawn_run_job(
     stale_minutes: int,
     max_restarts: int,
     poll_seconds: int,
+    owner_id: str,
 ) -> dict[str, Any]:
     jobs = jobs_root(runs_root)
     job = _read_job(jobs, job_id)
     if job is None:
         raise KeyError(f"job {job_id} not found")
+    if job.get("status") != "claiming" or (job.get("claim") or {}).get(
+        "owner_id"
+    ) != owner_id:
+        raise RuntimeError(f"job {job_id} is no longer claimed by this worker")
     params.output_dir = Path(job["output_dir"])
     params.output_dir.mkdir(parents=True, exist_ok=True)
     cmd = (
@@ -313,7 +431,13 @@ def _spawn_run_job(
             "supervise": bool(supervise),
         }
     )
+    job["claim"]["lease_expires_at"] = _lease_expires_at()
     _write_job(jobs, job)
+    threading.Thread(
+        target=_renew_job_lease,
+        kwargs={"jobs": jobs, "job_id": job_id, "proc": proc, "owner_id": owner_id},
+        daemon=True,
+    ).start()
     threading.Thread(
         target=_record_exit,
         args=(job_id, jobs, proc, datasets_root),
@@ -328,11 +452,16 @@ def _spawn_dataset_job(
     runs_root: Path,
     datasets_root: Path | None,
     params: dict[str, Any],
+    owner_id: str,
 ) -> dict[str, Any]:
     jobs = jobs_root(runs_root)
     job = _read_job(jobs, job_id)
     if job is None:
         raise KeyError(f"job {job_id} not found")
+    if job.get("status") != "claiming" or (job.get("claim") or {}).get(
+        "owner_id"
+    ) != owner_id:
+        raise RuntimeError(f"job {job_id} is no longer claimed by this worker")
     job_dir = jobs / job_id
     cmd = [
         sys.executable,
@@ -377,7 +506,13 @@ def _spawn_dataset_job(
             "supervise": False,
         }
     )
+    job["claim"]["lease_expires_at"] = _lease_expires_at()
     _write_job(jobs, job)
+    threading.Thread(
+        target=_renew_job_lease,
+        kwargs={"jobs": jobs, "job_id": job_id, "proc": proc, "owner_id": owner_id},
+        daemon=True,
+    ).start()
     threading.Thread(
         target=_record_exit,
         args=(job_id, jobs, proc, datasets_root),
@@ -394,12 +529,17 @@ def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
         if _hold_blocks(runs_root):
             return
         jobs = jobs_root(runs_root)
-        while True:
+        with _claim_file_lock(runs_root):
             raw = [
-                _refresh_job(j, runs_root=runs_root, datasets_root=datasets_root)
+                _refresh_job(
+                    j,
+                    runs_root=runs_root,
+                    datasets_root=datasets_root,
+                    recover_expired_claim=True,
+                )
                 for j in _raw_jobs(runs_root)
             ]
-            active = [j for j in raw if j.get("status") == "running"]
+            active = [j for j in raw if j.get("status") in _ACTIVE_STATUSES]
             if len(active) >= _max_active_jobs():
                 return
             pending = [j for j in raw if j.get("status") == "pending"]
@@ -407,6 +547,9 @@ def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
                 return
             pending.sort(key=lambda j: (j.get("created_at") or "", j.get("id") or ""))
             job = pending[0]
+            claim = _claim_owner()
+            job.update({"status": "claiming", "claim": claim})
+            _write_job(jobs, job)
             try:
                 if job["kind"] == "run":
                     _spawn_run_job(
@@ -419,6 +562,7 @@ def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
                         stale_minutes=int(job.get("stale_minutes") or 60),
                         max_restarts=int(job.get("max_restarts") or 3),
                         poll_seconds=int(job.get("poll_seconds") or 30),
+                        owner_id=claim["owner_id"],
                     )
                 else:
                     _spawn_dataset_job(
@@ -426,8 +570,8 @@ def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
                         runs_root=runs_root,
                         datasets_root=datasets_root,
                         params=job["params"],
+                        owner_id=claim["owner_id"],
                     )
-                return
             except Exception:
                 # A broken queued job must not block the rest of the queue.
                 failed = _read_job(jobs, job["id"])
@@ -653,27 +797,27 @@ def cancel_job(
 ) -> dict[str, Any] | None:
     if not _valid_job_id(job_id):
         return None
-    job = _read_job(jobs_root(runs_root), job_id)
-    if job is None:
-        return None
-    job = _refresh_job(job, runs_root=runs_root, datasets_root=datasets_root)
-    if job["status"] == "pending":
-        job["status"] = "canceled"
-        job["finished_at"] = _now_iso()
+    with _claim_file_lock(runs_root):
+        job = _read_job(jobs_root(runs_root), job_id)
+        if job is None:
+            return None
+        job = _refresh_job(job, runs_root=runs_root, datasets_root=datasets_root)
+        if job["status"] in {"pending", "claiming"}:
+            job["status"] = "cancelled"
+            job["finished_at"] = _now_iso()
+            _write_job(jobs_root(runs_root), job)
+            return job
+        if job["status"] in _TERMINAL_STATUSES:
+            return job
+        pid = job.get("pid")
+        if not isinstance(pid, int) or pid <= 0:
+            job["status"] = "failed"
+            job["finished_at"] = _now_iso()
+            _write_job(jobs_root(runs_root), job)
+            return job
+        job["status"] = "cancelling"
         _write_job(jobs_root(runs_root), job)
-        return job
-    if job["status"] in {"succeeded", "failed", "canceled", "stale"}:
-        return job
-    pid = job.get("pid")
-    if not isinstance(pid, int) or pid <= 0:
-        job["status"] = "failed"
-        job["finished_at"] = _now_iso()
-        _write_job(jobs_root(runs_root), job)
-        return job
     _terminate_process_tree(pid)
-    job["status"] = "canceled"
-    job["finished_at"] = _now_iso()
-    _write_job(jobs_root(runs_root), job)
     return job
 
 

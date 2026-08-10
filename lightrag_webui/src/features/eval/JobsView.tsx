@@ -26,10 +26,10 @@ interface JobsViewProps {
 }
 
 function statusClass(status: string): string {
-  if (status === 'running' || status === 'pending') {
+  if (status === 'running' || status === 'claiming' || status === 'pending') {
     return 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
   }
-  if (status === 'canceled' || status === 'stale') {
+  if (status === 'cancelled' || status === 'cancelling' || status === 'stale') {
     return 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300'
   }
   if (status === 'failed') {
@@ -59,7 +59,7 @@ export default function JobsView({ onBack }: JobsViewProps) {
   }, [load])
 
   const hasActive = useMemo(
-    () => jobs.some((job) => job.status === 'running' || job.status === 'pending'),
+    () => jobs.some((job) => ['claiming', 'running', 'cancelling', 'pending'].includes(job.status)),
     [jobs]
   )
   const pendingCount = useMemo(
@@ -157,7 +157,7 @@ export default function JobsView({ onBack }: JobsViewProps) {
                     </TableCell>
                     <TableCell className="px-3 py-2">{formatDate(job.started_at)}</TableCell>
                     <TableCell className="px-3 py-2 text-right">
-                      {job.status === 'running' || job.status === 'pending' ? (
+                      {['claiming', 'running', 'pending'].includes(job.status) ? (
                         <Button
                           size="sm"
                           variant="ghost"

@@ -338,5 +338,62 @@ def test_dataset_job_exit_code_drives_status(tmp_path: Path) -> None:
     succeeded = dict(base, exit_code=0)
     assert (
         eval_jobs._derive_status(succeeded, runs_root=tmp_path, datasets_root=generated)
-        == "succeeded"
+        == "complete"
     )
+
+
+def test_expired_claim_is_recovered_for_another_worker(tmp_path: Path) -> None:
+    root = eval_jobs.jobs_root(tmp_path)
+    root.mkdir(parents=True, exist_ok=True)
+    job = {
+        "id": "run-claimed",
+        "kind": "run",
+        "output_dir": str(tmp_path / "out"),
+        "status": "claiming",
+        "claim": {
+            "owner_id": "dead-worker",
+            "pid": 999_999,
+            "process_started_at": 1,
+            "lease_expires_at": "2020-01-01T00:00:00+00:00",
+        },
+    }
+    eval_jobs._write_job(root, job)
+
+    refreshed = eval_jobs._refresh_job(
+        job,
+        runs_root=tmp_path,
+        datasets_root=tmp_path / "generated",
+        recover_expired_claim=True,
+    )
+    assert refreshed["status"] == "pending"
+    assert "claim" not in refreshed
+    assert refreshed["recovered_at"]
+
+
+def test_spawn_refuses_job_claimed_by_another_worker(tmp_path: Path) -> None:
+    root = eval_jobs.jobs_root(tmp_path)
+    root.mkdir(parents=True, exist_ok=True)
+    job = {
+        "id": "run-claimed",
+        "kind": "run",
+        "output_dir": str(tmp_path / "out"),
+        "status": "claiming",
+        "claim": {"owner_id": "worker-a"},
+        "params": {"experiment": "context_size", "dataset": "dataset", "extra": []},
+    }
+    eval_jobs._write_job(root, job)
+    with pytest.raises(RuntimeError, match="no longer claimed"):
+        eval_jobs._spawn_run_job(
+            job_id="run-claimed",
+            runs_root=tmp_path,
+            datasets_root=tmp_path / "generated",
+            params=RunParams(
+                experiment="context_size", dataset=Path("dataset"), output_dir=tmp_path / "out"
+            ),
+            supervise=False,
+            supervision="none",
+            stale_minutes=60,
+            max_restarts=0,
+            poll_seconds=30,
+            owner_id="worker-b",
+        )

@@ -480,7 +480,7 @@ export default function EvalRunDetail({
         const match = jobs.find(
           (job) =>
             job.kind === 'run' &&
-            job.status === 'running' &&
+            ['claiming', 'running', 'cancelling'].includes(job.status) &&
             job.output_dir === (run.run_dir ?? '')
         )
         setActiveJob(match ?? null)
@@ -498,7 +498,7 @@ export default function EvalRunDetail({
       const result = await cancelEvalJob(activeJob.id)
       setActiveJob(null)
       toast.success(
-        result.status === 'canceled'
+        result.status === 'cancelled'
           ? activeJob.supervise
             ? t('eval.canceledNoRestart')
             : t('eval.jobCanceled')

@@ -579,14 +579,14 @@ def create_eval_routes(
                 for job in eval_jobs.list_jobs(runs_root=root, datasets_root=datasets)
                 if job.get("kind") == "run"
                 and job.get("output_dir") == str(run_dir)
-                and job.get("status") in {"running", "pending"}
+                and job.get("status") in {"claiming", "running", "cancelling", "pending"}
             ]
             for job in matching:
                 canceled = eval_jobs.cancel_job(
                     runs_root=root, datasets_root=datasets, job_id=job["id"]
                 )
                 if (
-                    job.get("status") == "running"
+                    job.get("status") in {"running", "cancelling"}
                     and canceled is not None
                     and not eval_jobs.wait_job_exit(canceled)
                 ):
