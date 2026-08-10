@@ -640,6 +640,9 @@
     "paramNumPredict": "Макс. вывод",
     "paramTemperature": "Температура",
     "paramEngine": "Движок парсера",
-    "paramKg": "Использовать KG"
+    "paramKg": "Использовать KG",
+    "reproduceFrom": "Воспроизведение: {experiment} · {dataset}",
+    "modifiedFields": "Изменённые поля",
+    "compareMismatch": "Сравниваемые запуски должны быть одного типа и набора данных."
   }
 }

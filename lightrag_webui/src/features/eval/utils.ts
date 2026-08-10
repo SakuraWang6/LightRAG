@@ -135,6 +135,74 @@ export function hasRunningJobs(
   return jobs.some((job) => job.status === 'running')
 }
 
+export function diffParams(
+  original: Record<string, unknown>,
+  current: Record<string, unknown>
+): string[] {
+  const keys = new Set([...Object.keys(original), ...Object.keys(current)])
+  const changed: string[] = []
+  for (const key of keys) {
+    const before = original[key]
+    const after = current[key]
+    if (before == null || after == null) continue
+    if (String(before) !== String(after)) changed.push(key)
+  }
+  return changed.sort()
+}
+
+export function compareCompatible(
+  runs: Array<{ kind?: string; dataset?: string | null }>
+): boolean {
+  if (runs.length < 2) return true
+  const first = runs[0]
+  return runs.every(
+    (run) =>
+      run.kind === first.kind &&
+      (run.dataset ?? null) === (first.dataset ?? null)
+  )
+}
+
+export function buildReproduceDraft(run: {
+  launch_params?: Record<string, unknown> | null
+  conditions: Array<{ key: string; value: string }>
+  experiment?: string | null
+  dataset?: string | null
+}): { params: Record<string, unknown>; extraText: string; experiment: string; dataset: string } {
+  if (run.launch_params && typeof run.launch_params === 'object') {
+    const { extra, ...rest } = run.launch_params
+    return {
+      params: rest,
+      extraText: Array.isArray(extra) ? (extra as unknown[]).map(String).join(',') : '',
+      experiment: run.experiment ?? '',
+      dataset: run.dataset ?? ''
+    }
+  }
+  const params: Record<string, unknown> = {}
+  const keys = [
+    'model',
+    'mode',
+    'top_k',
+    'chunk_top_k',
+    'max_cases',
+    'num_ctx',
+    'num_predict',
+    'temperature',
+    'engine',
+    'kg'
+  ]
+  for (const condition of run.conditions) {
+    if (!keys.includes(condition.key)) continue
+    params[condition.key] =
+      condition.key === 'kg' ? condition.value === '开' : condition.value
+  }
+  return {
+    params,
+    extraText: '',
+    experiment: run.experiment ?? '',
+    dataset: run.dataset ?? ''
+  }
+}
+
 export function runKindClass(kind: EvalRunKind): string {
   switch (kind) {
     case 'offline':

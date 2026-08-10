@@ -254,6 +254,20 @@ def test_environment_without_credentials_keeps_nulls(tmp_path: Path) -> None:
     assert envelope["environment"]["api_key"] is None
 
 
+def test_redact_launch_extra_masks_sensitive_keys() -> None:
+    from memory_eval_tests.experiments.common import redact_launch_extra
+
+    redacted = redact_launch_extra(
+        ["api_key=super-secret", "selected_limit=5", "MY_TOKEN=abc", "stage=eval"]
+    )
+    assert redacted == [
+        "api_key=configured",
+        "selected_limit=5",
+        "MY_TOKEN=configured",
+        "stage=eval",
+    ]
+
+
 def test_registry_specs() -> None:
     from memory_eval_tests.experiments.registry import list_specs
 

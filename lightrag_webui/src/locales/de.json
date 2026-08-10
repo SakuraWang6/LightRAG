@@ -640,6 +640,9 @@
     "paramNumPredict": "Max. Ausgabe",
     "paramTemperature": "Temperatur",
     "paramEngine": "Parser-Engine",
-    "paramKg": "KG verwenden"
+    "paramKg": "KG verwenden",
+    "reproduceFrom": "Lauf wird reproduziert: {experiment} · {dataset}",
+    "modifiedFields": "Geänderte Felder",
+    "compareMismatch": "Zu vergleichende Läufe müssen gleiche Art und gleichen Datensatz haben."
   }
 }

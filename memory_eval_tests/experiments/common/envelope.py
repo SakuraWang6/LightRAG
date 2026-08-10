@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any, Callable
 
 SCHEMA_VERSION = "1.0"
 _SCAN_INDEX_NAME = ".eval_index.json"
+_SENSITIVE_EXTRA_RE = re.compile(r"(key|token|secret|authorization)", re.IGNORECASE)
 
 BASELINE_DEFAULTS: dict[str, Any] = {
     "mode": "mix",
@@ -137,6 +139,23 @@ def _redact_environment(environment: dict[str, Any]) -> dict[str, Any]:
     for key in ("api_key", "access_token"):
         if redacted.get(key):
             redacted[key] = "configured"
+    return redacted
+
+
+def redact_launch_extra(extra: list[str]) -> list[str]:
+    """Redact sensitive KEY=VALUE entries before persisting launch params.
+
+    The CLI lets users pass arbitrary ``--extra KEY=VALUE`` pairs; a key whose
+    name looks like a credential (api_key/token/secret/authorization) is
+    replaced with ``configured`` so secrets never land in run.json.
+    """
+    redacted: list[str] = []
+    for item in extra:
+        key, _, value = item.partition("=")
+        if _SENSITIVE_EXTRA_RE.search(key.strip()):
+            redacted.append(f"{key.strip()}=configured")
+        else:
+            redacted.append(item)
     return redacted
 
 

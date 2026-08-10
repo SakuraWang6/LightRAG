@@ -320,6 +320,7 @@ def _run_record(
         "legacy": bool(envelope.get("legacy", False)),
         "restarts": int(envelope.get("restarts") or 0),
         "last_restart_resume": envelope.get("last_restart_resume"),
+        "launch_params": envelope.get("launch_params"),
         "label": experiment.get("label") or run_dir.name,
         "experiment": experiment.get("id"),
         "description": experiment.get("description") or "",

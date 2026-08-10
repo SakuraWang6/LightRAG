@@ -25,7 +25,9 @@ def _write(path: Path, payload) -> None:
     if isinstance(payload, str):
         path.write_text(payload, encoding="utf-8")
     else:
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
 
 def _experiment_envelope(run_id: str = "context-selection-v1") -> dict:
@@ -98,7 +100,11 @@ def _offline_envelope() -> dict:
         "run_id": "rich-smoke-v1",
         "created_at": "2026-08-09T01:00:00+00:00",
         "status": "passed",
-        "experiment": {"id": "offline_audit", "label": "离线审计", "description": "无 LLM 审计。"},
+        "experiment": {
+            "id": "offline_audit",
+            "label": "离线审计",
+            "description": "无 LLM 审计。",
+        },
         "environment": {},
         "baseline": {"dataset": "rich-smoke-v1", "engine": "native", "top_k": 5},
         "variables": [],
@@ -116,7 +122,7 @@ def _offline_envelope() -> dict:
                 "params": {},
                 "summary": {"passed": True, "chunk_sidecar_coverage": 1.0, "cases": 36},
                 "results": [],
-            }
+            },
         ],
         "reports": {},
     }
@@ -133,8 +139,17 @@ def runs_tree(tmp_path: Path) -> Path:
     _write(runs / "offline" / "rich-smoke-v1" / "run.json", _offline_envelope())
     # A manifest so dataset conditions resolve.
     _write(
-        tmp_path / "memory_data_service" / "generated" / "rich-smoke-v1" / "manifest.json",
-        {"dataset_id": "rich-smoke-v1", "pages": 12, "tier": "smoke", "profile": "rich"},
+        tmp_path
+        / "memory_data_service"
+        / "generated"
+        / "rich-smoke-v1"
+        / "manifest.json",
+        {
+            "dataset_id": "rich-smoke-v1",
+            "pages": 12,
+            "tier": "smoke",
+            "profile": "rich",
+        },
     )
     return runs
 
@@ -146,6 +161,7 @@ def _client(runs_root: Path, api_key: str | None = None) -> TestClient:
 
 
 pytestmark = pytest.mark.offline
+
 
 def test_scan_and_load_envelope(runs_tree: Path) -> None:
     from lightrag.api.eval_index import load_run, scan_runs
@@ -162,7 +178,9 @@ def test_scan_and_load_envelope(runs_tree: Path) -> None:
     detail = load_run(runs_tree, "context-selection-v1")
     assert detail["id"] == "context-selection-v1"
     method_artifact = next(a for a in detail["artifacts"] if a["kind"] == "experiment")
-    assert method_artifact["table"]["rows"][0]["answer_accuracy"] == pytest.approx(0.8333)
+    assert method_artifact["table"]["rows"][0]["answer_accuracy"] == pytest.approx(
+        0.8333
+    )
     # Legacy key ``hallucination_rate`` is normalized to ``ungrounded_rate``
     # when the console reads the envelope.
     assert method_artifact["table"]["rows"][0]["ungrounded_rate"] == pytest.approx(0.25)
@@ -175,7 +193,10 @@ def test_scan_and_load_envelope(runs_tree: Path) -> None:
     assert offline["kind"] == "offline"
     assert offline["failed_checks"] == ["版式审计"]
     summary = next(a for a in offline["artifacts"] if a["kind"] == "summary")
-    assert {m["key"] for m in summary["metrics"]} >= {"passed", "chunk_sidecar_coverage"}
+    assert {m["key"] for m in summary["metrics"]} >= {
+        "passed",
+        "chunk_sidecar_coverage",
+    }
 
 
 def test_progress_visible(runs_tree: Path) -> None:
@@ -216,7 +237,10 @@ def test_run_detail_and_not_found(runs_tree: Path, monkeypatch) -> None:
     assert detail.status_code == 200
     assert detail.json()["kind"] == "experiment"
     assert client.get("/eval/runs/does-not-exist", headers=headers).status_code == 404
-    assert client.get("/eval/runs/..%2F..%2Fetc%2Fpasswd", headers=headers).status_code == 404
+    assert (
+        client.get("/eval/runs/..%2F..%2Fetc%2Fpasswd", headers=headers).status_code
+        == 404
+    )
 
 
 def test_refresh_returns_count(runs_tree: Path, monkeypatch) -> None:
@@ -309,7 +333,9 @@ def test_scan_cache_refreshes_and_ignores_parsed_inputs(runs_tree: Path) -> None
     assert "new-run" in ids
 
 
-def test_scan_cache_ttl_serves_records_without_walking(monkeypatch, runs_tree: Path) -> None:
+def test_scan_cache_ttl_serves_records_without_walking(
+    monkeypatch, runs_tree: Path
+) -> None:
     import lightrag.api.eval_index as eval_index
     from lightrag.api.eval_index import clear_scan_cache, scan_runs
 
@@ -384,7 +410,9 @@ def test_flatten_cases_keeps_full_retrieval_evidence() -> None:
                     "question_id": "Q1",
                     "recall_at_k": 0.5,
                     "hit_fact_ids": [f"FACT-{i}" for i in range(1, 7)],
-                    "top_contexts": [{"rank": 1, "file_path": "a.docx", "chunk_count": 2}],
+                    "top_contexts": [
+                        {"rank": 1, "file_path": "a.docx", "chunk_count": 2}
+                    ],
                     "answer": "x" * 500,
                 }
             ],
@@ -404,7 +432,12 @@ def test_summary_metrics_prefers_canonical_over_legacy_key() -> None:
     from lightrag.api.eval_index import _summary_metrics
 
     metrics = _summary_metrics(
-        [{"method": "m", "summary": {"hallucination_rate": 0.9, "ungrounded_rate": 0.2}}]
+        [
+            {
+                "method": "m",
+                "summary": {"hallucination_rate": 0.9, "ungrounded_rate": 0.2},
+            }
+        ]
     )
     by_key = {metric["key"]: metric["value"] for metric in metrics}
     assert by_key["ungrounded_rate"] == 0.2
@@ -425,6 +458,11 @@ def test_run_record_surfaces_legacy_and_timing(runs_tree: Path) -> None:
             "finished_at": "2026-08-09T00:05:00+00:00",
             "restarts": 2,
             "last_restart_resume": True,
+            "launch_params": {
+                "model": "qwen3:8b",
+                "top_k": 5,
+                "extra": ["stage=eval"],
+            },
             "status": "complete",
             "legacy": True,
             "experiment": {"id": "legacy_online", "label": "Legacy", "description": ""},
@@ -440,6 +478,11 @@ def test_run_record_surfaces_legacy_and_timing(runs_tree: Path) -> None:
     assert detail["legacy"] is True
     assert detail["restarts"] == 2
     assert detail["last_restart_resume"] is True
+    assert detail["launch_params"] == {
+        "model": "qwen3:8b",
+        "top_k": 5,
+        "extra": ["stage=eval"],
+    }
     assert detail["duration_seconds"] == pytest.approx(300.0)
 
 
@@ -452,7 +495,9 @@ def test_run_log_endpoint_returns_tail(runs_tree: Path, monkeypatch) -> None:
         "\n".join(f"line-{index}" for index in range(1, 6)) + "\n",
         encoding="utf-8",
     )
-    response = client.get("/eval/runs/context-selection-v1/log?lines=2", headers=headers)
+    response = client.get(
+        "/eval/runs/context-selection-v1/log?lines=2", headers=headers
+    )
     assert response.status_code == 200
     payload = response.json()
     assert payload["exists"] is True

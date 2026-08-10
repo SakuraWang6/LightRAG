@@ -3,7 +3,10 @@ import { describe, expect, test } from 'bun:test'
 import {
   buildCompareCsv,
   buildCasesCsv,
+  buildReproduceDraft,
   caseFieldLabel,
+  compareCompatible,
+  diffParams,
   formatDelta,
   hasRunningJobs,
   metricStats,
@@ -88,5 +91,65 @@ describe('eval utils', () => {
     expect(hasRunningJobs([{ status: 'running' }, { status: 'succeeded' }])).toBe(true)
     expect(hasRunningJobs([{ status: 'succeeded' }, { status: 'failed' }])).toBe(false)
     expect(hasRunningJobs([])).toBe(false)
+  })
+
+  test('diffParams normalizes types and ignores null', () => {
+    expect(diffParams({ top_k: 5 }, { top_k: '5' })).toEqual([])
+    expect(diffParams({ max_cases: null }, { max_cases: 3 })).toEqual([])
+    expect(diffParams({ top_k: 5, model: 'a' }, { top_k: 5, model: 'b' })).toEqual(['model'])
+  })
+
+  test('compareCompatible requires same kind and dataset', () => {
+    expect(
+      compareCompatible([
+        { kind: 'online', dataset: 'd1' },
+        { kind: 'online', dataset: 'd1' }
+      ])
+    ).toBe(true)
+    expect(
+      compareCompatible([
+        { kind: 'online', dataset: 'd1' },
+        { kind: 'offline', dataset: 'd1' }
+      ])
+    ).toBe(false)
+    expect(
+      compareCompatible([
+        { kind: 'online', dataset: 'd1' },
+        { kind: 'online', dataset: 'd2' }
+      ])
+    ).toBe(false)
+    expect(compareCompatible([{ kind: 'online', dataset: 'd1' }])).toBe(true)
+  })
+
+  test('buildReproduceDraft prefers launch_params and fills extraText', () => {
+    const draft = buildReproduceDraft({
+      launch_params: {
+        model: 'gpt-4o-mini',
+        top_k: 5,
+        kg: true,
+        extra: ['stage=eval', 'selected_limit=5']
+      },
+      conditions: [],
+      experiment: 'context_size',
+      dataset: 'rich-smoke-v1'
+    })
+    expect(draft.params).toEqual({ model: 'gpt-4o-mini', top_k: 5, kg: true })
+    expect(draft.extraText).toBe('stage=eval,selected_limit=5')
+    expect(draft.experiment).toBe('context_size')
+  })
+
+  test('buildReproduceDraft falls back to conditions with kg mapping', () => {
+    const draft = buildReproduceDraft({
+      launch_params: null,
+      conditions: [
+        { key: 'model', value: 'qwen3:8b' },
+        { key: 'top_k', value: '5' },
+        { key: 'kg', value: '开' }
+      ],
+      experiment: 'online_baseline',
+      dataset: 'rich-smoke-v1'
+    })
+    expect(draft.params).toEqual({ model: 'qwen3:8b', top_k: '5', kg: true })
+    expect(draft.extraText).toBe('')
   })
 })

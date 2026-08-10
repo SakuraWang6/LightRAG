@@ -21,14 +21,41 @@ from memory_eval_tests.experiments.common import (
     BASELINE_DEFAULTS,
     RunContext,
     capture_environment,
+    redact_launch_extra,
     write_envelope,
     write_progress,
 )
 from memory_eval_tests.experiments.registry import get_spec
 
+_LAUNCH_KEYS = (
+    "model",
+    "mode",
+    "top_k",
+    "chunk_top_k",
+    "max_cases",
+    "num_ctx",
+    "num_predict",
+    "temperature",
+    "engine",
+    "kg",
+)
+
 
 def _parse_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _launch_params(baseline: dict[str, Any], extra_items: list[str]) -> dict[str, Any]:
+    """Snapshot the launch-time parameters for exact one-click reproduction.
+
+    Written only by the harness (run.py) into the envelope; offline/direct
+    writers do not emit it and the console falls back to conditions.
+    """
+    params: dict[str, Any] = {
+        key: baseline[key] for key in _LAUNCH_KEYS if key in baseline
+    }
+    params["extra"] = redact_launch_extra(list(extra_items))
+    return params
 
 
 def _heartbeat_loop(output_dir: Path, stop: threading.Event) -> None:
@@ -219,6 +246,7 @@ def main() -> None:
     for item in args.extra:
         key, _, value = item.partition("=")
         extra[key.strip()] = value.strip()
+    launch_params = _launch_params(baseline, args.extra)
 
     storage_dir = args.storage_dir or (args.output_dir / "rag_storage")
     # The in-process LightRAG instance resolves its working directory from the
@@ -271,6 +299,7 @@ def main() -> None:
         report_rel_path=None,
         write_progress_file=False,
         runs_root=runs_root,
+        extra={"launch_params": launch_params},
     )
     write_progress(args.output_dir, status="queued", done=0, total=1, phase="starting")
     stop_heartbeat = threading.Event()
@@ -296,7 +325,10 @@ def main() -> None:
                 status=status,
                 methods=methods,
                 report_rel_path=report_path.name,
-                extra=payload.get("extra"),
+                extra={
+                    **(payload.get("extra") or {}),
+                    "launch_params": launch_params,
+                },
                 runs_root=runs_root,
             )
             _log(

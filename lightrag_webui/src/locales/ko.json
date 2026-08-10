@@ -640,6 +640,9 @@
     "paramNumPredict": "최대 출력",
     "paramTemperature": "온도",
     "paramEngine": "파서 엔진",
-    "paramKg": "KG 사용"
+    "paramKg": "KG 사용",
+    "reproduceFrom": "재현 원본: {experiment} · {dataset}",
+    "modifiedFields": "수정된 필드",
+    "compareMismatch": "비교할 실행은 같은 종류와 데이터셋이어야 합니다."
   }
 }

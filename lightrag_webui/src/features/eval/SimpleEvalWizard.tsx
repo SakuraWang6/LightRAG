@@ -45,8 +45,12 @@ export default function SimpleEvalWizard({ onBack, onStarted }: SimpleEvalWizard
   }, [])
 
   const start = useCallback(async () => {
-    if (!dataset || !model) {
+    if (!dataset) {
       toast.error(t('eval.wizardIncomplete'))
+      return
+    }
+    if (model === '__custom__' || !model.trim()) {
+      toast.error(t('eval.paramModelPick'))
       return
     }
     setSubmitting(true)

@@ -640,6 +640,9 @@
     "paramNumPredict": "أقصى إخراج",
     "paramTemperature": "الحرارة",
     "paramEngine": "محرك التحليل",
-    "paramKg": "استخدام KG"
+    "paramKg": "استخدام KG",
+    "reproduceFrom": "إعادة إنتاج: {experiment} · {dataset}",
+    "modifiedFields": "الحقول المعدّلة",
+    "compareMismatch": "يجب أن تتشارك التشغيلات المقارنة نفس النوع ونفس مجموعة البيانات."
   }
 }

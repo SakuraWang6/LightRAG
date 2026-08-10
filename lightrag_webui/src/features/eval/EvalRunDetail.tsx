@@ -84,6 +84,13 @@ function RunHeader({
   onDelete?: () => void
 }) {
   const { t } = useTranslation()
+  const isRunning = useMemo(
+    () =>
+      ['running', 'queued', 'pending'].includes(run.progress?.status ?? '') ||
+      ['running', 'queued', 'pending'].includes(run.status ?? '') ||
+      Boolean(activeJob),
+    [run.progress?.status, run.status, activeJob]
+  )
   const elapsedSeconds = useMemo(() => {
     if (!run.started_at) return null
     const started = new Date(run.started_at).getTime()
@@ -142,13 +149,13 @@ function RunHeader({
       </div>
       <p className="text-muted-foreground mt-1 text-xs">
         {t('eval.updatedAt')}: {formatDate(run.updated_at)}
-        {elapsedSeconds != null ? (
+        {isRunning && elapsedSeconds != null ? (
           <>
             {' · '}
             {t('eval.elapsed')}: {formatDuration(elapsedSeconds)}
           </>
         ) : null}
-        {etaSeconds != null ? (
+        {isRunning && etaSeconds != null ? (
           <>
             {' · '}
             {t('eval.eta')}: {formatDuration(etaSeconds)}
@@ -346,6 +353,10 @@ function StandardRunView({ run }: { run: EvalRunDetail }) {
               ) : null}
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="log" forceMount={false} className="mt-3">
+          <RunLog runId={run.id} />
         </TabsContent>
       </Tabs>
     </div>

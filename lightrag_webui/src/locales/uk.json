@@ -640,6 +640,9 @@
     "paramNumPredict": "Макс. вивід",
     "paramTemperature": "Температура",
     "paramEngine": "Рушій парсера",
-    "paramKg": "Використати KG"
+    "paramKg": "Використати KG",
+    "reproduceFrom": "Відтворення: {experiment} · {dataset}",
+    "modifiedFields": "Змінені поля",
+    "compareMismatch": "Запуски для порівняння мають бути одного типу й набору даних."
   }
 }

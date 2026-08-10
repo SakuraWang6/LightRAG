@@ -37,7 +37,14 @@ import JobsView from '@/features/eval/JobsView'
 import NewRunWizard from '@/features/eval/NewRunWizard'
 import SimpleEvalWizard from '@/features/eval/SimpleEvalWizard'
 import type { EvalTemplate } from '@/api/eval'
-import { formatDate, runKindClass, statusBadgeClass, statusLabel } from '@/features/eval/utils'
+import {
+  buildReproduceDraft,
+  compareCompatible,
+  formatDate,
+  runKindClass,
+  statusBadgeClass,
+  statusLabel
+} from '@/features/eval/utils'
 
 const KIND_OPTIONS: { value: EvalRunKind | 'all'; labelKey: string }[] = [
   { value: 'all', labelKey: 'eval.kindAll' },
@@ -70,21 +77,13 @@ export default function EvalConsole() {
   const [wizardDraft, setWizardDraft] = useState<EvalTemplate | null>(null)
 
   const handleReproduce = useCallback((run: EvalRun) => {
-    const params: Record<string, unknown> = {}
-    for (const condition of run.conditions) {
-      if (
-        ['model', 'top_k', 'chunk_top_k', 'num_ctx', 'num_predict', 'temperature', 'mode'].includes(
-          condition.key
-        )
-      ) {
-        params[condition.key] = condition.value
-      }
-    }
+    const draft = buildReproduceDraft(run)
     setWizardDraft({
       name: '',
-      experiment: run.experiment ?? '',
-      dataset: run.dataset ?? '',
-      params,
+      experiment: draft.experiment,
+      dataset: draft.dataset,
+      params: draft.params,
+      extraText: draft.extraText,
       supervise: false
     })
     setView('new')
@@ -192,12 +191,21 @@ export default function EvalConsole() {
       const next = new Set(prev)
       if (next.has(id)) {
         next.delete(id)
-      } else {
-        next.add(id)
+        return next
       }
+      if (next.size > 0) {
+        const firstId = next.values().next().value as string
+        const first = runs?.find((run) => run.id === firstId)
+        const candidate = runs?.find((run) => run.id === id)
+        if (first && candidate && !compareCompatible([first, candidate])) {
+          toast.error(t('eval.compareMismatch'))
+          return prev
+        }
+      }
+      next.add(id)
       return next
     })
-  }, [])
+  }, [runs, t])
 
   const startCompare = useCallback(async () => {
     const ids = Array.from(compareIds)

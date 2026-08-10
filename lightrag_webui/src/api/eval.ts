@@ -77,6 +77,7 @@ export type EvalRun = {
   last_restart_resume?: boolean | null
   label: string
   experiment?: string | null
+  launch_params?: Record<string, unknown> | null
   dataset?: string | null
   updated_at?: string | null
   started_at?: string | null
@@ -142,6 +143,7 @@ export type EvalTemplate = {
   experiment: string
   dataset: string
   params: Record<string, unknown>
+  extraText?: string
   supervise: boolean
 }
 

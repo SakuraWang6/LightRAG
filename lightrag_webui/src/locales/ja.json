@@ -640,6 +640,9 @@
     "paramNumPredict": "最大出力",
     "paramTemperature": "温度",
     "paramEngine": "解析エンジン",
-    "paramKg": "KG を使用"
+    "paramKg": "KG を使用",
+    "reproduceFrom": "再現元: {experiment} · {dataset}",
+    "modifiedFields": "変更した項目",
+    "compareMismatch": "比較する実行は同じ種類・同じデータセットである必要があります。"
   }
 }

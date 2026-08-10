@@ -15,7 +15,7 @@ import {
   type EvalExperiment,
   type EvalTemplate
 } from '@/api/eval'
-import { hasRunningJobs } from '@/features/eval/utils'
+import { diffParams, hasRunningJobs } from '@/features/eval/utils'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
@@ -76,6 +76,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
   const [extraText, setExtraText] = useState('')
   const [templateName, setTemplateName] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [originalParams, setOriginalParams] = useState<Record<string, unknown> | null>(null)
 
   useEffect(() => {
     void listDatasets().then((data) => setDatasets(data.datasets)).catch(() => undefined)
@@ -94,7 +95,11 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
       setDataset(initial.dataset)
       setExperiment(initial.experiment)
       setParams(initial.params ?? {})
+      setExtraText(initial.extraText ?? '')
+      setOriginalParams({ ...(initial.params ?? {}) })
       setSupervise(initial.supervise)
+    } else {
+      setOriginalParams(null)
     }
   }, [initial])
 
@@ -102,6 +107,15 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
     () => experiments.find((item) => item.id === experiment),
     [experiments, experiment]
   )
+
+  const modifiedKeys = useMemo(
+    () => (originalParams ? diffParams(originalParams, params) : []),
+    [originalParams, params]
+  )
+
+  const modelValue = params.model == null ? '' : String(params.model)
+  const modelInList = modelValue !== '' && models.includes(modelValue)
+  const useCustomModel = customModel || (modelValue !== '' && !modelInList)
 
   const setParam = (key: string, value: unknown) => {
     setParams((prev) => ({ ...prev, [key]: value }))
@@ -253,6 +267,21 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
               <CardTitle className="text-sm">{t('eval.wizardParams')}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
+              {originalParams ? (
+                <div className="space-y-1">
+                  <p className="text-muted-foreground text-xs">
+                    {t('eval.reproduceFrom', {
+                      experiment: initial?.experiment ?? '',
+                      dataset: initial?.dataset ?? ''
+                    })}
+                  </p>
+                  {modifiedKeys.length > 0 ? (
+                    <p className="text-amber-600 dark:text-amber-400 text-xs">
+                      {t('eval.modifiedFields')}: {modifiedKeys.join(', ')}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {pendingCount > 0 ? (
                 <p className="text-amber-600 dark:text-amber-400 text-xs">
                   {t('eval.jobsQueued', { count: pendingCount })}
@@ -260,7 +289,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
               ) : null}
               <label className="flex flex-col gap-1 text-xs">
                 <span className="text-muted-foreground">{t('eval.paramModel')}</span>
-                {!customModel ? (
+                {!useCustomModel ? (
                   <Select
                     value={params.model == null ? '' : String(params.model)}
                     onValueChange={(value) => {

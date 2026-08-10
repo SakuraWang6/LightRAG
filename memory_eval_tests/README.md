@@ -247,13 +247,18 @@ conda run -n lightrag-memory-eval python -m memory_eval_tests.experiments.superv
 `POST /eval/jobs` 的 `kind=dataset`）、`GET/POST/DELETE /eval/templates`。
 作业状态以 `runs/.jobs/<job_id>/job.json`
 （pid + 进程启动时间）为准，API 重启后可恢复取消；job.json 不存凭据。
+“一键复现”读取 envelope 的 `launch_params`（仅实验类 run 由 harness 写入，
+敏感 extra 键已脱敏）；offline / 直连 retrieval/answer / report 等
+`write_simple_envelope` 路径无此字段，前端回退用 conditions 重建。
 数据集生成走同一 job 通道（`kind=dataset`），默认 pages 上限 1000，
 `allow_oversized_generation` 可放开；`/eval` 依赖随 wheel 打包的
 `memory_eval_tests` / `memory_data_service` 包，包缺失时返回 503。
 
 并发与队列：作业按 FIFO 排队，`MEMORY_EVAL_MAX_ACTIVE_JOBS`（默认 1）控制
 同时运行数，`MEMORY_EVAL_WAIT_FOR_RUN` 可让队列等待指定 run 完成后自动启动。
-后端队列已实现；前端“作业/队列视图”尚未提供（排队中的 job 目前不在 UI 可见）。
+前端“作业”子视图展示全部 job（排队位/状态/日志 tail/取消），有活跃 job 时
+每 5s 轮询；运行详情可删除运行（含取消确认），向导提供简易评测与
+`/eval/models` 模型下拉。
 
 ### 数据集根目录
 

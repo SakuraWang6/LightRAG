@@ -640,6 +640,9 @@
     "paramNumPredict": "Sortie max",
     "paramTemperature": "Température",
     "paramEngine": "Moteur d'analyse",
-    "paramKg": "Utiliser le KG"
+    "paramKg": "Utiliser le KG",
+    "reproduceFrom": "Reproduction du run : {experiment} · {dataset}",
+    "modifiedFields": "Champs modifiés",
+    "compareMismatch": "Les runs comparés doivent partager le même type et le même dataset."
   }
 }

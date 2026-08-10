@@ -640,6 +640,9 @@
     "paramNumPredict": "Đầu ra tối đa",
     "paramTemperature": "Nhiệt độ",
     "paramEngine": "Công cụ phân tích",
-    "paramKg": "Dùng KG"
+    "paramKg": "Dùng KG",
+    "reproduceFrom": "Tái hiện từ: {experiment} · {dataset}",
+    "modifiedFields": "Trường đã sửa",
+    "compareMismatch": "Các run so sánh phải cùng loại và cùng dataset."
   }
 }
