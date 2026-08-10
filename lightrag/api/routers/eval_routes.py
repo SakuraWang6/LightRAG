@@ -41,6 +41,7 @@ try:
 
     from .. import eval_jobs
     from .. import eval_profiles
+    from .. import eval_comparison
     from ..eval_index import clear_scan_cache, default_runs_root, load_run, scan_runs
 
     _EVAL_AVAILABLE = True
@@ -119,6 +120,14 @@ class EnvironmentProfileDraftRequest(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     profile_id: str | None = Field(default=None, max_length=64)
     configuration: EnvironmentProfileConfiguration
+
+    model_config = {"extra": "forbid"}
+
+
+class ComparisonPlanValidationRequest(BaseModel):
+    comparison_type: Literal["answer_model", "retrieval_configuration", "embedding", "full_pipeline"]
+    variables: dict[str, list[Any]]
+    inputs: dict[str, Any] = Field(default_factory=dict)
 
     model_config = {"extra": "forbid"}
 
@@ -591,6 +600,33 @@ def create_eval_routes(
             raise
         except Exception as exc:
             logger.error(f"Error listing environment profiles: {exc}")
+            raise internal_server_error(exc)
+
+    @router.get("/comparison-templates", dependencies=[Depends(combined_auth)])
+    async def list_comparison_templates() -> dict[str, Any]:
+        try:
+            require_eval()
+            return {"templates": eval_comparison.list_templates()}
+        except Exception as exc:
+            logger.error(f"Error listing comparison templates: {exc}")
+            raise internal_server_error(exc)
+
+    @router.post("/comparison-plans/validate", dependencies=[Depends(combined_auth)])
+    async def validate_comparison_plan(request: ComparisonPlanValidationRequest) -> dict[str, Any]:
+        try:
+            require_eval()
+            try:
+                return eval_comparison.validate_plan(
+                    comparison_type=request.comparison_type,
+                    variables=request.variables,
+                    inputs=request.inputs,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error validating comparison plan: {exc}")
             raise internal_server_error(exc)
 
     @router.post("/environment-profiles", dependencies=[Depends(combined_auth)])
