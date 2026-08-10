@@ -48,8 +48,12 @@ COPY uv.lock .
 RUN --mount=type=cache,target=/root/.local/share/uv \
     uv sync --frozen --no-dev --extra api --extra offline --no-install-project --no-editable
 
-# Copy project sources after dependency layer
+# Copy project sources after dependency layer.  The evaluation router imports
+# these two packages at server startup; omitting them made the WebUI tab ship
+# while every evaluation endpoint returned "framework package is not installed".
 COPY lightrag/ ./lightrag/
+COPY memory_eval_tests/ ./memory_eval_tests/
+COPY memory_data_service/ ./memory_data_service/
 
 # Include pre-built frontend assets from the previous stage
 COPY --from=frontend-builder /app/lightrag/api/webui ./lightrag/api/webui
@@ -83,6 +87,8 @@ ENV UV_SYSTEM_PYTHON=1
 COPY --from=builder /root/.local /root/.local
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/lightrag ./lightrag
+COPY --from=builder /app/memory_eval_tests ./memory_eval_tests
+COPY --from=builder /app/memory_data_service ./memory_data_service
 COPY pyproject.toml .
 COPY setup.py .
 COPY uv.lock .
