@@ -407,6 +407,27 @@ def test_models_endpoint_filters_embeddings(
     assert client.get("/eval/models").json()["models"] == []
 
 
+def test_template_extra_text_roundtrip(
+    runs_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    client = _client(runs_root, tmp_path)
+    response = client.post(
+        "/eval/templates",
+        json={
+            "name": "t1",
+            "experiment": "context_size",
+            "dataset": "rich-smoke-v1",
+            "params": {},
+            "extraText": "stage=eval",
+            "supervise": False,
+        },
+    )
+    assert response.status_code == 200
+    items = client.get("/eval/templates").json()["templates"]
+    assert items[0]["extraText"] == "stage=eval"
+
+
 def test_jobs_queue_when_max_active_reached(
     runs_root: Path, tmp_path: Path, monkeypatch
 ) -> None:

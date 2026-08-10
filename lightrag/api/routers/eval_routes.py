@@ -79,6 +79,7 @@ class TemplateRequest(BaseModel):
     experiment: str
     dataset: str
     params: dict[str, Any] = Field(default_factory=dict)
+    extraText: str = ""
     supervise: bool = False
 
 
@@ -680,6 +681,7 @@ def create_eval_routes(
                     "experiment": request.experiment,
                     "dataset": request.dataset,
                     "params": request.params,
+                    "extraText": request.extraText,
                     "supervise": request.supervise,
                 }
             )

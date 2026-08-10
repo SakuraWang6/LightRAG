@@ -643,6 +643,15 @@
     "generateAnalysis": "生成 AI 分析",
     "reproduceFrom": "複現自 {experiment} · {dataset}",
     "modifiedFields": "已修改欄位",
-    "compareMismatch": "對比的執行必須是同一類型與同一資料集。"
+    "compareMismatch": "對比的執行必須是同一類型與同一資料集。",
+    "customArms": "自訂參數臂",
+    "baseExperiment": "基座實驗",
+    "armAxis": "參數鍵",
+    "armValues": "取值（逗號分隔）",
+    "armPreview": "共 {{count}} 臂",
+    "armAdd": "新增參數軸",
+    "armRemove": "刪除",
+    "armLimit": "超過 8 臂——上限 16",
+    "customArmsIncomplete": "請選擇基座實驗並至少定義一個參數軸"
   }
 }

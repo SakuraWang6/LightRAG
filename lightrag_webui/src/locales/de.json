@@ -643,6 +643,15 @@
     "paramKg": "KG verwenden",
     "reproduceFrom": "Lauf wird reproduziert: {experiment} · {dataset}",
     "modifiedFields": "Geänderte Felder",
-    "compareMismatch": "Zu vergleichende Läufe müssen gleiche Art und gleichen Datensatz haben."
+    "compareMismatch": "Zu vergleichende Läufe müssen gleiche Art und gleichen Datensatz haben.",
+    "customArms": "Benutzerdefinierte Parameter-Arme",
+    "baseExperiment": "Basisexperiment",
+    "armAxis": "Parameter-Schlüssel",
+    "armValues": "Werte (kommagetrennt)",
+    "armPreview": "{{count}} Arme",
+    "armAdd": "Achse hinzufügen",
+    "armRemove": "Entfernen",
+    "armLimit": "Über 8 Arme — Obergrenze 16",
+    "customArmsIncomplete": "Basisexperiment und mindestens eine Achse wählen"
   }
 }

@@ -643,6 +643,15 @@
     "paramKg": "استخدام KG",
     "reproduceFrom": "إعادة إنتاج: {experiment} · {dataset}",
     "modifiedFields": "الحقول المعدّلة",
-    "compareMismatch": "يجب أن تتشارك التشغيلات المقارنة نفس النوع ونفس مجموعة البيانات."
+    "compareMismatch": "يجب أن تتشارك التشغيلات المقارنة نفس النوع ونفس مجموعة البيانات.",
+    "customArms": "أذرع معلمات مخصصة",
+    "baseExperiment": "التجربة الأساسية",
+    "armAxis": "مفتاح المعلمة",
+    "armValues": "القيم (مفصولة بفواصل)",
+    "armPreview": "{{count}} ذراعًا",
+    "armAdd": "إضافة محور",
+    "armRemove": "حذف",
+    "armLimit": "أكثر من 8 أذرع — الحد 16",
+    "customArmsIncomplete": "اختر تجربة أساسية ومحورًا واحدًا على الأقل"
   }
 }

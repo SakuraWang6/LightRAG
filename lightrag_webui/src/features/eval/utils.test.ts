@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   buildCompareCsv,
   buildCasesCsv,
+  buildCustomArmsPayload,
   buildReproduceDraft,
   caseFieldLabel,
   compareCompatible,
@@ -95,8 +96,15 @@ describe('eval utils', () => {
 
   test('diffParams normalizes types and ignores null', () => {
     expect(diffParams({ top_k: 5 }, { top_k: '5' })).toEqual([])
-    expect(diffParams({ max_cases: null }, { max_cases: 3 })).toEqual([])
+    expect(diffParams({ max_cases: null }, { max_cases: 3 })).toEqual(['max_cases'])
     expect(diffParams({ top_k: 5, model: 'a' }, { top_k: 5, model: 'b' })).toEqual(['model'])
+  })
+
+  test('diffParams flags cleared fields and treats missing key as null', () => {
+    expect(diffParams({ model: 'a' }, { model: null })).toEqual(['model'])
+    expect(diffParams({ model: null }, { model: '' })).toEqual([])
+    expect(diffParams({ top_k: 5 }, {})).toEqual(['top_k'])
+    expect(diffParams({}, { top_k: 5 })).toEqual(['top_k'])
   })
 
   test('compareCompatible requires same kind and dataset', () => {
@@ -151,5 +159,15 @@ describe('eval utils', () => {
     })
     expect(draft.params).toEqual({ model: 'qwen3:8b', top_k: '5', kg: true })
     expect(draft.extraText).toBe('')
+  })
+
+  test('buildCustomArmsPayload filters empty rows and dedupes values', () => {
+    const axes = buildCustomArmsPayload([
+      { key: 'top_k', values: '1, 3, 1, ' },
+      { key: '  ', values: 'x' },
+      { key: 'model', values: 'a,b,a' }
+    ])
+    expect(axes).toEqual({ top_k: ['1', '3'], model: ['a', 'b'] })
+    expect(buildCustomArmsPayload([{ key: ' ', values: ' , ' }])).toBeNull()
   })
 })

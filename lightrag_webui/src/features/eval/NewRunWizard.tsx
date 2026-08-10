@@ -15,7 +15,11 @@ import {
   type EvalExperiment,
   type EvalTemplate
 } from '@/api/eval'
-import { diffParams, hasRunningJobs } from '@/features/eval/utils'
+import {
+  buildCustomArmsPayload,
+  diffParams,
+  hasRunningJobs
+} from '@/features/eval/utils'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
@@ -74,6 +78,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
   const [supervise, setSupervise] = useState(false)
   const [supervision, setSupervision] = useState('auto')
   const [extraText, setExtraText] = useState('')
+  const [armRows, setArmRows] = useState([{ key: '', values: '' }])
   const [templateName, setTemplateName] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [originalParams, setOriginalParams] = useState<Record<string, unknown> | null>(null)
@@ -113,6 +118,15 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
     [originalParams, params]
   )
 
+  const armAxes = useMemo(
+    () => (experiment === 'custom_arms' ? buildCustomArmsPayload(armRows) : null),
+    [experiment, armRows]
+  )
+  const armCount = useMemo(() => {
+    if (!armAxes) return 0
+    return Object.values(armAxes).reduce((product, values) => product * values.length, 1)
+  }, [armAxes])
+
   const modelValue = params.model == null ? '' : String(params.model)
   const modelInList = modelValue !== '' && models.includes(modelValue)
   const useCustomModel = customModel || (modelValue !== '' && !modelInList)
@@ -129,6 +143,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
         experiment,
         dataset,
         params,
+        extraText,
         supervise
       })
       toast.success(t('eval.templateSaved'))
@@ -145,6 +160,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
     setDataset(item.dataset)
     setExperiment(item.experiment)
     setParams(item.params ?? {})
+    setExtraText(item.extraText ?? '')
     setSupervise(item.supervise)
   }
 
@@ -164,6 +180,16 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
         .map((item) => item.trim())
         .filter(Boolean)
       const payload: Record<string, unknown> = { ...params }
+      if (experiment === 'custom_arms') {
+        const baseId = String(payload.base_experiment ?? '')
+        if (!baseId || !armAxes) {
+          toast.error(t('eval.customArmsIncomplete'))
+          return
+        }
+        payload.base_experiment = baseId
+        payload.axes = JSON.stringify(armAxes)
+        payload.max_arms = 8
+      }
       if (extra.length > 0) payload.extra = extra
       await createEvalJob({
         kind: 'run',
@@ -180,7 +206,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
     } finally {
       setSubmitting(false)
     }
-  }, [experiment, dataset, params, extraText, supervise, supervision, t, onStarted])
+  }, [experiment, dataset, params, extraText, supervise, supervision, armAxes, t, onStarted])
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -287,6 +313,85 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
                   {t('eval.jobsQueued', { count: pendingCount })}
                 </p>
               ) : null}
+              {experiment === 'custom_arms' ? (
+                <div className="space-y-2 rounded-md border p-3">
+                  <p className="text-sm font-medium">{t('eval.customArms')}</p>
+                  <label className="flex flex-col gap-1 text-xs">
+                    <span className="text-muted-foreground">{t('eval.baseExperiment')}</span>
+                    <Select
+                      value={params.base_experiment == null ? '' : String(params.base_experiment)}
+                      onValueChange={(value) => setParam('base_experiment', value)}
+                    >
+                      <SelectTrigger className="h-9">
+                        <SelectValue placeholder={t('eval.wizardPickExperiment')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {experiments
+                          .filter((item) => item.id !== 'custom_arms')
+                          .map((item) => (
+                            <SelectItem key={item.id} value={item.id} disabled={!item.env_ready}>
+                              {item.label} {item.env_ready ? '' : `(${t('eval.envMissing')})`}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                  {armRows.map((row, index) => (
+                    <div key={index} className="flex items-center gap-2">
+                      <Input
+                        className="w-40"
+                        placeholder={t('eval.armAxis')}
+                        value={row.key}
+                        onChange={(event) =>
+                          setArmRows((rows) =>
+                            rows.map((r, i) =>
+                              i === index ? { ...r, key: event.target.value } : r
+                            )
+                          )
+                        }
+                      />
+                      <Input
+                        className="flex-1"
+                        placeholder={t('eval.armValues')}
+                        value={row.values}
+                        onChange={(event) =>
+                          setArmRows((rows) =>
+                            rows.map((r, i) =>
+                              i === index ? { ...r, values: event.target.value } : r
+                            )
+                          )
+                        }
+                      />
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          setArmRows((rows) => rows.filter((_, i) => i !== index))
+                        }
+                      >
+                        {t('eval.armRemove')}
+                      </Button>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setArmRows((rows) => [...rows, { key: '', values: '' }])}
+                    >
+                      {t('eval.armAdd')}
+                    </Button>
+                    <span className="text-muted-foreground text-xs">
+                      {t('eval.armPreview', { count: armCount })}
+                    </span>
+                    {armCount > 8 ? (
+                      <span className="text-amber-600 dark:text-amber-400 text-xs">
+                        {t('eval.armLimit')}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
               <label className="flex flex-col gap-1 text-xs">
                 <span className="text-muted-foreground">{t('eval.paramModel')}</span>
                 {!useCustomModel ? (
@@ -356,7 +461,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
                 />
                 {t('eval.paramKg')}
               </label>
-              {spec
+              {spec && experiment !== 'custom_arms'
                 ? Object.entries(spec.extra_schema).map(([key, schemaType]) => (
                     <label key={key} className="flex flex-col gap-1 text-xs">
                       <span className="text-muted-foreground">{key}</span>

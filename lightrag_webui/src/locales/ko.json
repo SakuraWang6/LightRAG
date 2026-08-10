@@ -643,6 +643,15 @@
     "paramKg": "KG 사용",
     "reproduceFrom": "재현 원본: {experiment} · {dataset}",
     "modifiedFields": "수정된 필드",
-    "compareMismatch": "비교할 실행은 같은 종류와 데이터셋이어야 합니다."
+    "compareMismatch": "비교할 실행은 같은 종류와 데이터셋이어야 합니다.",
+    "customArms": "사용자 정의 파라미터 암",
+    "baseExperiment": "기반 실험",
+    "armAxis": "파라미터 키",
+    "armValues": "값(쉼표 구분)",
+    "armPreview": "총 {{count}}개 암",
+    "armAdd": "축 추가",
+    "armRemove": "삭제",
+    "armLimit": "8개 초과 — 최대 16",
+    "customArmsIncomplete": "기반 실험과 축을 하나 이상 선택하세요"
   }
 }

@@ -643,6 +643,15 @@
     "paramKg": "KG を使用",
     "reproduceFrom": "再現元: {experiment} · {dataset}",
     "modifiedFields": "変更した項目",
-    "compareMismatch": "比較する実行は同じ種類・同じデータセットである必要があります。"
+    "compareMismatch": "比較する実行は同じ種類・同じデータセットである必要があります。",
+    "customArms": "カスタムパラメータアーム",
+    "baseExperiment": "基盤実験",
+    "armAxis": "パラメータキー",
+    "armValues": "値（カンマ区切り）",
+    "armPreview": "全 {{count}} アーム",
+    "armAdd": "軸を追加",
+    "armRemove": "削除",
+    "armLimit": "8 アーム超 — 上限 16",
+    "customArmsIncomplete": "基盤実験と 1 つ以上の軸を指定してください"
   }
 }

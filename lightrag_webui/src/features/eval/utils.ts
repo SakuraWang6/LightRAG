@@ -142,10 +142,10 @@ export function diffParams(
   const keys = new Set([...Object.keys(original), ...Object.keys(current)])
   const changed: string[] = []
   for (const key of keys) {
-    const before = original[key]
-    const after = current[key]
-    if (before == null || after == null) continue
-    if (String(before) !== String(after)) changed.push(key)
+    const before = original[key] ?? null
+    const after = current[key] ?? null
+    if (before == null && after == null) continue
+    if (String(before ?? '') !== String(after ?? '')) changed.push(key)
   }
   return changed.sort()
 }
@@ -201,6 +201,27 @@ export function buildReproduceDraft(run: {
     experiment: run.experiment ?? '',
     dataset: run.dataset ?? ''
   }
+}
+
+export function buildCustomArmsPayload(
+  rows: Array<{ key: string; values: string }>
+): Record<string, string[]> | null {
+  const axes: Record<string, string[]> = {}
+  for (const row of rows) {
+    const key = row.key.trim()
+    if (!key) continue
+    const values = Array.from(
+      new Set(
+        row.values
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean)
+      )
+    )
+    if (values.length === 0) continue
+    axes[key] = values
+  }
+  return Object.keys(axes).length > 0 ? axes : null
 }
 
 export function runKindClass(kind: EvalRunKind): string {

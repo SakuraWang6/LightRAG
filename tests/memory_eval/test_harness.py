@@ -275,6 +275,7 @@ def test_registry_specs() -> None:
     assert ids == [
         "context_selection",
         "context_size",
+        "custom_arms",
         "structure_ablation",
         "scale",
         "online_baseline",

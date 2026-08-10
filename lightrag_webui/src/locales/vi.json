@@ -643,6 +643,15 @@
     "paramKg": "Dùng KG",
     "reproduceFrom": "Tái hiện từ: {experiment} · {dataset}",
     "modifiedFields": "Trường đã sửa",
-    "compareMismatch": "Các run so sánh phải cùng loại và cùng dataset."
+    "compareMismatch": "Các run so sánh phải cùng loại và cùng dataset.",
+    "customArms": "Nhánh tham số tùy chỉnh",
+    "baseExperiment": "Thí nghiệm cơ sở",
+    "armAxis": "Khóa tham số",
+    "armValues": "Giá trị (phân cách bằng dấu phẩy)",
+    "armPreview": "{{count}} nhánh",
+    "armAdd": "Thêm trục",
+    "armRemove": "Xóa",
+    "armLimit": "Hơn 8 nhánh — giới hạn 16",
+    "customArmsIncomplete": "Chọn thí nghiệm cơ sở và ít nhất một trục"
   }
 }

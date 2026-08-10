@@ -643,6 +643,15 @@
     "paramKg": "Utiliser le KG",
     "reproduceFrom": "Reproduction du run : {experiment} · {dataset}",
     "modifiedFields": "Champs modifiés",
-    "compareMismatch": "Les runs comparés doivent partager le même type et le même dataset."
+    "compareMismatch": "Les runs comparés doivent partager le même type et le même dataset.",
+    "customArms": "Bras de paramètres personnalisés",
+    "baseExperiment": "Expérience de base",
+    "armAxis": "Clé de paramètre",
+    "armValues": "Valeurs (séparées par des virgules)",
+    "armPreview": "{{count}} bras",
+    "armAdd": "Ajouter un axe",
+    "armRemove": "Supprimer",
+    "armLimit": "Plus de 8 bras — plafond 16",
+    "customArmsIncomplete": "Choisissez une expérience de base et au moins un axe"
   }
 }

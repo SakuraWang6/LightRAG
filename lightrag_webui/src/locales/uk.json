@@ -643,6 +643,15 @@
     "paramKg": "Використати KG",
     "reproduceFrom": "Відтворення: {experiment} · {dataset}",
     "modifiedFields": "Змінені поля",
-    "compareMismatch": "Запуски для порівняння мають бути одного типу й набору даних."
+    "compareMismatch": "Запуски для порівняння мають бути одного типу й набору даних.",
+    "customArms": "Власні плечі параметрів",
+    "baseExperiment": "Базовий експеримент",
+    "armAxis": "Ключ параметра",
+    "armValues": "Значення (через кому)",
+    "armPreview": "{{count}} плечей",
+    "armAdd": "Додати вісь",
+    "armRemove": "Видалити",
+    "armLimit": "Понад 8 плечей — межа 16",
+    "customArmsIncomplete": "Оберіть базовий експеримент і хоча б одну вісь"
   }
 }

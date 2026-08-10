@@ -14,6 +14,7 @@ def _specs() -> list[ExperimentSpec]:
         spec as context_selection,
     )
     from memory_eval_tests.experiments.context_size import spec as context_size
+    from memory_eval_tests.experiments.custom_arms import spec as custom_arms
     from memory_eval_tests.experiments.evaluator_recheck import (
         spec as evaluator_recheck,
     )
@@ -45,6 +46,7 @@ def _specs() -> list[ExperimentSpec]:
     return [
         context_selection,
         context_size,
+        custom_arms,
         structure_ablation,
         scale,
         online_baseline,

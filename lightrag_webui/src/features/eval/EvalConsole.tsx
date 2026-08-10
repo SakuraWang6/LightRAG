@@ -340,7 +340,11 @@ export default function EvalConsole() {
             {t('eval.jobs')}
           </Button>
           {compareIds.size > 0 && (
-            <Button size="sm" onClick={startCompare} disabled={compareLoading}>
+            <Button
+              size="sm"
+              onClick={startCompare}
+              disabled={compareLoading || compareIds.size < 2}
+            >
               <Columns3Icon className="mr-1 size-4" />
               {t('eval.compare')} ({compareIds.size})
             </Button>
