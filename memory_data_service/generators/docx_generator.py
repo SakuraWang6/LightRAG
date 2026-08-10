@@ -12,6 +12,7 @@ from memory_data_service.resource_guard import (
     enforce_generation_limits,
     estimate_generation_resources,
 )
+from memory_data_service.provenance import annotate_question_scenarios, build_provenance
 from memory_data_service.schemas import (
     DatasetCreateRequest,
     DatasetManifest,
@@ -42,6 +43,7 @@ def generate_dataset(
     docx_path = dataset_path / f"{dataset_id}.docx"
     with GenerationResourceMonitor() as resource_monitor:
         facts, questions = _write_docx(request, docx_path, pages)
+        scenario_counts = annotate_question_scenarios(questions)
         if "pdf" in request.formats:
             pdf_record = _convert_pdf(docx_path, dataset_path)
         else:
@@ -68,6 +70,13 @@ def generate_dataset(
     for asset_path in sorted(dataset_path.glob("*.png")):
         files.append(_file_record(asset_path, "png"))
 
+    fingerprint, provenance = build_provenance(
+        request=request,
+        pages=pages,
+        generator="basic_docx_generator",
+        template_version="basic-docx-v1",
+        source_file=Path(__file__),
+    )
     manifest = DatasetManifest(
         dataset_id=dataset_id,
         tier=request.tier,
@@ -76,6 +85,11 @@ def generate_dataset(
         formats=request.formats,
         modalities=request.modalities,
         title=request.title,
+        split=request.split,
+        scenario_quotas=request.scenario_quotas,
+        scenario_counts=scenario_counts,
+        dataset_fingerprint=fingerprint,
+        generation_provenance=provenance,
         files=files,
         generation_time_seconds=round(time.perf_counter() - started, 3),
         generation_peak_memory_mb=resource_monitor.peak_memory_mb,

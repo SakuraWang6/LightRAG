@@ -2,18 +2,32 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-DATASET_SCHEMA_VERSION = "1.0"
-_SUPPORTED_SCHEMA_VERSIONS = frozenset({DATASET_SCHEMA_VERSION})
+DATASET_SCHEMA_VERSION = "1.1"
+_SUPPORTED_SCHEMA_VERSIONS = frozenset({"1.0", DATASET_SCHEMA_VERSION})
 
 
 TierName = Literal["smoke", "medium", "large", "stress"]
 DocumentFormat = Literal["docx", "pdf"]
 ModalityName = Literal["text", "tables", "figures", "equations"]
 ProfileName = Literal["basic", "rich"]
+DatasetSplit = Literal["tuning", "validation"]
+ScenarioName = Literal[
+    "single_hop",
+    "multi_hop",
+    "table",
+    "formula",
+    "image",
+    "cross_page",
+    "distractor_fact",
+    "contradictory_fact",
+    "approximate_numeric",
+    "negative_question",
+    "unanswerable",
+]
 ObjectType = Literal[
     "document",
     "section",
@@ -65,6 +79,8 @@ class DatasetCreateRequest(BaseModel):
     dataset_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_.-]+$")
     seed: int = 13
     title: str = "LightRAG Synthetic Rich Memory Document"
+    split: DatasetSplit = "validation"
+    scenario_quotas: dict[ScenarioName, int] = Field(default_factory=dict)
 
     def resolved_pages(self) -> int:
         return self.pages or TIER_PAGE_DEFAULTS[self.tier]
@@ -97,6 +113,22 @@ class QuestionRecord(BaseModel):
     question_type: str
     evidence_fact_ids: list[str]
     expected_behavior: Literal["answer", "abstain"] = "answer"
+    scenario_labels: list[ScenarioName] = Field(default_factory=list)
+
+
+class GenerationProvenance(BaseModel):
+    """Reproducibility record; no credential or opaque provider payload is stored."""
+
+    generator: str
+    generator_code_version: str
+    template_version: str
+    provider: str = "local-deterministic"
+    model: str = "none"
+    seed: int
+    input_parameters: dict[str, Any]
+    oracle_schema_version: str = DATASET_SCHEMA_VERSION
+    deterministic: bool = True
+    request_id: str | None = None
 
 
 class DocumentObject(BaseModel):
@@ -133,6 +165,11 @@ class DatasetManifest(BaseModel):
     formats: list[DocumentFormat]
     modalities: list[ModalityName]
     title: str
+    split: DatasetSplit = "validation"
+    scenario_quotas: dict[ScenarioName, int] = Field(default_factory=dict)
+    scenario_counts: dict[ScenarioName, int] = Field(default_factory=dict)
+    dataset_fingerprint: str = ""
+    generation_provenance: GenerationProvenance | None = None
     files: list[GeneratedFile] = Field(default_factory=list)
     generation_time_seconds: float | None = None
     generation_peak_memory_mb: float | None = None

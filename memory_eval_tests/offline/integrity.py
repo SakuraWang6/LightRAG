@@ -10,6 +10,7 @@ from typing import Any
 from memory_data_service.schemas import (
     DatasetManifest,
     OraclePayload,
+    QuestionRecord,
     check_schema_version,
 )
 from memory_eval_tests.common.dataset_client import DatasetClient
@@ -311,9 +312,15 @@ def _audit_local_files(
 
     if questions_path.exists():
         questions_payload = json.loads(questions_path.read_text(encoding="utf-8"))
-        if questions_payload.get("questions") != [
-            question.model_dump() for question in oracle.questions
-        ]:
+        raw_questions = questions_payload.get("questions") or []
+        try:
+            normalized_questions = [
+                QuestionRecord.model_validate(question).model_dump()
+                for question in raw_questions
+            ]
+        except Exception:
+            normalized_questions = raw_questions
+        if normalized_questions != [question.model_dump() for question in oracle.questions]:
             issues.append(f"{manifest.questions_file} does not match oracle questions")
     else:
         issues.append(f"missing {manifest.questions_file}")

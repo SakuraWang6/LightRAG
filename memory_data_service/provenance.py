@@ -1,0 +1,73 @@
+"""Deterministic dataset identity and scenario metadata helpers."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+from memory_data_service.schemas import (
+    DATASET_SCHEMA_VERSION,
+    DatasetCreateRequest,
+    GenerationProvenance,
+    QuestionRecord,
+)
+
+_QUESTION_SCENARIOS: dict[str, list[str]] = {
+    "direct_numeric": ["single_hop", "distractor_fact", "approximate_numeric"],
+    "version_condition": ["single_hop", "negative_question"],
+    "conflict_resolution": ["multi_hop", "contradictory_fact"],
+    "negative_constraint": ["single_hop", "negative_question"],
+    "table_cell": ["table"],
+    "figure_text": ["image"],
+    "figure_caption": ["image"],
+    "equation": ["formula"],
+    "equation_variable": ["formula"],
+    "formula_variable": ["formula"],
+    "multi_hop": ["multi_hop", "cross_page"],
+    "abstain": ["unanswerable"],
+}
+
+
+def annotate_question_scenarios(questions: list[QuestionRecord]) -> dict[str, int]:
+    """Attach canonical scenario labels and return the observable quotas."""
+    counts: dict[str, int] = {}
+    for question in questions:
+        labels = _QUESTION_SCENARIOS.get(question.question_type, ["single_hop"])
+        question.scenario_labels = labels  # type: ignore[assignment]
+        for label in labels:
+            counts[label] = counts.get(label, 0) + 1
+    return counts
+
+
+def build_provenance(
+    *, request: DatasetCreateRequest, pages: int, generator: str, template_version: str, source_file: Path
+) -> tuple[str, GenerationProvenance]:
+    code_version = hashlib.sha256(source_file.read_bytes()).hexdigest()
+    inputs: dict[str, Any] = {
+        "tier": request.tier,
+        "pages": pages,
+        "profile": request.profile,
+        "formats": list(request.formats),
+        "modalities": list(request.modalities),
+        "title": request.title,
+        "split": request.split,
+        "scenario_quotas": dict(sorted(request.scenario_quotas.items())),
+    }
+    provenance = GenerationProvenance(
+        generator=generator,
+        generator_code_version=code_version,
+        template_version=template_version,
+        seed=request.seed,
+        input_parameters=inputs,
+    )
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {**provenance.model_dump(), "oracle_schema_version": DATASET_SCHEMA_VERSION},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return fingerprint, provenance
