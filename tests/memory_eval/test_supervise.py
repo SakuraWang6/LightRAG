@@ -238,7 +238,7 @@ def test_restart_inherits_state_and_counts(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(supervise.subprocess, "Popen", FakeProc)
     monkeypatch.setattr(supervise.signal, "signal", lambda *a, **k: None)
     monkeypatch.setattr(supervise.time, "sleep", lambda *a: None)
-    original_build = supervise.build_supervise_command
+    original_build = supervise.build_run_command
 
     def spy(params, **kwargs):
         supervise_calls.append(
@@ -246,7 +246,7 @@ def test_restart_inherits_state_and_counts(monkeypatch, tmp_path: Path) -> None:
         )
         return original_build(params, **kwargs)
 
-    monkeypatch.setattr(supervise, "build_supervise_command", spy)
+    monkeypatch.setattr(supervise, "build_run_command", spy)
 
     rc = supervise.main(
         [

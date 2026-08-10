@@ -458,13 +458,9 @@ def main(argv: list[str] | None = None) -> int:
         params.restart_mode = "none"
 
     def _cmd() -> list[str]:
-        return build_supervise_command(
-            params,
-            supervision=supervision,
-            stale_minutes=args.stale_minutes,
-            max_restarts=args.max_restarts,
-            poll_seconds=args.poll_seconds,
-        )
+        # The monitor wraps the run command directly; spawning another
+        # supervise here would race for the same lock.
+        return build_run_command(params)
 
     cmd = _cmd()
     env = _child_env(args)
