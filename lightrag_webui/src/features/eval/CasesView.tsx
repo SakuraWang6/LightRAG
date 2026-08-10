@@ -28,6 +28,8 @@ type NormalizedCase = {
   passed: boolean | null
   group: string
   type: string
+  scenario: string
+  failureCategory: string
   method: string
   raw: Record<string, unknown>
 }
@@ -125,6 +127,8 @@ function normalize(row: Record<string, unknown>): NormalizedCase {
     passed,
     group: String(row.question_group ?? ''),
     type: String(row.question_type ?? ''),
+    scenario: Array.isArray(row.scenario_labels) ? row.scenario_labels.map(String).join(' · ') : String(row.scenario ?? ''),
+    failureCategory: String(row.failure_category ?? row.primary_cause ?? row.diagnosis?.primary_cause ?? ''),
     method: String(row.method ?? row.arm ?? ''),
     raw: row
   }
@@ -138,6 +142,9 @@ export default function CasesView({ rows }: CasesViewProps) {
   const { t } = useTranslation()
   const [filter, setFilter] = useState('all')
   const [groupFilter, setGroupFilter] = useState('all')
+  const [typeFilter, setTypeFilter] = useState('all')
+  const [scenarioFilter, setScenarioFilter] = useState('all')
+  const [failureFilter, setFailureFilter] = useState('all')
   const [expanded, setExpanded] = useState<string | null>(null)
 
   const cases = useMemo(() => rows.map(normalize), [rows])
@@ -145,15 +152,21 @@ export default function CasesView({ rows }: CasesViewProps) {
     () => Array.from(new Set(cases.map((c) => c.group).filter(Boolean))).sort(),
     [cases]
   )
+  const types = useMemo(() => Array.from(new Set(cases.map((c) => c.type).filter(Boolean))).sort(), [cases])
+  const scenarios = useMemo(() => Array.from(new Set(cases.flatMap((c) => c.scenario.split(' · ').filter(Boolean)))).sort(), [cases])
+  const failures = useMemo(() => Array.from(new Set(cases.map((c) => c.failureCategory).filter(Boolean))).sort(), [cases])
   const filtered = useMemo(
     () =>
       cases.filter((c) => {
         if (filter === 'pass' && c.passed !== true) return false
         if (filter === 'fail' && c.passed !== false) return false
         if (groupFilter !== 'all' && c.group !== groupFilter) return false
+        if (typeFilter !== 'all' && c.type !== typeFilter) return false
+        if (scenarioFilter !== 'all' && !c.scenario.split(' · ').includes(scenarioFilter)) return false
+        if (failureFilter !== 'all' && c.failureCategory !== failureFilter) return false
         return true
       }),
-    [cases, filter, groupFilter]
+    [cases, filter, groupFilter, typeFilter, scenarioFilter, failureFilter]
   )
 
   const exportCsv = () => {
@@ -180,6 +193,24 @@ export default function CasesView({ rows }: CasesViewProps) {
               <SelectItem value="pass">{t('eval.casePass')}</SelectItem>
               <SelectItem value="fail">{t('eval.caseFail')}</SelectItem>
             </SelectContent>
+          </Select>
+        </div>
+        <div className="w-44">
+          <Select value={typeFilter} onValueChange={setTypeFilter}>
+            <SelectTrigger className="h-8"><SelectValue placeholder="题型" /></SelectTrigger>
+            <SelectContent><SelectItem value="all">全部题型</SelectItem>{types.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+        <div className="w-44">
+          <Select value={scenarioFilter} onValueChange={setScenarioFilter}>
+            <SelectTrigger className="h-8"><SelectValue placeholder="场景" /></SelectTrigger>
+            <SelectContent><SelectItem value="all">全部场景</SelectItem>{scenarios.map((scenario) => <SelectItem key={scenario} value={scenario}>{scenario}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+        <div className="w-44">
+          <Select value={failureFilter} onValueChange={setFailureFilter}>
+            <SelectTrigger className="h-8"><SelectValue placeholder="失败分类" /></SelectTrigger>
+            <SelectContent><SelectItem value="all">全部失败分类</SelectItem>{failures.map((failure) => <SelectItem key={failure} value={failure}>{failure}</SelectItem>)}</SelectContent>
           </Select>
         </div>
         <div className="w-44">
@@ -215,6 +246,7 @@ export default function CasesView({ rows }: CasesViewProps) {
               <TableHead className="px-3 py-2">{t('eval.caseExpected')}</TableHead>
               <TableHead className="px-3 py-2">{t('eval.caseResult')}</TableHead>
               <TableHead className="px-3 py-2">{t('eval.caseType')}</TableHead>
+              <TableHead className="px-3 py-2">场景 / 失败分类</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -258,6 +290,9 @@ export default function CasesView({ rows }: CasesViewProps) {
                     </TableCell>
                     <TableCell className="whitespace-nowrap px-3 py-2">
                       {[c.group, c.type, c.method].filter(Boolean).join(' · ') || '—'}
+                    </TableCell>
+                    <TableCell className="max-w-[180px] px-3 py-2 text-xs">
+                      {[c.scenario, c.failureCategory].filter(Boolean).join(' · ') || '—'}
                     </TableCell>
                   </TableRow>
                   {isExpanded ? (
