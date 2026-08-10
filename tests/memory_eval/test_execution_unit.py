@@ -118,17 +118,18 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
         "allocate_execution_unit",
         lambda **_kwargs: {"workspace_id": "ws", "storage_id": "store", "runtime_endpoint": None},
     )
-    monkeypatch.setattr(
-        end_to_end,
-        "start_execution_unit",
-        lambda **_kwargs: {
+    def fake_start_execution_unit(
+        *, output_dir, profile, unit, api_key=None, access_token=None
+    ):
+        return {
             "workspace_id": "ws",
             "storage_id": "store",
             "runtime_endpoint": "http://isolated.test",
             "runtime_snapshot": {"status": "captured"},
             "started_at": "2026-08-10T00:00:00+00:00",
-        },
-    )
+        }
+
+    monkeypatch.setattr(end_to_end, "start_execution_unit", fake_start_execution_unit)
     monkeypatch.setattr(
         end_to_end,
         "upload_dataset_files",
@@ -143,11 +144,13 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
         "evaluate_api",
         lambda **_kwargs: {"cases": 1, "average_recall": 1.0, "results": []},
     )
-    monkeypatch.setattr(
-        end_to_end,
-        "evaluate_answers",
-        lambda **_kwargs: {"cases": 1, "answer_accuracy": 1.0, "results": []},
-    )
+    answer_call: dict = {}
+
+    def fake_evaluate_answers(**kwargs):
+        answer_call.update(kwargs)
+        return {"cases": 1, "answer_accuracy": 1.0, "results": []}
+
+    monkeypatch.setattr(end_to_end, "evaluate_answers", fake_evaluate_answers)
 
     context.dataset.mkdir()
     (context.dataset / "oracle.json").write_text(
@@ -161,6 +164,7 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
     assert json.loads((context.output_dir / "index_receipt.json").read_text())["workspace_id"] == "ws"
     assert json.loads((context.output_dir / "diagnosis.json").read_text())["case_count"] == 0
     assert "失败归因" in result["report"]
+    assert answer_call["evaluation_trace"] is True
 
 
 def test_prepare_binds_workspace_to_immutable_execution_manifest(

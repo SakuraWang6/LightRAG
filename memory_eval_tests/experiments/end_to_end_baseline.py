@@ -187,7 +187,6 @@ def _runner(context: RunContext) -> dict[str, Any]:
             unit=unit,
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
-            evaluation_trace=True,
         )
         context.execution_unit = unit
         context.environment["rag_api_url"] = unit["runtime_endpoint"]
@@ -250,6 +249,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             max_cases=max_cases,
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
+            evaluation_trace=True,
         )
         oracle = json.loads((context.dataset / "oracle.json").read_text(encoding="utf-8"))
         case_traces = build_case_traces(
