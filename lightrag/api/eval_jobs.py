@@ -404,6 +404,7 @@ def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
             pending = [j for j in raw if j.get("status") == "pending"]
             if not pending:
                 return
+            pending.sort(key=lambda j: (j.get("created_at") or "", j.get("id") or ""))
             job = pending[0]
             try:
                 if job["kind"] == "run":
@@ -543,7 +544,11 @@ def list_jobs(*, runs_root: Path, datasets_root: Path) -> list[dict[str, Any]]:
         _refresh_job(job, runs_root=runs_root, datasets_root=datasets_root)
         for job in _raw_jobs(runs_root)
     ]
-    return sorted(jobs, key=lambda job: job.get("started_at") or "", reverse=True)
+    return sorted(
+        jobs,
+        key=lambda job: (job.get("created_at") or "", job.get("id") or ""),
+        reverse=True,
+    )
 
 
 def get_job(
