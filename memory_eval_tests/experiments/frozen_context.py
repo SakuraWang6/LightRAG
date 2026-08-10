@@ -42,16 +42,21 @@ def freeze_final_contexts(*, parent_run_dir: Path, output_path: Path) -> dict[st
         key: (run.get("baseline") or {}).get(key)
         for key in ("temperature", "num_predict", "num_ctx")
     }
+    token_budget = {
+        key: (run.get("baseline") or {}).get(key)
+        for key in ("max_total_tokens", "num_ctx", "num_predict")
+    }
     payload = {
         "schema_version": SCHEMA_VERSION,
         "parent_run_id": run.get("run_id"),
         "dataset_fingerprint": ((run.get("execution_manifest") or {}).get("dataset") or {}).get("manifest_sha256"),
         "case_ids": [item["question_id"] for item in prompts],
         "decoding": decoding,
+        "token_budget": token_budget,
         "seed": (run.get("baseline") or {}).get("seed", {"value": "unknown", "reason": "run has no declared seed"}),
         "prompts": prompts,
     }
-    payload["input_hash"] = _hash({key: payload[key] for key in ("dataset_fingerprint", "case_ids", "decoding", "seed", "prompts")})
+    payload["input_hash"] = _hash({key: payload[key] for key in ("dataset_fingerprint", "case_ids", "decoding", "token_budget", "seed", "prompts")})
     payload["generation_parameters_hash"] = _hash(decoding)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

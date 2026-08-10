@@ -37,6 +37,13 @@ def test_frozen_prompt_spec_defaults_and_args(tmp_path: Path) -> None:
     assert args.api_key_env == "LIGHTRAG_PROJECT_OPENAI_API_KEY"
 
 
+def test_frozen_prompt_rejects_incomplete_artifact() -> None:
+    from memory_eval_tests.experiments.frozen_prompt_llm_eval import _validate_frozen_input
+
+    with pytest.raises(ValueError, match="artifact is incomplete"):
+        _validate_frozen_input({"prompts": []})
+
+
 def test_analysis_specs_are_registered(tmp_path: Path) -> None:
     from memory_eval_tests.experiments.evaluator_recheck import spec as recheck
     from memory_eval_tests.experiments.evidence_selector_failure_analysis import (

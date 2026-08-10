@@ -17,4 +17,5 @@ def test_freeze_final_contexts_creates_shared_hashed_input(tmp_path):
     frozen = freeze_final_contexts(parent_run_dir=parent, output_path=tmp_path / "frozen.json")
     assert frozen["input_hash"]
     assert frozen["generation_parameters_hash"]
+    assert frozen["token_budget"] == {"max_total_tokens": None, "num_ctx": 8192, "num_predict": 128}
     assert frozen["prompts"][0]["prompt"] == "sys ctx\n\n---User Query---\nq"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 
 from memory_eval_tests.common.dataset_client import DatasetClient
 from memory_eval_tests.experiments.common import ExperimentSpec, RunContext
+from memory_eval_tests.experiments.comparison_stats import summarize_arm
 from memory_eval_tests.online.answer_eval import score_answer
 
 
@@ -20,6 +22,31 @@ def _split_prompt(prompt: str) -> tuple[str, str]:
     if marker not in prompt:
         raise ValueError("Frozen prompt is missing the LightRAG user-query marker")
     return tuple(prompt.split(marker, 1))  # type: ignore[return-value]
+
+
+def _validate_frozen_input(frozen: dict[str, Any]) -> None:
+    required = {
+        "schema_version",
+        "parent_run_id",
+        "dataset_fingerprint",
+        "case_ids",
+        "decoding",
+        "token_budget",
+        "seed",
+        "prompts",
+        "input_hash",
+        "generation_parameters_hash",
+    }
+    missing = sorted(key for key in required if key not in frozen)
+    if missing:
+        raise ValueError("Frozen context artifact is incomplete: " + ", ".join(missing))
+    prompts = frozen["prompts"]
+    if not isinstance(prompts, list) or not prompts:
+        raise ValueError("Frozen context artifact contains no prompts")
+    if frozen.get("case_ids") != [item.get("question_id") for item in prompts]:
+        raise ValueError("Frozen context case_ids do not match its prompts")
+    if any(not isinstance(item.get("prompt"), str) for item in prompts):
+        raise ValueError("Frozen context artifact contains an invalid prompt")
 
 
 def _chat_completion(*, base_url: str, api_key: str, model: str, prompt: str) -> str:
@@ -71,6 +98,12 @@ def _report(
     *, args: argparse.Namespace, frozen: dict[str, Any], rows: list[dict[str, Any]]
 ) -> dict[str, Any]:
     total = len(rows)
+    scored_rows = [row for row in rows if row.get("status", "success") == "success"]
+    performance = summarize_arm(
+        rows,
+        input_cost_per_million=args.input_cost_per_million,
+        output_cost_per_million=args.output_cost_per_million,
+    )
     return {
         "model": args.model,
         "base_url": args.base_url,
@@ -80,19 +113,21 @@ def _report(
         "max_total_tokens": frozen.get("max_total_tokens"),
         "input_hash": frozen.get("input_hash"),
         "generation_parameters_hash": frozen.get("generation_parameters_hash"),
+        "token_budget": frozen.get("token_budget"),
         "cases": total,
         "complete": total == len(frozen["prompts"]),
-        "answer_accuracy": sum(row["exact_match"] for row in rows) / total
+        "answer_accuracy": sum(bool(row.get("exact_match")) for row in scored_rows) / total
         if total
         else 0.0,
-        "groundedness": sum(row["grounded"] for row in rows) / total if total else 0.0,
-        "ungrounded_rate": sum(row["ungrounded"] for row in rows) / total
+        "groundedness": sum(bool(row.get("grounded")) for row in scored_rows) / total if total else 0.0,
+        "ungrounded_rate": sum(bool(row.get("ungrounded")) for row in scored_rows) / total
         if total
         else 0.0,
-        "evidence_available": sum(row["evidence_available"] for row in rows) / total
+        "evidence_available": sum(bool(row.get("evidence_available")) for row in scored_rows) / total
         if total
         else 0.0,
-        "abstention_accuracy": _average(rows, "abstention_correct"),
+        "abstention_accuracy": _average(scored_rows, "abstention_correct"),
+        "performance": performance,
         "results": rows,
     }
 
@@ -119,6 +154,7 @@ def _evaluate(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     frozen = json.loads(args.prompts.read_text(encoding="utf-8"))
+    _validate_frozen_input(frozen)
     facts = {
         fact["fact_id"]: fact
         for fact in DatasetClient(str(args.dataset)).oracle().get("facts", [])
@@ -133,12 +169,29 @@ def _evaluate(args: argparse.Namespace) -> dict[str, Any]:
     if args.max_cases > 0:
         pending = pending[: args.max_cases]
     for index, item in enumerate(pending, start=1):
-        answer = _chat_completion(
-            base_url=args.base_url,
-            api_key=api_key,
-            model=args.model,
-            prompt=item["prompt"],
-        )
+        started = time.perf_counter()
+        try:
+            answer = _chat_completion(
+                base_url=args.base_url,
+                api_key=api_key,
+                model=args.model,
+                prompt=item["prompt"],
+            )
+        except Exception as exc:
+            rows.append(
+                {
+                    "question_id": item["question_id"],
+                    "status": "failed",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:500],
+                    "latency_seconds": time.perf_counter() - started,
+                    "input_tokens": _estimate_tokens(item["prompt"]),
+                    "output_tokens": 0,
+                }
+            )
+            _write_checkpoint(args=args, frozen=frozen, rows=rows)
+            print(f"[{index}/{len(pending)}] {item['question_id']} failed", flush=True)
+            continue
         evidence = [
             facts[fact_id]
             for fact_id in item.get("evidence_fact_ids", [])
@@ -153,11 +206,26 @@ def _evaluate(args: argparse.Namespace) -> dict[str, Any]:
             evidence_facts=evidence,
             references_blob=item["prompt"],
         )
-        rows.append({"question_id": item["question_id"], "answer": answer, **scores})
+        rows.append(
+            {
+                "question_id": item["question_id"],
+                "status": "success",
+                "answer": answer,
+                "latency_seconds": time.perf_counter() - started,
+                "input_tokens": _estimate_tokens(item["prompt"]),
+                "output_tokens": _estimate_tokens(answer),
+                **scores,
+            }
+        )
         _write_checkpoint(args=args, frozen=frozen, rows=rows)
         print(f"[{index}/{len(pending)}] {item['question_id']}", flush=True)
 
     return _report(args=args, frozen=frozen, rows=rows)
+
+
+def _estimate_tokens(text: str) -> int:
+    """Conservative portable estimate used when a provider omits token usage."""
+    return max(1, (len(text) + 3) // 4) if text else 0
 
 
 def _render_report(payload: dict[str, Any]) -> str:
@@ -176,6 +244,19 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Evidence available | {payload.get('evidence_available', 0):.4f} |",
         f"| Abstention accuracy | {payload.get('abstention_accuracy') or 0:.4f} |",
     ]
+    performance = payload.get("performance") or {}
+    latency = performance.get("latency") or {}
+    lines.extend(
+        [
+            f"| 成功率 | {performance.get('success_rate', 0):.4f} |",
+            f"| P50 延迟（秒） | {latency.get('p50') if latency.get('p50') is not None else '—'} |",
+            f"| P95 延迟（秒） | {latency.get('p95') if latency.get('p95') is not None else '—'} |",
+            f"| 延迟证据 | {latency.get('evidence', 'insufficient')} |",
+            f"| 估算输入 token | {performance.get('input_tokens', 0):.0f} |",
+            f"| 估算输出 token | {performance.get('output_tokens', 0):.0f} |",
+            f"| 估算成本 | {performance.get('estimated_cost') if performance.get('estimated_cost') is not None else '未配置'} |",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -199,7 +280,13 @@ def _frozen_args(context: RunContext) -> argparse.Namespace:
         resume=(extra.get("resume") or "").strip().lower()
         in {"1", "true", "yes", "on"},
         max_cases=int(baseline.get("max_cases") or 0),
+        input_cost_per_million=_optional_float(extra.get("input_cost_per_million")),
+        output_cost_per_million=_optional_float(extra.get("output_cost_per_million")),
     )
+
+
+def _optional_float(value: Any) -> float | None:
+    return None if value in (None, "") else float(value)
 
 
 def _run_frozen(context: RunContext) -> dict[str, Any]:
@@ -236,6 +323,8 @@ def main() -> None:
     parser.add_argument("--api-key-env", default="LIGHTRAG_PROJECT_OPENAI_API_KEY")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--max-cases", type=int, default=0)
+    parser.add_argument("--input-cost-per-million", type=float)
+    parser.add_argument("--output-cost-per-million", type=float)
     args = parser.parse_args()
 
     report = _evaluate(args)
@@ -261,6 +350,11 @@ spec = ExperimentSpec(
     runner=_run_frozen,
     default_baseline={"model": "gpt-4o-mini"},
     kind="experiment",
-    extra_schema={"base_url": "str", "prompts": "str"},
+    extra_schema={
+        "base_url": "str",
+        "prompts": "str",
+        "input_cost_per_million": "float",
+        "output_cost_per_million": "float",
+    },
     env_required=["LIGHTRAG_PROJECT_OPENAI_API_KEY"],
 )
