@@ -187,6 +187,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             unit=unit,
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
+            evaluation_trace=True,
         )
         context.execution_unit = unit
         context.environment["rag_api_url"] = unit["runtime_endpoint"]

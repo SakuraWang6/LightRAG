@@ -63,6 +63,30 @@ def test_case_trace_joins_oracle_retrieval_and_answer_without_claiming_prompt_vi
     assert diagnosis["by_retrieval_mode"]["mix"]["case_count"] == 1
 
 
+def test_controlled_final_context_trace_enables_generation_attribution() -> None:
+    traces = build_case_traces(
+        oracle={
+            "facts": [{"fact_id": "FACT-1", "answer": "42"}],
+            "questions": [{"id": "Q-1", "question": "q", "answer": "42", "evidence_fact_ids": ["FACT-1"]}],
+        },
+        retrieval_results=[{"question_id": "Q-1", "recall_at_k": 1.0, "top_k_candidates": [{"rank": 1}]}],
+        answer_results=[
+            {
+                "question_id": "Q-1",
+                "answer": "wrong",
+                "exact_match": False,
+                "final_context_trace": {
+                    "status": "observed",
+                    "final_context": "FACT-1 provides the answer 42.",
+                    "final_context_chars": 35,
+                },
+            }
+        ],
+    )
+    assert traces[0]["final_context"]["status"] == "observed"
+    assert diagnose_case(traces[0])["primary_cause"] == "generation_or_prompt_failure"
+
+
 def test_oracle_upper_bound_requires_matching_linked_end_to_end_dataset(tmp_path, monkeypatch) -> None:
     import lightrag.api.eval_index as eval_index
     from memory_eval_tests.experiments.oracle_upper_bound import _prepare, _result_extra

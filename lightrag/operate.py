@@ -4227,6 +4227,23 @@ async def kg_query(
         prompt_content = "\n\n".join([sys_prompt, "---User Query---", user_query])
         return QueryResult(content=prompt_content, raw_data=context_result.raw_data)
 
+    if query_param.evaluation_trace:
+        raw_data = context_result.raw_data or {}
+        raw_data["evaluation_trace"] = {
+            "schema_version": "1.0",
+            "status": "observed",
+            "final_context": context_result.context,
+            "final_context_chars": len(context_result.context),
+            "system_prompt": sys_prompt,
+            "user_query": user_query,
+            "final_prompt": "\n\n".join([sys_prompt, "---User Query---", user_query]),
+            "truncation": {
+                "value": "unknown",
+                "reason": "query engine does not expose a post-render truncation decision",
+            },
+        }
+        context_result.raw_data = raw_data
+
     # Call LLM
     tokenizer: Tokenizer = global_config["tokenizer"]
     # Guarded rather than unconditional: this whole block exists for a debug log,
@@ -6272,6 +6289,21 @@ async def naive_query(
     if query_param.only_need_prompt:
         prompt_content = "\n\n".join([sys_prompt, "---User Query---", user_query])
         return QueryResult(content=prompt_content, raw_data=raw_data)
+
+    if query_param.evaluation_trace:
+        raw_data["evaluation_trace"] = {
+            "schema_version": "1.0",
+            "status": "observed",
+            "final_context": context_content,
+            "final_context_chars": len(context_content),
+            "system_prompt": sys_prompt,
+            "user_query": user_query,
+            "final_prompt": "\n\n".join([sys_prompt, "---User Query---", user_query]),
+            "truncation": {
+                "value": "unknown",
+                "reason": "query engine does not expose a post-render truncation decision",
+            },
+        }
 
     # Handle cache
     answer_cache_kv = _answer_cache_kv(query_param, hashing_kv)

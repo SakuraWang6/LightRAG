@@ -187,3 +187,35 @@ def test_evaluate_answers_emits_canonical_summary_keys(monkeypatch, tmp_path):
     assert "hallucination_rate" not in report
     assert "citation_accuracy" not in report
     assert "evidence_available" in report
+
+
+def test_evaluate_answers_requests_and_records_controlled_final_context_trace(monkeypatch, tmp_path):
+    from memory_eval_tests.online.answer_eval import evaluate_answers
+
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "oracle.json").write_text(
+        json.dumps(
+            {
+                "questions": [{"id": "Q1", "question": "What?", "answer": "42", "evidence_fact_ids": []}],
+                "facts": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    seen: dict = {}
+
+    def fake_post_json(_url, payload, **_kwargs):
+        seen.update(payload)
+        return {
+            "response": "42",
+            "references": [],
+            "evaluation_trace": {"status": "observed", "final_context": "oracle context"},
+        }
+
+    monkeypatch.setattr("memory_eval_tests.online.answer_eval._post_json", fake_post_json)
+    result = evaluate_answers(
+        dataset_source=str(dataset), rag_api_url="http://api.test", evaluation_trace=True
+    )
+    assert seen["evaluation_trace"] is True
+    assert result["results"][0]["final_context_trace"]["final_context"] == "oracle context"

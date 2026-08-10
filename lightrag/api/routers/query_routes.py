@@ -140,6 +140,11 @@ class QueryRequest(BaseModel):
         "response chunks — ensuring backward compatibility for existing clients.",
     )
 
+    evaluation_trace: bool = Field(
+        default=False,
+        description="If True, return the final context/prompt trace for authenticated controlled evaluation. Disabled by default.",
+    )
+
     stream: Optional[bool] = Field(
         default=None,
         description="If True, enables streaming output. Defaults to False for /query, True for /query/stream.",
@@ -257,6 +262,10 @@ class QueryResponse(BaseModel):
     response_time: Optional[float] = Field(
         default=None,
         description="Total server-side processing time in seconds (retrieval + LLM generation)",
+    )
+    evaluation_trace: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Final prompt/context trace. Present only when evaluation_trace=true.",
     )
 
 
@@ -572,12 +581,14 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
                     response=response_content,
                     references=references,
                     response_time=response_time,
+                    evaluation_trace=(data.get("evaluation_trace") if request.evaluation_trace else None),
                 )
             else:
                 return QueryResponse(
                     response=response_content,
                     references=None,
                     response_time=response_time,
+                    evaluation_trace=(data.get("evaluation_trace") if request.evaluation_trace else None),
                 )
         except Exception as e:
             logger.error(f"Error processing query: {str(e)}", exc_info=True)

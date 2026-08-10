@@ -68,8 +68,8 @@ def build_case_traces(
                     if retrieval_row is not None
                     else unavailable("no retrieval trace was produced for this question")
                 ),
-                "final_context": unavailable(
-                    "public query API does not expose the final rendered prompt context"
+                "final_context": _final_context(
+                    answer_row, [facts[item] for item in evidence_ids if item in facts]
                 ),
                 "answer": (
                     {
@@ -219,6 +219,33 @@ def _modality(evidence_ids: list[str], facts: dict[str, dict[str, Any]]) -> str:
         }
     )
     return "+".join(values) if values else "unknown"
+
+
+def _final_context(
+    answer_row: dict[str, Any] | None, evidence_facts: list[dict[str, Any]]
+) -> dict[str, Any]:
+    trace = answer_row.get("final_context_trace") if answer_row else None
+    if isinstance(trace, dict) and trace.get("status") == _OBSERVED:
+        context = trace.get("final_context")
+        return {
+            "status": _OBSERVED,
+            "content": context,
+            "chars": trace.get("final_context_chars"),
+            "truncation": trace.get("truncation"),
+            "contains_all_oracle_evidence": _contains_oracle_evidence(
+                str(context or ""), evidence_facts
+            ),
+        }
+    return unavailable("controlled evaluation trace was not returned by the API")
+
+
+def _contains_oracle_evidence(context: str, evidence_facts: list[dict[str, Any]]) -> bool:
+    # answer_row may not carry full facts in older callers. The joiner below
+    # replaces this with oracle facts when constructing the trace.
+    return all(
+        str(fact.get("fact_id") or "") in context or str(fact.get("answer") or "") in context
+        for fact in evidence_facts
+    )
 
 
 def _group_distribution(cases: list[dict[str, Any]], key: str) -> dict[str, dict[str, Any]]:

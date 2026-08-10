@@ -163,6 +163,9 @@ class QueryParam:
     containing citation information for the retrieved content.
     """
 
+    evaluation_trace: bool = False
+    """Return the final prompt/context only for an authenticated evaluation request."""
+
 
 @dataclass
 class StorageNameSpace(ABC):

@@ -12,6 +12,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
@@ -105,6 +106,31 @@ class TestQueryRouteJsonOnly:
             404,
             405,
         ), "/query route must exist and accept POST"
+
+    def test_evaluation_trace_is_opt_in_and_returned_only_when_requested(self):
+        from lightrag.api.routers.query_routes import create_query_routes
+
+        class TraceRag:
+            async def aquery_llm(self, *_args, **_kwargs):
+                return {
+                    "llm_response": {"content": "answer", "is_streaming": False},
+                    "data": {
+                        "references": [],
+                        "evaluation_trace": {"status": "observed", "final_context": "controlled"},
+                    },
+                }
+
+        app = FastAPI()
+        app.include_router(create_query_routes(TraceRag()))
+        client = TestClient(app)
+        normal = client.post("/query", json={"query": "test", "mode": "mix"})
+        assert normal.status_code == 200
+        assert normal.json().get("evaluation_trace") is None
+        traced = client.post(
+            "/query", json={"query": "test", "mode": "mix", "evaluation_trace": True}
+        )
+        assert traced.status_code == 200
+        assert traced.json()["evaluation_trace"]["final_context"] == "controlled"
 
 
 class TestQueryStreamRoute:

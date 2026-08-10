@@ -22,6 +22,7 @@ def evaluate_answers(
     max_cases: int | None = None,
     api_key: str | None = None,
     access_token: str | None = None,
+    evaluation_trace: bool = False,
 ) -> dict[str, Any]:
     oracle = DatasetClient(dataset_source).oracle()
     facts_by_id = {fact["fact_id"]: fact for fact in oracle.get("facts", [])}
@@ -34,6 +35,7 @@ def evaluate_answers(
             "include_references": True,
             "include_chunk_content": True,
             "response_type": "Multiple Paragraphs",
+            "evaluation_trace": evaluation_trace,
         }
         if top_k is not None:
             payload["top_k"] = top_k
@@ -68,6 +70,7 @@ def evaluate_answers(
                 # References are kept as a response-side observation only. They
                 # are not used as proof of the final prompt context (I2).
                 "response_references": response.get("references", []),
+                "final_context_trace": response.get("evaluation_trace"),
             }
         )
     total = len(results)
