@@ -160,6 +160,7 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
     assert json.loads((context.output_dir / "ingestion_receipt.json").read_text())["passed"] is True
     assert json.loads((context.output_dir / "index_receipt.json").read_text())["workspace_id"] == "ws"
     assert json.loads((context.output_dir / "diagnosis.json").read_text())["case_count"] == 0
+    assert "失败归因" in result["report"]
 
 
 def test_prepare_binds_workspace_to_immutable_execution_manifest(

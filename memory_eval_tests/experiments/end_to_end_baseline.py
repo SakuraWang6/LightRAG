@@ -131,6 +131,30 @@ def _dataset_formats(dataset: Path) -> list[str]:
     return sorted(formats) or ["docx"]
 
 
+def _diagnosis_markdown(diagnosis: dict[str, Any]) -> str:
+    lines = [
+        "## 失败归因",
+        "",
+        f"- 可归因覆盖率：{float(diagnosis.get('diagnosis_coverage') or 0):.1%}",
+        f"- 需复核/上下文不可观测：{(diagnosis.get('trace_availability') or {}).get('context_unavailable', 0)}",
+        "",
+        "| 主因 | Case 数 |",
+        "|---|---:|",
+    ]
+    for cause, count in (diagnosis.get("cause_distribution") or {}).items():
+        lines.append(f"| {cause} | {count} |")
+    lines.extend(
+        [
+            "",
+            "说明：若服务端未公开最终 prompt 上下文，相关 case 会保守标记为 `unclassified`，"
+            "不会据 response references 推断为模型失败。完整 trace 见 `case_trace.json`，"
+            "归因明细见 `diagnosis.json`。",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _prepare(context: RunContext) -> None:
     """Allocate once before the initial envelope makes the manifest immutable."""
     profile = context.environment_profile or _profile(context)
@@ -266,7 +290,8 @@ def _runner(context: RunContext) -> dict[str, Any]:
         return {
             "status": "complete",
             "methods": methods,
-            "report": "# 隔离端到端基线\n\n数据集已在独立执行单元中入库、索引、检索与评分。\n",
+            "report": "# 隔离端到端基线\n\n数据集已在独立执行单元中入库、索引、检索与评分。\n\n"
+            + _diagnosis_markdown(diagnosis),
             "extra": {
                 "ingestion_receipt": "ingestion_receipt.json",
                 "index_receipt": "index_receipt.json",
