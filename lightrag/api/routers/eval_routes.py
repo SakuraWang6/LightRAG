@@ -98,6 +98,7 @@ class EnvironmentProfileConfiguration(BaseModel):
     startup_template: str | None = Field(default=None, max_length=256)
     execution_mode: Literal["managed_local", "assigned"] = "managed_local"
     runtime_endpoint: str | None = Field(default=None, max_length=1024)
+    retention_policy: Literal["retain", "archive", "cleanup"] = "retain"
     extraction: ModelRoleReference | None = None
     query: ModelRoleReference | None = None
     answer: ModelRoleReference | None = None
@@ -204,6 +205,22 @@ def _build_run_params(
     for key in spec.extra_schema:
         if key in params:
             extra.append(f"{key}={_coerce(params[key], spec.extra_schema[key])}")
+    if spec.id == "end_to_end_baseline":
+        profile_id = params.get("environment_profile_id")
+        raw_version = params.get("environment_profile_version")
+        if not profile_id or raw_version is None:
+            raise ValueError(
+                "end_to_end_baseline requires environment_profile_id and environment_profile_version"
+            )
+        try:
+            profile_version = int(raw_version)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("environment_profile_version must be an integer") from exc
+        profile = eval_profiles.get_profile_version(runs_root, str(profile_id), profile_version)
+        if profile is None:
+            raise ValueError("environment profile version was not found")
+        if profile.get("status") != "published":
+            raise ValueError("end-to-end runs may only use a published environment profile")
     dataset_dir = datasets_root / dataset
     if not (dataset_dir / "manifest.json").exists():
         raise ValueError(f"dataset not found under generated root: {dataset}")
@@ -371,6 +388,50 @@ def create_eval_routes(
         except Exception as exc:
             logger.error(f"Error reading eval run log '{run_id}': {exc}")
             logger.error(traceback.format_exc())
+            raise internal_server_error(exc)
+
+    @router.get("/runs/{run_id:path}/workspace", dependencies=[Depends(combined_auth)])
+    async def get_run_workspace(run_id: str) -> dict[str, Any]:
+        """Return only the execution unit persisted under the resolved run dir."""
+        try:
+            require_eval()
+            detail = load_run(root, run_id)
+            if detail is None:
+                raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+            path = Path(detail["run_dir"]) / "execution_unit.json"
+            try:
+                unit = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raise HTTPException(status_code=404, detail="execution unit not found") from None
+            if not isinstance(unit, dict):
+                raise HTTPException(status_code=404, detail="execution unit not found")
+            return {"execution_unit": unit}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error loading eval run workspace '{run_id}': {exc}")
+            raise internal_server_error(exc)
+
+    @router.get("/runs/{run_id:path}/ingestion", dependencies=[Depends(combined_auth)])
+    async def get_run_ingestion(run_id: str) -> dict[str, Any]:
+        try:
+            require_eval()
+            detail = load_run(root, run_id)
+            if detail is None:
+                raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+            run_dir = Path(detail["run_dir"])
+            try:
+                ingestion = json.loads((run_dir / "ingestion_receipt.json").read_text(encoding="utf-8"))
+                index = json.loads((run_dir / "index_receipt.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raise HTTPException(status_code=404, detail="ingestion receipts not found") from None
+            if not isinstance(ingestion, dict) or not isinstance(index, dict):
+                raise HTTPException(status_code=404, detail="ingestion receipts not found")
+            return {"ingestion_receipt": ingestion, "index_receipt": index}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error loading eval run ingestion '{run_id}': {exc}")
             raise internal_server_error(exc)
 
     @router.get("/runs/{run_id:path}", dependencies=[Depends(combined_auth)])

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from memory_eval_tests.experiments import execution_unit
+from memory_eval_tests.experiments.common import ExperimentSpec, RunContext
 
 pytestmark = pytest.mark.offline
 
@@ -66,10 +67,37 @@ def test_assigned_unit_requires_explicit_endpoint(tmp_path: Path) -> None:
         )
 
 
+def test_finalized_interrupted_unit_is_not_reported_as_complete(tmp_path: Path) -> None:
+    unit = execution_unit.allocate_execution_unit(
+        run_id="end-to-end", output_dir=tmp_path / "run", profile=_profile()
+    )
+    finalized = execution_unit.finalize_execution_unit(
+        output_dir=tmp_path / "run", unit=unit, outcome="interrupted"
+    )
+    assert finalized["lifecycle_status"] == "interrupted"
+    persisted = execution_unit.load_execution_unit(tmp_path / "run")
+    assert persisted is not None
+    assert persisted["run_outcome"] == "interrupted"
+
+
+def test_cleanup_retention_only_removes_the_run_owned_storage(tmp_path: Path) -> None:
+    profile = _profile()
+    profile["configuration"]["retention_policy"] = "cleanup"
+    run_dir = tmp_path / "run"
+    unit = execution_unit.allocate_execution_unit(
+        run_id="end-to-end", output_dir=run_dir, profile=profile
+    )
+    storage = Path(unit["storage_dir"])
+    execution_unit.finalize_execution_unit(output_dir=run_dir, unit=unit, outcome="complete")
+    assert not storage.exists()
+    persisted = execution_unit.load_execution_unit(run_dir)
+    assert persisted is not None
+    assert persisted["lifecycle_status"] == "cleaned"
+
+
 def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from memory_eval_tests.experiments.common import ExperimentSpec, RunContext
     import memory_eval_tests.experiments.end_to_end_baseline as end_to_end
 
     profile = {**_profile(), "status": "published"}
@@ -127,3 +155,45 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
     assert context.environment["rag_api_url"] == "http://isolated.test"
     assert json.loads((context.output_dir / "ingestion_receipt.json").read_text())["passed"] is True
     assert json.loads((context.output_dir / "index_receipt.json").read_text())["workspace_id"] == "ws"
+
+
+def test_prepare_binds_workspace_to_immutable_execution_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import memory_eval_tests.experiments.end_to_end_baseline as end_to_end
+
+    profile = {**_profile(), "status": "published"}
+    context = RunContext(
+        spec=ExperimentSpec(id="end_to_end_baseline", label="E2E", description="d", runner=lambda _c: {}),
+        dataset=tmp_path / "dataset",
+        output_dir=tmp_path / "run",
+        baseline={}, environment={}, variables=[], run_id="e2e-run",
+        extra={"environment_profile_id": "profile-a", "environment_profile_version": "2"},
+        runs_root=tmp_path / "runs", execution_manifest={"manifest_version": "1.0"},
+    )
+    context.output_dir.mkdir()
+    monkeypatch.setattr(end_to_end.eval_profiles, "get_profile_version", lambda *_args: profile)
+    end_to_end._prepare(context)
+    bound = context.execution_manifest["execution_unit"]
+    assert bound["workspace_id"] == context.execution_unit["workspace_id"]
+    assert bound["storage_id"] == context.execution_unit["storage_id"]
+
+
+def test_end_to_end_uses_every_created_manifest_format(tmp_path: Path) -> None:
+    from memory_eval_tests.experiments.end_to_end_baseline import _dataset_formats
+
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "manifest.json").write_text(
+        json.dumps(
+            {
+                "files": [
+                    {"name": "a.docx", "format": "docx", "status": "created"},
+                    {"name": "b.pdf", "format": "pdf", "status": "created"},
+                    {"name": "ignored.docx", "format": "docx", "status": "skipped"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _dataset_formats(dataset) == ["docx", "pdf"]

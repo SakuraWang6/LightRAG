@@ -162,3 +162,31 @@ def test_index_runner_forwards_credentials(monkeypatch, tmp_path: Path) -> None:
         access_token="t",
     )
     assert seen == {"api_key": "k", "access_token": "t"}
+
+
+def test_index_runner_reuses_confirmed_content_hashes(monkeypatch, tmp_path: Path) -> None:
+    from memory_eval_tests.online.index_runner import _sha256, upload_dataset_files
+
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "manifest.json").write_text(
+        json.dumps(
+            {"dataset_id": "d", "files": [{"name": "doc.docx", "format": "docx", "status": "created"}]}
+        ),
+        encoding="utf-8",
+    )
+    document = dataset / "doc.docx"
+    document.write_bytes(b"already processed")
+    monkeypatch.setattr(
+        "memory_eval_tests.online.index_runner._upload_file",
+        lambda *_args, **_kwargs: pytest.fail("confirmed file must not be uploaded twice"),
+    )
+    result = upload_dataset_files(
+        dataset_source=str(dataset),
+        rag_api_url="http://api.test",
+        wait=True,
+        confirmed_hashes={_sha256(document)},
+    )
+    assert result["passed"] is True
+    assert result["uploaded"][0]["reused"] is True
+    assert result["uploaded"][0]["content_sha256"] == _sha256(document)

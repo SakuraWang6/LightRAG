@@ -53,7 +53,7 @@ def _render_report(retrieval: dict[str, Any], answer: dict[str, Any]) -> str:
     lines = [
         "# 在线基线评测",
         "",
-        "通过 LightRAG API 的 mix 检索与回答，作为受控实验的端到端基线。",
+        "> 注意：此高级/legacy 工具不会验证本次数据集是否已入库，不能作为端到端配置比较依据。",
         "",
         "## 检索",
         "",
@@ -165,6 +165,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
         "methods": methods,
         "report": _render_report(retrieval, answer),
         "status": "complete",
+        "extra": {"legacy": True, "compatibility_level": "legacy"},
     }
 
 
@@ -172,8 +173,8 @@ spec = ExperimentSpec(
     id="online_baseline",
     label="在线基线评测",
     description=(
-        "通过 LightRAG API 的 mix 检索与回答评测作为端到端基线；"
-        "口径与历史在线 run 一致（mode=mix、Top-5、max_total_tokens=8192）。"
+        "高级 legacy 工具：只调用既有 LightRAG API，不验证数据集入库；"
+        "不可作为端到端配置比较。"
     ),
     default_baseline={
         "model": "qwen3:8b",

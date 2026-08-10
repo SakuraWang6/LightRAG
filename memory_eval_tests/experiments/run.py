@@ -320,6 +320,13 @@ def main() -> None:
         parameter_sources=parameter_sources,
         started_at=context.started_at,
     )
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    preflight_error: Exception | None = None
+    if spec.prepare is not None:
+        try:
+            spec.prepare(context)
+        except Exception as exc:
+            preflight_error = exc
     context.runtime_snapshot = (
         {
             "snapshot_version": "1.0",
@@ -333,7 +340,6 @@ def main() -> None:
             access_token=args.access_token,
         )
     )
-    args.output_dir.mkdir(parents=True, exist_ok=True)
     _install_sigterm_handler(args.output_dir)
     _log(
         args.output_dir,
@@ -347,16 +353,44 @@ def main() -> None:
     )
     # Publish an initial envelope immediately so the console can supervise the
     # run while it is in progress; the final write below replaces it.
+    initial_extra: dict[str, Any] = {"launch_params": launch_params}
+    initial_status = "running"
+    if preflight_error is not None:
+        offset = append_run_event(
+            args.output_dir,
+            phase="preflight",
+            severity="error",
+            message=f"{type(preflight_error).__name__}: {preflight_error}",
+            error_type=type(preflight_error).__name__,
+        )
+        initial_status = "failed"
+        initial_extra["failure"] = build_failure(
+            phase=str(getattr(preflight_error, "phase", "preflight")),
+            error=preflight_error,
+            retryable=bool(getattr(preflight_error, "retryable", False)),
+            recommendation="fix the environment profile or isolated execution unit before retrying",
+            log_offset=offset,
+        )
     write_envelope(
         args.output_dir,
         context=context,
-        status="running",
+        status=initial_status,
         methods=[],
         report_rel_path=None,
         write_progress_file=False,
         runs_root=runs_root,
-        extra={"launch_params": launch_params},
+        extra=initial_extra,
     )
+    if preflight_error is not None:
+        write_progress(
+            args.output_dir,
+            status="failed",
+            done=0,
+            total=1,
+            phase="preflight",
+            message=f"{type(preflight_error).__name__}: {preflight_error}",
+        )
+        raise preflight_error
     write_progress(args.output_dir, status="queued", done=0, total=1, phase="starting")
     stop_heartbeat = threading.Event()
     heartbeat_thread: threading.Thread | None = None

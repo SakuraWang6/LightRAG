@@ -617,3 +617,41 @@ def test_run_log_endpoint_returns_tail(runs_tree: Path, monkeypatch) -> None:
     # The offline fixture has no run.log; endpoint returns exists=False.
     assert missing.json()["exists"] is False
     assert missing.status_code == 200
+
+
+def test_run_workspace_endpoint_returns_only_persisted_execution_unit(
+    runs_tree: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    unit = {
+        "workspace_id": "eval_context_selection",
+        "storage_id": "storage-abc",
+        "mode": "managed_local",
+        "lifecycle_status": "interrupted",
+    }
+    _write(runs_tree / "context-selection-v1" / "execution_unit.json", unit)
+    client = _client(runs_tree, api_key="secret-key")
+    response = client.get(
+        "/eval/runs/context-selection-v1/workspace", headers={"X-API-Key": "secret-key"}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"execution_unit": unit}
+    missing = client.get(
+        "/eval/runs/rich-smoke-v1/workspace", headers={"X-API-Key": "secret-key"}
+    )
+    assert missing.status_code == 404
+
+
+def test_run_ingestion_endpoint_returns_persisted_receipts(
+    runs_tree: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    run_dir = runs_tree / "context-selection-v1"
+    _write(run_dir / "ingestion_receipt.json", {"documents": [{"file_name": "a.docx"}]})
+    _write(run_dir / "index_receipt.json", {"successful_documents": 1})
+    client = _client(runs_tree, api_key="secret-key")
+    response = client.get(
+        "/eval/runs/context-selection-v1/ingestion", headers={"X-API-Key": "secret-key"}
+    )
+    assert response.status_code == 200
+    assert response.json()["ingestion_receipt"]["documents"][0]["file_name"] == "a.docx"

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,7 @@ def upload_dataset_files(
     poll_seconds: float = 5.0,
     api_key: str | None = None,
     access_token: str | None = None,
+    confirmed_hashes: set[str] | None = None,
 ) -> dict[str, Any]:
     client = DatasetClient(dataset_source)
     manifest = client.manifest()
@@ -33,6 +36,23 @@ def upload_dataset_files(
             skipped.append(file_info.get("name"))
             continue
         path = client.local_file(file_info["name"])
+        content_sha256 = _sha256(path)
+        receipt = {
+            "file_name": path.name,
+            "format": file_info.get("format"),
+            "content_sha256": content_sha256,
+            "upload_started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        if confirmed_hashes and content_sha256 in confirmed_hashes:
+            uploaded.append(
+                {
+                    **receipt,
+                    "status": "success",
+                    "reused": True,
+                    "track_status": {"terminal": True, "passed": True, "status": "processed"},
+                }
+            )
+            continue
         upload_result = _upload_file(
             path,
             rag_api_url,
@@ -48,7 +68,7 @@ def upload_dataset_files(
                 api_key=api_key,
                 access_token=access_token,
             )
-        uploaded.append(upload_result)
+        uploaded.append({**receipt, **upload_result})
     elapsed = time.perf_counter() - started
     return {
         "uploaded": uploaded,
@@ -57,6 +77,14 @@ def upload_dataset_files(
         "waited": wait,
         "passed": _uploads_passed(uploaded, wait=wait),
     }
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _upload_file(

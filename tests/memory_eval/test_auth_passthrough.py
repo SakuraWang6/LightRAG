@@ -95,7 +95,7 @@ def test_online_baseline_passes_auth_and_max_cases(
         variables=[],
         run_id="r",
     )
-    _runner(context)
+    result = _runner(context)
 
     assert len(calls) == 2
     for argv in calls:
@@ -108,6 +108,8 @@ def test_online_baseline_passes_auth_and_max_cases(
     out = capsys.readouterr().out
     assert "progress-line-1" in out
     assert "progress-line-2" in out
+    assert result["extra"]["legacy"] is True
+    assert "不能作为端到端配置比较" in result["report"]
 
 
 def test_legacy_adapter_namespace_carries_credentials(tmp_path: Path) -> None:

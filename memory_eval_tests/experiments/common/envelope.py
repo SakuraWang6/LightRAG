@@ -89,6 +89,7 @@ class ExperimentSpec:
     supports_resume: bool = False
     extra_schema: dict[str, str] = field(default_factory=dict)
     env_required: list[str] = field(default_factory=list)
+    prepare: Callable[["RunContext"], None] | None = None
 
 
 @dataclass
@@ -105,6 +106,8 @@ class RunContext:
     last_restart_resume: bool | None = None
     execution_manifest: dict[str, Any] = field(default_factory=dict)
     runtime_snapshot: dict[str, Any] = field(default_factory=dict)
+    environment_profile: dict[str, Any] | None = None
+    execution_unit: dict[str, Any] | None = None
     runs_root: Path | None = None
     started_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
