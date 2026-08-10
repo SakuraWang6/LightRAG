@@ -8,6 +8,7 @@ from typing import Any
 
 from lightrag.api import eval_profiles
 from memory_eval_tests.experiments.common import ExperimentSpec, RunContext, normalize_summary
+from memory_eval_tests.experiments.diagnosis import build_case_traces, build_diagnosis
 from memory_eval_tests.experiments.execution_unit import (
     allocate_execution_unit,
     finalize_execution_unit,
@@ -225,6 +226,25 @@ def _runner(context: RunContext) -> dict[str, Any]:
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
         )
+        oracle = json.loads((context.dataset / "oracle.json").read_text(encoding="utf-8"))
+        case_traces = build_case_traces(
+            oracle=oracle,
+            retrieval_results=retrieval.get("results") or [],
+            answer_results=answer.get("results") or [],
+        )
+        diagnosis = build_diagnosis(case_traces)
+        (context.output_dir / "case_trace.json").write_text(
+            json.dumps(
+                {"schema_version": "1.0", "cases": case_traces},
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (context.output_dir / "diagnosis.json").write_text(
+            json.dumps(diagnosis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         methods = [
             {
                 "method": "retrieval",
@@ -246,7 +266,16 @@ def _runner(context: RunContext) -> dict[str, Any]:
             "status": "complete",
             "methods": methods,
             "report": "# 隔离端到端基线\n\n数据集已在独立执行单元中入库、索引、检索与评分。\n",
-            "extra": {"ingestion_receipt": "ingestion_receipt.json", "index_receipt": "index_receipt.json", "execution_unit": "execution_unit.json"},
+            "extra": {
+                "ingestion_receipt": "ingestion_receipt.json",
+                "index_receipt": "index_receipt.json",
+                "execution_unit": "execution_unit.json",
+                "case_trace": "case_trace.json",
+                "diagnosis": "diagnosis.json",
+                "diagnosis_coverage": diagnosis["diagnosis_coverage"],
+                "cause_distribution": diagnosis["cause_distribution"],
+                "trace_availability": diagnosis["trace_availability"],
+            },
         }
     except Exception:
         outcome = "failed"

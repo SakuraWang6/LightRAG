@@ -15,6 +15,7 @@ from memory_eval_tests.common.sampling import sample_evenly
 
 _HIT_EVIDENCE_LIMIT = 5
 _HIT_EVIDENCE_CHARS = 500
+_TRACE_CANDIDATE_CHARS = 1200
 
 
 def evaluate_api(
@@ -120,6 +121,20 @@ def evaluate_api(
                     }
                     for ref_index, ref in enumerate(references)
                 ],
+                "top_k_candidates": [
+                    {
+                        "rank": candidate_rank,
+                        "reference_rank": ref_index + 1,
+                        "file_path": references[ref_index].get("file_path", ""),
+                        "score": {
+                            "value": "unknown",
+                            "reason": "query/data response does not expose a candidate score",
+                        },
+                        "text": chunk[:_TRACE_CANDIDATE_CHARS],
+                        "truncated": len(chunk) > _TRACE_CANDIDATE_CHARS,
+                    }
+                    for candidate_rank, ref_index, chunk in ranked_chunks
+                ],
             }
         )
     report = _summarize_dict_results(results, mode=mode, top_k=top_k, backend="api")
@@ -214,6 +229,18 @@ def evaluate_sidecar(
                         "id": context["id"],
                         "blockid": context.get("blockid", ""),
                         "score": context["score"],
+                    }
+                    for index, context in enumerate(top_contexts)
+                ],
+                "top_k_candidates": [
+                    {
+                        "rank": index + 1,
+                        "kind": context["kind"],
+                        "id": context["id"],
+                        "blockid": context.get("blockid", ""),
+                        "score": context["score"],
+                        "text": str(context.get("content", ""))[:_TRACE_CANDIDATE_CHARS],
+                        "truncated": len(str(context.get("content", ""))) > _TRACE_CANDIDATE_CHARS,
                     }
                     for index, context in enumerate(top_contexts)
                 ],

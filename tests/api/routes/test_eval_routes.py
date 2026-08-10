@@ -655,3 +655,18 @@ def test_run_ingestion_endpoint_returns_persisted_receipts(
     )
     assert response.status_code == 200
     assert response.json()["ingestion_receipt"]["documents"][0]["file_name"] == "a.docx"
+
+
+def test_run_diagnosis_endpoint_returns_trace_and_diagnosis(
+    runs_tree: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    run_dir = runs_tree / "context-selection-v1"
+    _write(run_dir / "case_trace.json", {"schema_version": "1.0", "cases": []})
+    _write(run_dir / "diagnosis.json", {"rule_version": "1.0", "case_count": 0})
+    client = _client(runs_tree, api_key="secret-key")
+    response = client.get(
+        "/eval/runs/context-selection-v1/diagnosis", headers={"X-API-Key": "secret-key"}
+    )
+    assert response.status_code == 200
+    assert response.json()["diagnosis"]["case_count"] == 0

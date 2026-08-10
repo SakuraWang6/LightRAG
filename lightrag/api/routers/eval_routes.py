@@ -434,6 +434,28 @@ def create_eval_routes(
             logger.error(f"Error loading eval run ingestion '{run_id}': {exc}")
             raise internal_server_error(exc)
 
+    @router.get("/runs/{run_id:path}/diagnosis", dependencies=[Depends(combined_auth)])
+    async def get_run_diagnosis(run_id: str) -> dict[str, Any]:
+        try:
+            require_eval()
+            detail = load_run(root, run_id)
+            if detail is None:
+                raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+            run_dir = Path(detail["run_dir"])
+            try:
+                traces = json.loads((run_dir / "case_trace.json").read_text(encoding="utf-8"))
+                diagnosis = json.loads((run_dir / "diagnosis.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raise HTTPException(status_code=404, detail="case trace and diagnosis not found") from None
+            if not isinstance(traces, dict) or not isinstance(diagnosis, dict):
+                raise HTTPException(status_code=404, detail="case trace and diagnosis not found")
+            return {"case_trace": traces, "diagnosis": diagnosis}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error loading eval run diagnosis '{run_id}': {exc}")
+            raise internal_server_error(exc)
+
     @router.get("/runs/{run_id:path}", dependencies=[Depends(combined_auth)])
     async def get_run(run_id: str) -> dict[str, Any]:
         try:

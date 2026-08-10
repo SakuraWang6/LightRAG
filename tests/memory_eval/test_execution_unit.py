@@ -149,12 +149,17 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
         lambda **_kwargs: {"cases": 1, "answer_accuracy": 1.0, "results": []},
     )
 
+    context.dataset.mkdir()
+    (context.dataset / "oracle.json").write_text(
+        json.dumps({"facts": [], "questions": []}), encoding="utf-8"
+    )
     context.output_dir.mkdir()
     result = end_to_end._runner(context)
     assert result["status"] == "complete"
     assert context.environment["rag_api_url"] == "http://isolated.test"
     assert json.loads((context.output_dir / "ingestion_receipt.json").read_text())["passed"] is True
     assert json.loads((context.output_dir / "index_receipt.json").read_text())["workspace_id"] == "ws"
+    assert json.loads((context.output_dir / "diagnosis.json").read_text())["case_count"] == 0
 
 
 def test_prepare_binds_workspace_to_immutable_execution_manifest(

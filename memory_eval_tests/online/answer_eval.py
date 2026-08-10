@@ -65,6 +65,9 @@ def evaluate_answers(
                 **scores,
                 "answer": answer_text,
                 "expected": expected,
+                # References are kept as a response-side observation only. They
+                # are not used as proof of the final prompt context (I2).
+                "response_references": response.get("references", []),
             }
         )
     total = len(results)
