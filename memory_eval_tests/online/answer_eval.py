@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from memory_eval_tests.common.dataset_client import DatasetClient
 from memory_eval_tests.common.http import post_json as _http_post_json
 from memory_eval_tests.common.sampling import sample_evenly
+from memory_eval_tests.online.review import build_review_queue
 
 SCORER_NAME = "deterministic-answer-rules"
 SCORER_VERSION = "1.0"
@@ -119,6 +120,7 @@ def evaluate_answers(
         "by_question_type": _stratify(results, "question_type"),
         "metric_definitions": _metric_definitions(),
         "scorers": _scorer_inventory(results),
+        "review_queue": build_review_queue(results),
         "results": results,
     }
 
