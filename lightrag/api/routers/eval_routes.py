@@ -38,6 +38,7 @@ try:
     from memory_eval_tests.experiments.common.chat import chat_ollama
     from memory_eval_tests.experiments.registry import get_spec, list_specs
     from memory_eval_tests.experiments.supervise import RunParams
+    from memory_eval_tests.experiments.frozen_context import freeze_final_contexts
 
     from .. import eval_jobs
     from .. import eval_profiles
@@ -128,6 +129,12 @@ class ComparisonPlanValidationRequest(BaseModel):
     comparison_type: Literal["answer_model", "retrieval_configuration", "embedding", "full_pipeline"]
     variables: dict[str, list[Any]]
     inputs: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"extra": "forbid"}
+
+
+class FreezeContextRequest(BaseModel):
+    parent_run_id: str = Field(min_length=1, max_length=256)
 
     model_config = {"extra": "forbid"}
 
@@ -627,6 +634,30 @@ def create_eval_routes(
             raise
         except Exception as exc:
             logger.error(f"Error validating comparison plan: {exc}")
+            raise internal_server_error(exc)
+
+    @router.post("/frozen-contexts", dependencies=[Depends(combined_auth)])
+    async def create_frozen_context(request: FreezeContextRequest) -> dict[str, Any]:
+        try:
+            require_eval()
+            parent = load_run(root, request.parent_run_id)
+            if parent is None or parent.get("experiment") != "end_to_end_baseline":
+                raise HTTPException(status_code=400, detail="parent_run_id must be an end_to_end_baseline run")
+            output = Path(parent["run_dir"]) / "frozen_context.json"
+            try:
+                frozen = freeze_final_contexts(parent_run_dir=Path(parent["run_dir"]), output_path=output)
+            except (OSError, ValueError) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            return {
+                "parent_run_id": request.parent_run_id,
+                "artifact": "frozen_context.json",
+                "input_hash": frozen["input_hash"],
+                "case_count": len(frozen["prompts"]),
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error freezing comparison context: {exc}")
             raise internal_server_error(exc)
 
     @router.post("/environment-profiles", dependencies=[Depends(combined_auth)])

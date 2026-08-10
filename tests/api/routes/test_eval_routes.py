@@ -702,3 +702,16 @@ def test_oracle_upper_bound_endpoint_only_lists_explicitly_linked_runs(
     )
     assert response.status_code == 200
     assert [item["id"] for item in response.json()["oracle_upper_bounds"]] == ["oracle-upper"]
+
+
+def test_frozen_context_endpoint_requires_traced_end_to_end_run(runs_tree: Path, monkeypatch) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    run_dir = runs_tree / "context-selection-v1"
+    payload = _experiment_envelope()
+    payload["experiment"]["id"] = "end_to_end_baseline"
+    _write(run_dir / "run.json", payload)
+    _write(run_dir / "case_trace.json", {"cases": [{"question_id": "Q1", "oracle": {"question": "q", "answer": "a"}, "final_context": {"status": "observed", "content": "ctx", "system_prompt": "sys ctx", "user_query": "q"}}]})
+    client = _client(runs_tree, api_key="secret-key")
+    response = client.post("/eval/frozen-contexts", headers={"X-API-Key": "secret-key"}, json={"parent_run_id": "context-selection-v1"})
+    assert response.status_code == 200
+    assert response.json()["case_count"] == 1
