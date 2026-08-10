@@ -234,24 +234,28 @@ def test_delete_rejects_encoded_path_traversal(
     assert not (tmp_path / "rich-smoke-v1").exists()
 
 
-def test_max_active_jobs_limit(runs_root: Path, tmp_path: Path, monkeypatch) -> None:
+def test_jobs_queue_when_max_active_reached(runs_root: Path, tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(_utils_api, "auth_configured", False)
     _write_dataset(tmp_path, "rich-smoke-v1")
     client = _client(runs_root, tmp_path)
-    started = eval_jobs._probe_process_start(os.getpid())
-    monkeypatch.setattr(
-        eval_jobs,
-        "start_run_job",
-        lambda **kwargs: {
-            "id": "run-fake",
+    spawned: dict = {}
+
+    def fake_spawn(**kwargs):
+        spawned.update(kwargs)
+        job_path = eval_jobs.jobs_root(runs_root) / kwargs["job_id"] / "job.json"
+        job = json.loads(job_path.read_text(encoding="utf-8"))
+        job["status"] = "running"
+        job["pid"] = os.getpid()
+        job_path.write_text(json.dumps(job), encoding="utf-8")
+        return {
+            "id": kwargs["job_id"],
             "kind": "run",
             "status": "running",
-            "pid": os.getpid(),
-            "process_started_at": started,
             "output_dir": str(runs_root / "out"),
-            "params": {},
-        },
-    )
+            "params": job.get("params", {}),
+        }
+
+    monkeypatch.setattr(eval_jobs, "_spawn_run_job", fake_spawn)
     payload = {
         "kind": "run",
         "experiment": "context_size",
@@ -260,10 +264,36 @@ def test_max_active_jobs_limit(runs_root: Path, tmp_path: Path, monkeypatch) -> 
     }
 
     monkeypatch.setenv("MEMORY_EVAL_MAX_ACTIVE_JOBS", "1")
+    # A running job occupies the single slot; a new job must queue, not 409.
     _live_job(runs_root, job_id="run-active", kind="run")
-    blocked = client.post("/eval/jobs", json=payload)
-    assert blocked.status_code == 409
-    assert "active job limit reached" in blocked.json()["detail"]
+    queued = client.post("/eval/jobs", json=payload)
+    assert queued.status_code == 200
+    assert queued.json()["status"] == "pending"
+    assert spawned == {}
 
-    monkeypatch.delenv("MEMORY_EVAL_MAX_ACTIVE_JOBS")
-    assert client.post("/eval/jobs", json=payload).status_code == 200
+    # Free the slot; dispatch promotes the oldest pending job.
+    active_job = json.loads(
+        (eval_jobs.jobs_root(runs_root) / "run-active" / "job.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    active_job["pid"] = 2_147_483_647  # dead process -> no longer active
+    (eval_jobs.jobs_root(runs_root) / "run-active" / "job.json").write_text(
+        json.dumps(active_job), encoding="utf-8"
+    )
+    eval_jobs._dispatch(runs_root, tmp_path)
+    assert spawned.get("job_id") == queued.json()["id"]
+
+    # The promoted job occupies the slot; once it is dead, a new job starts
+    # immediately instead of waiting in the queue.
+    promoted_job_path = (
+        eval_jobs.jobs_root(runs_root) / queued.json()["id"] / "job.json"
+    )
+    promoted = json.loads(promoted_job_path.read_text(encoding="utf-8"))
+    promoted["pid"] = 2_147_483_647
+    promoted_job_path.write_text(json.dumps(promoted), encoding="utf-8")
+    spawned.clear()
+    immediate = client.post("/eval/jobs", json=payload)
+    assert immediate.status_code == 200
+    assert immediate.json()["status"] == "running"
+    assert spawned.get("job_id") == immediate.json()["id"]

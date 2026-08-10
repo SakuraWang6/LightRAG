@@ -61,6 +61,7 @@ class CreateJobRequest(BaseModel):
     kind: Literal["run", "dataset"] = "run"
     experiment: str | None = None
     dataset: str | None = None
+    output_dir: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
     supervise: bool = False
     supervision: str = "auto"
@@ -390,25 +391,6 @@ def create_eval_routes(
     async def create_job(request: CreateJobRequest) -> dict[str, Any]:
         try:
             require_eval()
-            max_active_raw = os.getenv("MEMORY_EVAL_MAX_ACTIVE_JOBS")
-            if max_active_raw and max_active_raw.strip().isdigit():
-                max_active = int(max_active_raw)
-                active = [
-                    job
-                    for job in eval_jobs.list_jobs(
-                        runs_root=root, datasets_root=datasets
-                    )
-                    if job.get("status") == "running"
-                ]
-                if len(active) >= max_active:
-                    raise HTTPException(
-                        status_code=409,
-                        detail=(
-                            f"active job limit reached ({len(active)} >= "
-                            f"{max_active}); cancel a running job or raise "
-                            "MEMORY_EVAL_MAX_ACTIVE_JOBS"
-                        ),
-                    )
             if request.kind == "run":
                 if not request.experiment or not request.dataset:
                     raise HTTPException(
@@ -427,12 +409,14 @@ def create_eval_routes(
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
                 job = eval_jobs.start_run_job(
                     runs_root=root,
+                    datasets_root=datasets,
                     params=params,
                     supervise=request.supervise,
                     supervision=request.supervision,
                     stale_minutes=request.stale_minutes,
                     max_restarts=request.max_restarts,
                     poll_seconds=request.poll_seconds,
+                    output_dir=Path(request.output_dir) if request.output_dir else None,
                 )
                 return job
             if request.dataset_create is None:

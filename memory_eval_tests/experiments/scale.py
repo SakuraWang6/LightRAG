@@ -65,16 +65,13 @@ def _runner(context: RunContext) -> dict[str, Any]:
 
     dataset = context.dataset
     baseline = context.baseline
-    stage = context.extra.get("stage", "eval")
-    if stage not in ("ingest", "cache", "eval"):
-        raise ValueError(
-            f"scale --extra stage must be ingest|cache|eval, got {stage!r}"
-        )
+    stage = context.extra.get("stage", "all")
+    stages = ("ingest", "cache", "eval") if stage == "all" else (stage,)
     output_json = context.output_dir / "scale_eval.json"
     output_md = context.output_dir / "scale_report.md"
     sidecar_tables = context.extra.get("sidecar_tables")
     args = SimpleNamespace(
-        stage=stage,
+        stage=stages[0],
         dataset=dataset,
         storage_dir=Path(
             context.environment.get("storage_dir")
@@ -90,8 +87,12 @@ def _runner(context: RunContext) -> dict[str, Any]:
         sidecar_tables=Path(sidecar_tables) if sidecar_tables else None,
         extra_arms=False,
     )
-    asyncio.run(amain(args))
-    if stage != "eval":
+    for current_stage in stages:
+        args.stage = current_stage
+        args.output_json = output_json if current_stage == "eval" else None
+        args.output_md = output_md if current_stage == "eval" else None
+        asyncio.run(amain(args))
+    if "eval" not in stages:
         return {
             "methods": [],
             "report": "",

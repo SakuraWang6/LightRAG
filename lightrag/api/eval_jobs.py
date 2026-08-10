@@ -35,14 +35,26 @@ _JOBS_DIR = ".jobs"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATASET_PAGE_CAP = 1000
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_DISPATCH_LOCK = threading.Lock()
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _max_active_jobs() -> int:
+    raw = os.getenv("MEMORY_EVAL_MAX_ACTIVE_JOBS")
+    if raw and raw.strip().isdigit():
+        return max(1, int(raw.strip()))
+    return 1
+
+
 def jobs_root(runs_root: Path) -> Path:
     return runs_root / _JOBS_DIR
+
+
+def _default_datasets_root(runs_root: Path) -> Path:
+    return Path(runs_root).parent.parent / "memory_data_service" / "generated"
 
 
 def _job_id(kind: str) -> str:
@@ -137,7 +149,7 @@ def _derive_status(
     runs_root: Path,
     datasets_root: Path,
 ) -> str:
-    if job.get("status") in {"canceled", "stale"}:
+    if job.get("status") in {"canceled", "stale", "pending"}:
         return job["status"]
     liveness = job_liveness(job)
     if liveness == "reused":
@@ -199,7 +211,12 @@ def _valid_job_id(job_id: str) -> bool:
     return bool(_JOB_ID_RE.fullmatch(job_id)) and job_id not in {".", ".."}
 
 
-def _record_exit(job_id: str, jobs_root: Path, proc: subprocess.Popen) -> None:
+def _record_exit(
+    job_id: str,
+    jobs_root: Path,
+    proc: subprocess.Popen,
+    datasets_root: Path | None = None,
+) -> None:
     """Reap the child and persist its exit code for status derivation."""
     try:
         code = proc.wait()
@@ -209,6 +226,11 @@ def _record_exit(job_id: str, jobs_root: Path, proc: subprocess.Popen) -> None:
     if job is not None:
         job["exit_code"] = code
         _write_job(jobs_root, job)
+    # A finished job frees a slot: start the next queued job, if any.
+    _dispatch(
+        jobs_root.parent,
+        datasets_root=datasets_root or _default_datasets_root(jobs_root.parent),
+    )
 
 
 def _unique_run_dir(runs_root: Path, experiment: str) -> Path:
@@ -219,19 +241,32 @@ def _unique_run_dir(runs_root: Path, experiment: str) -> Path:
             return candidate
 
 
-def start_run_job(
+def _params_from_json(payload: dict[str, Any]) -> RunParams:
+    data = dict(payload)
+    for key in ("dataset", "output_dir", "runs_root", "storage_dir"):
+        if data.get(key) is not None:
+            data[key] = Path(data[key])
+    data["extra"] = list(data.get("extra") or [])
+    return RunParams(**data)
+
+
+def _spawn_run_job(
     *,
+    job_id: str,
     runs_root: Path,
+    datasets_root: Path | None,
     params: RunParams,
     supervise: bool,
     supervision: str,
     stale_minutes: int,
     max_restarts: int,
     poll_seconds: int,
-    extra_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    jobs_root(runs_root).mkdir(parents=True, exist_ok=True)
-    params.output_dir = _unique_run_dir(runs_root, params.experiment)
+    jobs = jobs_root(runs_root)
+    job = _read_job(jobs, job_id)
+    if job is None:
+        raise KeyError(f"job {job_id} not found")
+    params.output_dir = Path(job["output_dir"])
     params.output_dir.mkdir(parents=True, exist_ok=True)
     cmd = (
         build_supervise_command(
@@ -245,13 +280,157 @@ def start_run_job(
         else build_run_command(params)
     )
     child_env = dict(os.environ)
-    child_env.update(extra_env or {})
     proc = subprocess.Popen(
         cmd,
         cwd=_REPO_ROOT,
         env=child_env,
         start_new_session=True,
     )
+    job.update(
+        {
+            "pid": proc.pid,
+            "process_started_at": _probe_process_start(proc.pid),
+            "status": "running",
+            "started_at": _now_iso(),
+            "supervise": bool(supervise),
+        }
+    )
+    _write_job(jobs, job)
+    threading.Thread(
+        target=_record_exit,
+        args=(job_id, jobs, proc, datasets_root),
+        daemon=True,
+    ).start()
+    return job
+
+
+def _spawn_dataset_job(
+    *,
+    job_id: str,
+    runs_root: Path,
+    datasets_root: Path | None,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    jobs = jobs_root(runs_root)
+    job = _read_job(jobs, job_id)
+    if job is None:
+        raise KeyError(f"job {job_id} not found")
+    job_dir = jobs / job_id
+    cmd = [
+        sys.executable,
+        "-m",
+        "memory_data_service.cli",
+        "generate",
+        "--tier",
+        str(params["tier"]),
+        "--profile",
+        str(params["profile"]),
+        "--pages",
+        str(params["pages"]),
+        "--formats",
+        ",".join(params["formats"]),
+        "--modalities",
+        ",".join(params["modalities"]),
+        "--dataset-id",
+        str(job["dataset_id"]),
+        "--output-root",
+        str(datasets_root),
+    ]
+    if params.get("force"):
+        cmd.append("--force")
+    if params.get("allow_oversized_generation"):
+        cmd.append("--allow-oversized-generation")
+    log_handle = open(job_dir / "run.log", "a", encoding="utf-8")
+    proc = subprocess.Popen(
+        cmd,
+        cwd=_REPO_ROOT,
+        env=dict(os.environ),
+        start_new_session=True,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+    )
+    log_handle.close()
+    job.update(
+        {
+            "pid": proc.pid,
+            "process_started_at": _probe_process_start(proc.pid),
+            "status": "running",
+            "started_at": _now_iso(),
+            "supervise": False,
+        }
+    )
+    _write_job(jobs, job)
+    threading.Thread(
+        target=_record_exit,
+        args=(job_id, jobs, proc, datasets_root),
+        daemon=True,
+    ).start()
+    return job
+
+
+def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
+    """Start the oldest pending job when a slot is free (FIFO queue)."""
+    with _DISPATCH_LOCK:
+        datasets_root = datasets_root or _default_datasets_root(runs_root)
+        jobs = jobs_root(runs_root)
+        while True:
+            raw = [
+                _refresh_job(j, runs_root=runs_root, datasets_root=datasets_root)
+                for j in _raw_jobs(runs_root)
+            ]
+            active = [j for j in raw if j.get("status") == "running"]
+            if len(active) >= _max_active_jobs():
+                return
+            pending = [j for j in raw if j.get("status") == "pending"]
+            if not pending:
+                return
+            job = pending[0]
+            try:
+                if job["kind"] == "run":
+                    _spawn_run_job(
+                        job_id=job["id"],
+                        runs_root=runs_root,
+                        datasets_root=datasets_root,
+                        params=_params_from_json(job["params"]),
+                        supervise=bool(job.get("supervise", False)),
+                        supervision=str(job.get("supervision") or "auto"),
+                        stale_minutes=int(job.get("stale_minutes") or 60),
+                        max_restarts=int(job.get("max_restarts") or 3),
+                        poll_seconds=int(job.get("poll_seconds") or 30),
+                    )
+                else:
+                    _spawn_dataset_job(
+                        job_id=job["id"],
+                        runs_root=runs_root,
+                        datasets_root=datasets_root,
+                        params=job["params"],
+                    )
+                return
+            except Exception:
+                # A broken queued job must not block the rest of the queue.
+                failed = _read_job(jobs, job["id"])
+                if failed is not None:
+                    failed["status"] = "failed"
+                    failed["finished_at"] = _now_iso()
+                    _write_job(jobs, failed)
+
+
+def start_run_job(
+    *,
+    runs_root: Path,
+    datasets_root: Path | None = None,
+    params: RunParams,
+    supervise: bool,
+    supervision: str,
+    stale_minutes: int,
+    max_restarts: int,
+    poll_seconds: int,
+    output_dir: Path | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    jobs_root(runs_root).mkdir(parents=True, exist_ok=True)
+    params.output_dir = Path(output_dir) if output_dir else _unique_run_dir(runs_root, params.experiment)
+    params.output_dir.mkdir(parents=True, exist_ok=True)
     job = {
         "id": _job_id("run"),
         "kind": "run",
@@ -259,26 +438,24 @@ def start_run_job(
         "dataset": str(params.dataset),
         "output_dir": str(params.output_dir),
         "supervise": bool(supervise),
-        "pid": proc.pid,
-        "process_started_at": _probe_process_start(proc.pid),
-        "status": "running",
+        "status": "pending",
         "created_at": _now_iso(),
-        "started_at": _now_iso(),
         "params": _params_to_json(params),
+        "supervision": supervision,
+        "stale_minutes": stale_minutes,
+        "max_restarts": max_restarts,
+        "poll_seconds": poll_seconds,
     }
     _write_job(jobs_root(runs_root), job)
-    threading.Thread(
-        target=_record_exit,
-        args=(job["id"], jobs_root(runs_root), proc),
-        daemon=True,
-    ).start()
-    return job
+    _dispatch(runs_root, datasets_root)
+    refreshed = _read_job(jobs_root(runs_root), job["id"])
+    return refreshed if refreshed is not None else job
 
 
 def start_dataset_job(
     *,
     runs_root: Path,
-    datasets_root: Path,
+    datasets_root: Path | None = None,
     dataset_id: str,
     tier: str,
     profile: str,
@@ -298,53 +475,14 @@ def start_dataset_job(
         )
     job_dir = jobs_root(runs_root) / _job_id("dataset")
     job_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        sys.executable,
-        "-m",
-        "memory_data_service.cli",
-        "generate",
-        "--tier",
-        tier,
-        "--profile",
-        profile,
-        "--pages",
-        str(pages),
-        "--formats",
-        ",".join(formats),
-        "--modalities",
-        ",".join(modalities),
-        "--dataset-id",
-        dataset_id,
-        "--output-root",
-        str(datasets_root),
-    ]
-    if force:
-        cmd.append("--force")
-    if allow_oversized_generation:
-        cmd.append("--allow-oversized-generation")
-    child_env = dict(os.environ)
-    child_env.update(extra_env or {})
-    log_handle = open(job_dir / "run.log", "a", encoding="utf-8")
-    proc = subprocess.Popen(
-        cmd,
-        cwd=_REPO_ROOT,
-        env=child_env,
-        start_new_session=True,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-    )
-    log_handle.close()
     job = {
         "id": job_dir.name,
         "kind": "dataset",
         "dataset_id": dataset_id,
         "output_dir": str(job_dir),
         "supervise": False,
-        "pid": proc.pid,
-        "process_started_at": _probe_process_start(proc.pid),
-        "status": "running",
+        "status": "pending",
         "created_at": _now_iso(),
-        "started_at": _now_iso(),
         "params": {
             "tier": tier,
             "profile": profile,
@@ -352,15 +490,13 @@ def start_dataset_job(
             "formats": formats,
             "modalities": modalities,
             "force": force,
+            "allow_oversized_generation": allow_oversized_generation,
         },
     }
     _write_job(jobs_root(runs_root), job)
-    threading.Thread(
-        target=_record_exit,
-        args=(job["id"], jobs_root(runs_root), proc),
-        daemon=True,
-    ).start()
-    return job
+    _dispatch(runs_root, datasets_root)
+    refreshed = _read_job(jobs_root(runs_root), job["id"])
+    return refreshed if refreshed is not None else job
 
 
 def list_jobs(*, runs_root: Path, datasets_root: Path) -> list[dict[str, Any]]:
@@ -416,6 +552,11 @@ def cancel_job(
     if job is None:
         return None
     job = _refresh_job(job, runs_root=runs_root, datasets_root=datasets_root)
+    if job["status"] == "pending":
+        job["status"] = "canceled"
+        job["finished_at"] = _now_iso()
+        _write_job(jobs_root(runs_root), job)
+        return job
     if job["status"] in {"succeeded", "failed", "canceled", "stale"}:
         return job
     pid = job.get("pid")

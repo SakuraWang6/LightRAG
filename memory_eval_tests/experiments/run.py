@@ -221,6 +221,10 @@ def main() -> None:
         extra[key.strip()] = value.strip()
 
     storage_dir = args.storage_dir or (args.output_dir / "rag_storage")
+    # The in-process LightRAG instance resolves its working directory from the
+    # environment; pin it to this run's storage so every experiment reads the
+    # right index/cache regardless of the launching shell.
+    os.environ["WORKING_DIR"] = str(storage_dir)
     environment = capture_environment(
         rag_api_url=args.rag_api_url,
         ollama_url=args.ollama_url,
