@@ -305,6 +305,25 @@ def _report_artifact(run_dir: Path, envelope: dict[str, Any]) -> dict[str, Any] 
     }
 
 
+def _diagnosis_artifact(run_dir: Path, envelope: dict[str, Any]) -> dict[str, Any] | None:
+    """Expose saved case traces as a first-class detail artifact."""
+    try:
+        payload = json.loads((run_dir / "case_trace.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    rows = payload.get("cases") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return None
+    columns = [{"key": key, "label": key} for key in ("question_id", "primary_cause", "question_type")]
+    return {
+        "rel_path": "case_trace.json", "kind": "diagnosis", "title": "失败诊断",
+        "updated_at": envelope.get("created_at"), "metrics": [],
+        "table": {"columns": columns, "rows": [row for row in rows if isinstance(row, dict)]},
+        "meta": {"coverage": envelope.get("diagnosis_coverage"), "cause_distribution": envelope.get("cause_distribution") or {}},
+        "report_md": None, "toc": [], "error": None,
+    }
+
+
 def _run_record(
     runs_root: Path,
     run_dir: Path,
@@ -446,6 +465,9 @@ def _run_record(
     report = _report_artifact(run_dir, envelope)
     if report:
         artifacts.append(report)
+    diagnosis = _diagnosis_artifact(run_dir, envelope)
+    if diagnosis:
+        artifacts.append(diagnosis)
     record["artifacts"] = artifacts
     record["events"] = _read_events(run_dir)
     record["artifact_titles"] = [artifact["title"] for artifact in artifacts]

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib
+import io
 import json
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -154,9 +156,15 @@ def runs_tree(tmp_path: Path) -> Path:
     return runs
 
 
-def _client(runs_root: Path, api_key: str | None = None) -> TestClient:
+def _client(
+    runs_root: Path, api_key: str | None = None, datasets_root: Path | None = None
+) -> TestClient:
     app = FastAPI()
-    app.include_router(_eval_routes.create_eval_routes(api_key, runs_root=runs_root))
+    app.include_router(
+        _eval_routes.create_eval_routes(
+            api_key, runs_root=runs_root, datasets_root=datasets_root
+        )
+    )
     return TestClient(app)
 
 
@@ -250,6 +258,46 @@ def test_refresh_returns_count(runs_tree: Path, monkeypatch) -> None:
     response = client.post("/eval/refresh", headers=headers)
     assert response.status_code == 200
     assert response.json()["run_count"] == 2
+
+
+def test_import_generated_scenario_rewrites_machine_local_paths(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    scenario = {
+        "dataset_id": "portable-smoke",
+        "tier": "smoke",
+        "pages": 1,
+        "profile": "basic",
+        "formats": ["docx"],
+        "modalities": ["text"],
+        "title": "Portable smoke",
+        "files": [
+            {
+                "name": "portable.docx",
+                "format": "docx",
+                "path": "/another-machine/portable.docx",
+                "status": "created",
+            }
+        ],
+    }
+    oracle = {"dataset_id": "portable-smoke", "facts": [], "questions": []}
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("portable/manifest.json", json.dumps(scenario))
+        archive.writestr("portable/oracle.json", json.dumps(oracle))
+        archive.writestr("portable/portable.docx", b"a document")
+    payload.seek(0)
+    datasets_root = tmp_path / "datasets"
+    client = _client(tmp_path / "runs", datasets_root=datasets_root)
+    response = client.post(
+        "/eval/datasets/import",
+        files={"file": ("portable.zip", payload, "application/zip")},
+    )
+    assert response.status_code == 200, response.text
+    stored = json.loads((datasets_root / "portable-smoke" / "manifest.json").read_text())
+    assert stored["files"][0]["path"] == str(datasets_root / "portable-smoke" / "portable.docx")
+    assert client.get("/eval/datasets").json()["datasets"][0]["dataset_id"] == "portable-smoke"
 
 
 def test_status_reports_framework_version(runs_tree: Path, monkeypatch) -> None:

@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeftIcon, PlayIcon, ShieldCheckIcon } from 'lucide-react'
+import { ArrowLeftIcon, FolderOpenIcon, PlayIcon, Settings2Icon, ShieldCheckIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
   createEvalJob,
   listDatasets,
-  listEnvironmentProfiles,
   listEvalJobs,
-  type DatasetSummary,
-  type EnvironmentProfile
+  type DatasetSummary
 } from '@/api/eval'
 import { hasRunningJobs } from '@/features/eval/utils'
 import Button from '@/components/ui/Button'
@@ -26,30 +24,24 @@ import {
 interface SimpleEvalWizardProps {
   onBack: () => void
   onStarted: () => void
+  onManageDatasets: () => void
+  onAdvanced: () => void
 }
 
-export default function SimpleEvalWizard({ onBack, onStarted }: SimpleEvalWizardProps) {
+export default function SimpleEvalWizard({ onBack, onStarted, onManageDatasets, onAdvanced }: SimpleEvalWizardProps) {
   const { t } = useTranslation()
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
-  const [profiles, setProfiles] = useState<EnvironmentProfile[]>([])
   const [dataset, setDataset] = useState('')
-  const [profileVersion, setProfileVersion] = useState('')
   const [topK, setTopK] = useState('5')
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     void listDatasets().then((data) => setDatasets(data.datasets)).catch(() => undefined)
-    void listEnvironmentProfiles().then(setProfiles).catch(() => setProfiles([]))
   }, [])
 
   const start = useCallback(async () => {
     if (!dataset) {
       toast.error(t('eval.wizardIncomplete'))
-      return
-    }
-    const [profileId, rawVersion] = profileVersion.split('@')
-    if (!profileId || !rawVersion) {
-      toast.error('请选择已发布的评测环境')
       return
     }
     setSubmitting(true)
@@ -63,10 +55,7 @@ export default function SimpleEvalWizard({ onBack, onStarted }: SimpleEvalWizard
         experiment: 'end_to_end_baseline',
         dataset,
         params: {
-          environment_profile_id: profileId,
-          environment_profile_version: Number(rawVersion),
-          top_k: Number(topK) || 5,
-          mode: 'mix'
+          top_k: Math.max(1, Math.floor(Number(topK) || 5))
         }
       })
       toast.success(t('eval.jobStarted'))
@@ -76,16 +65,7 @@ export default function SimpleEvalWizard({ onBack, onStarted }: SimpleEvalWizard
     } finally {
       setSubmitting(false)
     }
-  }, [dataset, profileVersion, topK, t, onStarted])
-
-  const publishedProfiles = profiles.flatMap((profile) =>
-    profile.versions
-      .filter((version) => version.status === 'published')
-      .map((version) => ({
-        value: `${profile.id}@${version.version}`,
-        label: `${profile.name} · v${version.version}`
-      }))
-  )
+  }, [dataset, topK, t, onStarted])
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -93,7 +73,15 @@ export default function SimpleEvalWizard({ onBack, onStarted }: SimpleEvalWizard
         <Button variant="ghost" size="icon" onClick={onBack} tooltip={t('eval.backToDetail')}>
           <ArrowLeftIcon className="size-4" />
         </Button>
-        <h2 className="text-lg font-semibold">{t('eval.simpleEval')}</h2>
+        <h2 className="text-lg font-semibold">新建测评</h2>
+        <div className="ml-auto flex items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={onManageDatasets}>
+            <FolderOpenIcon className="mr-1 size-4" />管理场景
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onAdvanced}>
+            <Settings2Icon className="mr-1 size-4" />更多设置
+          </Button>
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-4">
         <div className="mx-auto max-w-2xl space-y-4">
@@ -114,6 +102,11 @@ export default function SimpleEvalWizard({ onBack, onStarted }: SimpleEvalWizard
                   ))}
                 </SelectContent>
               </Select>
+              {datasets.length === 0 ? (
+                <Button className="mt-3" size="sm" variant="outline" onClick={onManageDatasets}>
+                  创建或导入场景
+                </Button>
+              ) : null}
             </CardContent>
           </Card>
 
@@ -121,26 +114,12 @@ export default function SimpleEvalWizard({ onBack, onStarted }: SimpleEvalWizard
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-sm">
                 <ShieldCheckIcon className="size-4" />
-                已发布的评测环境
+                本机隔离运行
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              <Select value={profileVersion} onValueChange={setProfileVersion}>
-                <SelectTrigger className="h-9">
-                  <SelectValue placeholder="选择已发布环境" />
-                </SelectTrigger>
-                <SelectContent>
-                  {publishedProfiles.map((profile) => (
-                    <SelectItem key={profile.value} value={profile.value}>
-                      {profile.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {publishedProfiles.length === 0 ? (
-                <p className="text-muted-foreground text-xs">尚无已发布环境；请先在高级评测计划中创建并发布环境档案。</p>
-              ) : null}
-              <p className="text-muted-foreground text-xs">将在独立 workspace 与 storage 中执行：入库、索引、检索、回答和诊断。</p>
+              <p className="text-muted-foreground text-sm">使用本机 Ollama 模型，在独立 workspace 与 storage 中自动完成入库、索引、检索、回答和诊断。</p>
+              <p className="text-muted-foreground text-xs">不会创建镜像，也不会把测试文档上传到当前全局知识库。</p>
             </CardContent>
           </Card>
 

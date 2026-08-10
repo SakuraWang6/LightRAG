@@ -762,11 +762,25 @@ def delete_job(*, runs_root: Path, job_id: str) -> bool:
     return True
 
 
+def _tracked_child_pids(job: dict[str, Any]) -> list[int]:
+    """Read supervisor-owned process groups without trusting arbitrary paths."""
+    output_dir = job.get("output_dir")
+    if not isinstance(output_dir, str):
+        return []
+    try:
+        payload = json.loads((Path(output_dir) / ".supervise-child.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    pid = payload.get("pid") if isinstance(payload, dict) else None
+    return [pid] if isinstance(pid, int) and pid > 0 else []
+
+
 def wait_job_exit(job: dict[str, Any], timeout: float = 35.0) -> bool:
-    """Poll until the job's process is gone; returns False on timeout."""
+    """Poll until the job and any separately-sessioned supervisor child exit."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if job_liveness(job) != "alive":
+        children_alive = any(_pid_alive(pid) for pid in _tracked_child_pids(job))
+        if job_liveness(job) != "alive" and not children_alive:
             return True
         time.sleep(0.5)
     return False
@@ -783,24 +797,33 @@ def get_job(
     return _refresh_job(job, runs_root=runs_root, datasets_root=datasets_root)
 
 
-def _terminate_process_tree(pid: int) -> None:
+def _pid_alive(pid: int) -> bool:
     try:
-        os.killpg(pid, signal.SIGTERM)
+        os.kill(pid, 0)
     except (ProcessLookupError, PermissionError):
-        pass
+        return False
+    return True
+
+
+def _terminate_process_tree(pid: int, extra_pids: list[int] | None = None) -> None:
+    process_groups = {pid, *(extra_pids or [])}
+    for group_id in process_groups:
+        try:
+            os.killpg(group_id, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
 
     def _escalate() -> None:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
-            try:
-                os.kill(pid, 0)
-            except (ProcessLookupError, PermissionError):
+            if not any(_pid_alive(group_id) for group_id in process_groups):
                 return
             time.sleep(0.5)
-        try:
-            os.killpg(pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+        for group_id in process_groups:
+            try:
+                os.killpg(group_id, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
 
     threading.Thread(target=_escalate, daemon=True).start()
 
@@ -833,7 +856,7 @@ def cancel_job(
             return job
         job["status"] = "cancelling"
         _write_job(jobs_root(runs_root), job)
-    _terminate_process_tree(pid)
+    _terminate_process_tree(pid, _tracked_child_pids(job))
     return job
 
 

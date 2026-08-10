@@ -215,6 +215,16 @@ evalApiClient.interceptors.response.use(
       navigationService.navigateToLogin()
       throw new Error('Authentication required')
     }
+    const payload = error.response?.data as { detail?: unknown; message?: unknown } | undefined
+    const detail = typeof payload?.detail === 'string'
+      ? payload.detail
+      : typeof payload?.message === 'string'
+        ? payload.message
+        : null
+    // A 400 is actionable only when the API's validation reason survives the
+    // client interceptor.  Axios' default message was hiding it as merely
+    // "Request failed with status code 400".
+    if (detail) throw new Error(detail)
     throw new Error(errorMessage(error))
   }
 )
@@ -290,6 +300,15 @@ export async function listDatasets(
   params?: { limit?: number; offset?: number }
 ): Promise<{ datasets: DatasetSummary[]; total: number }> {
   const response = await evalApiClient.get('/eval/datasets', { params })
+  return response.data
+}
+
+export async function importEvalDataset(file: File): Promise<DatasetSummary> {
+  const payload = new FormData()
+  payload.append('file', file)
+  const response = await evalApiClient.post('/eval/datasets/import', payload, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
   return response.data
 }
 

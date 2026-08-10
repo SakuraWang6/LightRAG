@@ -10,12 +10,21 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from memory_eval_tests.experiments.common import capture_runtime_snapshot
+
+
+class ExecutionUnitPrerequisiteError(RuntimeError):
+    """A missing model backend that must fail before an evaluation is queued."""
+
+    phase = "environment_not_ready"
+    retryable = False
 
 
 def _now() -> str:
@@ -90,8 +99,72 @@ def _profile_environment(profile: dict[str, Any], unit: dict[str, Any]) -> dict[
         env["EMBEDDING_MODEL"] = str(embedding["model"])
     if embedding.get("endpoint"):
         env["EMBEDDING_BINDING_HOST"] = str(embedding["endpoint"])
+    # The managed child is bound to 127.0.0.1 on an unguessable transient
+    # port.  It must not inherit the main WebUI's login requirement: the
+    # runner owns this process and needs an authenticated configuration
+    # snapshot before it has a user token to pass along.  Empty values take
+    # precedence over the repository .env because LightRAG loads it with
+    # ``override=False``.  Provider credentials intentionally remain intact.
+    env["AUTH_ACCOUNTS"] = ""
+    env["LIGHTRAG_API_KEY"] = ""
     env["WORKSPACE"] = str(unit["workspace_id"])
     return env
+
+
+def _provider_endpoint(role: dict[str, Any], *, prefix: str) -> str:
+    configured = role.get("endpoint")
+    if isinstance(configured, str) and configured.strip():
+        return configured.rstrip("/")
+    return os.getenv(f"{prefix}_BINDING_HOST", "http://127.0.0.1:11434").rstrip("/")
+
+
+def _has_provider_credential(*, provider: str, prefix: str) -> bool:
+    """Check only that a credential exists; never send a paid provider request."""
+    names = [f"{prefix}_BINDING_API_KEY"]
+    if provider in {"openai", "azure_openai"}:
+        names.extend(["OPENAI_API_KEY", "AZURE_OPENAI_API_KEY"])
+    elif provider == "gemini":
+        names.append("GEMINI_API_KEY")
+    elif provider == "bedrock":
+        names.extend(["AWS_ACCESS_KEY_ID", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE"])
+    return any(bool(os.getenv(name)) for name in names)
+
+
+def _ollama_reachable(endpoint: str) -> bool:
+    try:
+        request = urllib.request.Request(f"{endpoint.rstrip('/')}/api/tags")
+        with urllib.request.urlopen(request, timeout=3):
+            return True
+    except (OSError, urllib.error.URLError, TimeoutError):
+        return False
+
+
+def preflight_execution_unit(profile: dict[str, Any]) -> None:
+    """Fail fast when a managed local run has no usable LLM or embedding backend.
+
+    This validates only local Ollama availability or the presence of credentials
+    for remote providers.  It deliberately does not call remote APIs, so
+    clicking an evaluation never spends tokens merely to validate a form.
+    """
+    configuration = profile.get("configuration") or {}
+    if configuration.get("execution_mode", "managed_local") != "managed_local":
+        return
+    roles = {
+        "LLM": (configuration.get("query") or configuration.get("extraction") or {}, "LLM"),
+        "embedding": (configuration.get("embedding") or {}, "EMBEDDING"),
+    }
+    blockers: list[str] = []
+    for label, (raw_role, prefix) in roles.items():
+        role = raw_role if isinstance(raw_role, dict) else {}
+        provider = str(role.get("provider") or "ollama").strip().lower()
+        if provider == "ollama":
+            endpoint = _provider_endpoint(role, prefix=prefix)
+            if not _ollama_reachable(endpoint):
+                blockers.append(f"{label} uses Ollama but {endpoint} is unreachable")
+        elif not _has_provider_credential(provider=provider, prefix=prefix):
+            blockers.append(f"{label} uses {provider} but its API credential is not configured")
+    if blockers:
+        raise ExecutionUnitPrerequisiteError("; ".join(blockers))
 
 
 def _write_unit(output_dir: Path, unit: dict[str, Any]) -> None:

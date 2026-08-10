@@ -41,6 +41,31 @@ def test_allocated_units_never_share_workspace_or_storage(tmp_path: Path) -> Non
     assert persisted["profile"] == {"id": "profile-a", "version": 2}
 
 
+def test_managed_unit_does_not_inherit_main_server_auth(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTH_ACCOUNTS", "operator:secret")
+    monkeypatch.setenv("LIGHTRAG_API_KEY", "main-server-key")
+    unit = execution_unit.allocate_execution_unit(
+        run_id="end-to-end", output_dir=tmp_path / "run", profile=_profile("managed_local")
+    )
+    environment = execution_unit._profile_environment(_profile("managed_local"), unit)
+    assert environment["AUTH_ACCOUNTS"] == ""
+    assert environment["LIGHTRAG_API_KEY"] == ""
+
+
+def test_managed_unit_preflight_rejects_missing_ollama(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(execution_unit, "_ollama_reachable", lambda _endpoint: False)
+    profile = _profile("managed_local")
+    profile["configuration"]["query"] = {"provider": "ollama", "model": "qwen3:8b"}
+    profile["configuration"]["embedding"] = {"provider": "ollama", "model": "bge-m3"}
+    with pytest.raises(execution_unit.ExecutionUnitPrerequisiteError, match="unreachable"):
+        execution_unit.preflight_execution_unit(profile)
+
+
+def test_managed_unit_preflight_accepts_credentialed_remote_provider(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    execution_unit.preflight_execution_unit(_profile("managed_local"))
+
+
 def test_assigned_unit_records_actual_runtime_snapshot(tmp_path: Path, monkeypatch) -> None:
     profile = _profile()
     unit = execution_unit.allocate_execution_unit(
@@ -101,6 +126,7 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
     import memory_eval_tests.experiments.end_to_end_baseline as end_to_end
 
     profile = {**_profile(), "status": "published"}
+    monkeypatch.setattr(end_to_end, "preflight_execution_unit", lambda _profile: None)
     context = RunContext(
         spec=ExperimentSpec(id="end_to_end_baseline", label="E2E", description="d", runner=lambda _c: {}),
         dataset=tmp_path / "dataset",
@@ -182,6 +208,7 @@ def test_prepare_binds_workspace_to_immutable_execution_manifest(
         runs_root=tmp_path / "runs", execution_manifest={"manifest_version": "1.0"},
     )
     context.output_dir.mkdir()
+    monkeypatch.setattr(end_to_end, "preflight_execution_unit", lambda _profile: None)
     monkeypatch.setattr(end_to_end.eval_profiles, "get_profile_version", lambda *_args: profile)
     end_to_end._prepare(context)
     bound = context.execution_manifest["execution_unit"]

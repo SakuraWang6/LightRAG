@@ -54,6 +54,7 @@ _SUPERVISION_CHOICES = ("auto", "none", "heartbeat")
 
 # Mutable holder so signal handlers can reach the live child process.
 _state: dict[str, Any] = {"proc": None}
+_CHILD_STATE_NAME = ".supervise-child.json"
 
 
 def _utcnow() -> str:
@@ -67,6 +68,37 @@ def _log(output_dir: Path, message: str) -> None:
         with open(output_dir / "run.log", "a", encoding="utf-8") as fh:
             fh.write(line + "\n")
     except OSError:
+        pass
+
+
+def _write_child_state(output_dir: Path, proc: subprocess.Popen) -> None:
+    """Persist the separate child process group for the job manager.
+
+    ``run.py`` deliberately owns its own session so it can clean up servers it
+    spawns.  The outer job manager therefore cannot assume the supervisor's
+    PGID contains the whole tree; it uses this file during cancel/delete.
+    """
+    pid = getattr(proc, "pid", None)
+    if not isinstance(pid, int) or pid <= 0:
+        return
+    path = output_dir / _CHILD_STATE_NAME
+    tmp = output_dir / f"{_CHILD_STATE_NAME}.tmp"
+    tmp.write_text(
+        json.dumps({"pid": pid, "pgid": pid}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def _clear_child_state(output_dir: Path, pid: int | None = None) -> None:
+    path = output_dir / _CHILD_STATE_NAME
+    try:
+        if pid is not None:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if payload.get("pid") != pid:
+                return
+        path.unlink()
+    except (OSError, ValueError):
         pass
 
 
@@ -485,6 +517,7 @@ def main(argv: list[str] | None = None) -> int:
             env=env,
             start_new_session=True,
         )
+        _write_child_state(output_dir, proc)
         _state["proc"] = proc
         last_activity = _activity_mtime(output_dir)
         while proc.poll() is None:
@@ -508,6 +541,7 @@ def main(argv: list[str] | None = None) -> int:
                 break
         code = proc.wait()
         _state["proc"] = None
+        _clear_child_state(output_dir, getattr(proc, "pid", None))
         _log(output_dir, f"attempt {attempts} exited with code {code}")
         if code == 0:
             _log(output_dir, "run finished successfully")

@@ -2,15 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CheckSquareIcon,
-  ClipboardListIcon,
   Columns3Icon,
-  DatabaseIcon,
-  FlaskConicalIcon,
   PlusIcon,
   RefreshCwIcon,
-  SearchIcon,
-  ShieldCheckIcon,
-  StethoscopeIcon
+  SearchIcon
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -38,8 +33,6 @@ import EvalRunDetailView from '@/features/eval/EvalRunDetail'
 import EvalCompare from '@/features/eval/EvalCompare'
 import ConditionChips from '@/features/eval/ConditionChips'
 import DatasetsView from '@/features/eval/DatasetsView'
-import EnvironmentProfilesView from '@/features/eval/EnvironmentProfilesView'
-import JobsView from '@/features/eval/JobsView'
 import NewRunWizard from '@/features/eval/NewRunWizard'
 import SimpleEvalWizard from '@/features/eval/SimpleEvalWizard'
 import type { EvalTemplate } from '@/api/eval'
@@ -60,15 +53,6 @@ const KIND_OPTIONS: { value: EvalRunKind | 'all'; labelKey: string }[] = [
   { value: 'report', labelKey: 'eval.kindReport' }
 ]
 
-const WORKBENCH_SECTIONS = [
-  { id: 'datasets', label: '数据场景', icon: DatabaseIcon },
-  { id: 'environment', label: '评测环境', icon: ShieldCheckIcon },
-  { id: 'plan', label: '评测计划', icon: ClipboardListIcon },
-  { id: 'runs', label: '运行与对比', icon: Columns3Icon },
-  { id: 'diagnosis', label: '失败诊断', icon: StethoscopeIcon },
-  { id: 'lab', label: '研究实验室', icon: FlaskConicalIcon }
-] as const
-
 export default function EvalConsole() {
   const { t } = useTranslation()
   const [runs, setRuns] = useState<EvalRun[] | null>(null)
@@ -87,7 +71,7 @@ export default function EvalConsole() {
   const [comparing, setComparing] = useState(false)
   const [compareRuns, setCompareRuns] = useState<EvalRunDetail[]>([])
   const [compareLoading, setCompareLoading] = useState(false)
-  const [view, setView] = useState<'runs' | 'new' | 'datasets' | 'jobs' | 'environment'>('runs')
+  const [view, setView] = useState<'runs' | 'new' | 'datasets'>('runs')
   const [wizardMode, setWizardMode] = useState<'simple' | 'advanced'>('simple')
   const [wizardDraft, setWizardDraft] = useState<EvalTemplate | null>(null)
 
@@ -102,22 +86,6 @@ export default function EvalConsole() {
       supervise: false
     })
     setView('new')
-  }, [])
-
-  const openWorkbench = useCallback((section: (typeof WORKBENCH_SECTIONS)[number]['id']) => {
-    if (section === 'datasets' || section === 'environment' || section === 'runs') {
-      setView(section)
-      return
-    }
-    if (section === 'plan' || section === 'lab') {
-      setWizardDraft(null)
-      setWizardMode(section === 'plan' ? 'simple' : 'advanced')
-      setView('new')
-      return
-    }
-    setView('runs')
-    setKindFilter('all')
-    setSearch('diagnosis')
   }, [])
 
   const loadRuns = useCallback(async () => {
@@ -297,37 +265,12 @@ export default function EvalConsole() {
   if (view === 'new') {
     return (
       <div className="flex h-full flex-col">
-        <div className="flex items-center gap-2 border-b px-4 py-2">
-          <Button
-            size="sm"
-            variant={wizardMode === 'simple' ? 'default' : 'outline'}
-            onClick={() => setWizardMode('simple')}
-          >
-            {t('eval.simpleEval')}
-          </Button>
-          <Button
-            size="sm"
-            variant={wizardMode === 'advanced' ? 'default' : 'outline'}
-            onClick={() => setWizardMode('advanced')}
-          >
-            {t('eval.newRun')}
-          </Button>
-          <div className="ml-auto" />
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setView('runs')
-              void loadRuns()
-            }}
-          >
-            {t('eval.backToDetail')}
-          </Button>
-        </div>
         <div className="min-h-0 flex-1 overflow-hidden">
           {wizardMode === 'simple' ? (
             <SimpleEvalWizard
               onBack={() => setView('runs')}
+              onManageDatasets={() => setView('datasets')}
+              onAdvanced={() => setWizardMode('advanced')}
               onStarted={() => {
                 setView('runs')
                 void loadRuns()
@@ -349,50 +292,22 @@ export default function EvalConsole() {
   }
 
   if (view === 'datasets') {
-    return <DatasetsView onBack={() => setView('runs')} />
-  }
-
-  if (view === 'environment') {
-    return <EnvironmentProfilesView onBack={() => setView('runs')} />
-  }
-
-  if (view === 'jobs') {
-    return <JobsView onBack={() => setView('runs')} />
+    return <DatasetsView onBack={() => setView('new')} />
   }
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
-        <h1 className="mr-2 text-base font-semibold">{t('eval.title')}</h1>
-        <nav aria-label="评测工作台" className="flex flex-wrap items-center gap-1">
-          {WORKBENCH_SECTIONS.map((section) => {
-            const Icon = section.icon
-            return (
-              <Button key={section.id} size="sm" variant={section.id === 'runs' ? 'default' : 'ghost'} onClick={() => openWorkbench(section.id)}>
-                <Icon className="mr-1 size-3.5" />{section.label}
-              </Button>
-            )
-          })}
-        </nav>
+        <h1 className="mr-2 text-base font-semibold">LightRAG 测评</h1>
         {KIND_OPTIONS.slice(1).map((option) => (
           <Badge key={option.value} variant="outline" className="text-muted-foreground text-xs">
             {t(option.labelKey)} {runCounts[option.value] ?? 0}
           </Badge>
         ))}
         <div className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => { setWizardDraft(null); setView('new') }}>
+          <Button size="sm" onClick={() => { setWizardDraft(null); setWizardMode('simple'); setView('new') }}>
             <PlusIcon className="mr-1 size-4" />
-            {t('eval.newRun')}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setView('datasets')}>
-            <DatabaseIcon className="mr-1 size-4" />
-            {t('eval.datasets')}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setView('environment')}>
-            评测环境
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setView('jobs')}>
-            {t('eval.jobs')}
+            新建测评
           </Button>
           {compareIds.size > 0 && (
             <Button

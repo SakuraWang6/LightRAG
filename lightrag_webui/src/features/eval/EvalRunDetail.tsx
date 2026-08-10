@@ -295,7 +295,7 @@ function StandardRunView({ run }: { run: EvalRunDetail }) {
           </TabsTrigger>
           <TabsTrigger value="cases">
             <ListIcon className="mr-1 size-4" />
-            {t('eval.cases')}
+            逐题与失败诊断
           </TabsTrigger>
           <TabsTrigger value="reports">
             <FileTextIcon className="mr-1 size-4" />

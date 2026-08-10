@@ -550,6 +550,8 @@ def capture_environment(**overrides: Any) -> dict[str, Any]:
         "api_key": os.getenv("LIGHTRAG_API_KEY"),
         "access_token": os.getenv("LIGHTRAG_ACCESS_TOKEN"),
         "llm_binding": os.getenv("LLM_BINDING", "ollama"),
+        "llm_model": os.getenv("LLM_MODEL", os.getenv("OLLAMA_MODEL", "qwen3:8b")),
+        "embedding_binding": os.getenv("EMBEDDING_BINDING", "ollama"),
         "embedding_model": os.getenv("EMBEDDING_MODEL", "bge-m3:latest"),
         "vlm_model": os.getenv("VLM_LLM_MODEL", "gemma3:4b"),
         "vlm_process_enable": os.getenv("VLM_PROCESS_ENABLE", "false").lower()

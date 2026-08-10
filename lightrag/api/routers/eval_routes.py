@@ -13,14 +13,16 @@ import io
 import os
 import re
 import shutil
+import tempfile
 import traceback
 import urllib.error
 import urllib.request
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from lightrag.utils import logger
@@ -33,6 +35,7 @@ try:
         DEFAULT_GENERATED_ROOT,
         list_datasets,
         load_manifest,
+        load_oracle,
     )
     from memory_eval_tests import __version__ as _eval_framework_version
     from memory_eval_tests.experiments.common.chat import chat_ollama
@@ -168,6 +171,9 @@ _INFRA_PARAMS = {
 _TEMPLATE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _DATASET_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_MAX_DATASET_ARCHIVE_BYTES = 512 * 1024 * 1024
+_MAX_DATASET_ARCHIVE_FILES = 1_000
+_MAX_DATASET_UNPACKED_BYTES = 2 * 1024 * 1024 * 1024
 
 
 def _validate_dataset_id(dataset_id: str) -> str:
@@ -181,6 +187,107 @@ def _validate_job_id(job_id: str) -> str:
     if not _JOB_ID_RE.fullmatch(job_id) or job_id in {".", ".."}:
         raise HTTPException(status_code=400, detail="invalid job id")
     return job_id
+
+
+def _safe_archive_parts(name: str) -> tuple[str, ...]:
+    """Return a relative archive path or reject traversal and link-like names."""
+    normalized = name.replace("\\", "/")
+    parts = tuple(part for part in normalized.split("/") if part not in {"", "."})
+    if not parts or any(part == ".." for part in parts):
+        raise ValueError(f"unsafe archive member: {name!r}")
+    if normalized.startswith("/") or ":" in parts[0]:
+        raise ValueError(f"unsafe archive member: {name!r}")
+    return parts
+
+
+def _safe_dataset_file_path(dataset_dir: Path, name: str) -> Path:
+    parts = _safe_archive_parts(name)
+    path = dataset_dir.joinpath(*parts)
+    if dataset_dir.resolve() not in path.resolve().parents:
+        raise ValueError(f"unsafe manifest file name: {name!r}")
+    return path
+
+
+def _import_dataset_archive(*, archive: UploadFile, datasets_root: Path) -> dict[str, Any]:
+    """Import one generated-scenario zip after validating its executable contract.
+
+    A scenario is portable only when its manifest, oracle, and every created
+    document travel together.  Paths recorded by the generator are rewritten
+    after import, because they are machine-local implementation details.
+    """
+    filename = archive.filename or ""
+    if not filename.lower().endswith(".zip"):
+        raise ValueError("only a .zip generated scenario package can be imported")
+    with tempfile.TemporaryDirectory(prefix="lightrag-eval-import-") as temp_dir:
+        archive_path = Path(temp_dir) / "scenario.zip"
+        total = 0
+        with archive_path.open("wb") as target:
+            while chunk := archive.file.read(1024 * 1024):
+                total += len(chunk)
+                if total > _MAX_DATASET_ARCHIVE_BYTES:
+                    raise ValueError("scenario package exceeds the 512 MiB import limit")
+                target.write(chunk)
+        if not zipfile.is_zipfile(archive_path):
+            raise ValueError("uploaded file is not a valid zip archive")
+
+        staging = Path(temp_dir) / "unpacked"
+        staging.mkdir()
+        unpacked_bytes = 0
+        with zipfile.ZipFile(archive_path) as source:
+            entries = [entry for entry in source.infolist() if not entry.is_dir()]
+            if len(entries) > _MAX_DATASET_ARCHIVE_FILES:
+                raise ValueError("scenario package contains too many files")
+            for entry in entries:
+                parts = _safe_archive_parts(entry.filename)
+                # Unix symlinks can escape the staging directory after extraction.
+                if (entry.external_attr >> 16) & 0o170000 == 0o120000:
+                    raise ValueError(f"scenario package contains a symbolic link: {entry.filename!r}")
+                unpacked_bytes += entry.file_size
+                if unpacked_bytes > _MAX_DATASET_UNPACKED_BYTES:
+                    raise ValueError("scenario package exceeds the 2 GiB unpacked limit")
+                output = staging.joinpath(*parts)
+                output.parent.mkdir(parents=True, exist_ok=True)
+                with source.open(entry) as input_file, output.open("wb") as output_file:
+                    shutil.copyfileobj(input_file, output_file)
+
+        manifests = list(staging.rglob("manifest.json"))
+        if len(manifests) != 1:
+            raise ValueError("scenario package must contain exactly one manifest.json")
+        source_dir = manifests[0].parent
+        manifest = load_manifest(source_dir)
+        dataset_id = _validate_dataset_id(manifest.dataset_id)
+        oracle_path = _safe_dataset_file_path(source_dir, manifest.oracle_file)
+        if not oracle_path.is_file():
+            raise ValueError(f"scenario package is missing oracle file: {manifest.oracle_file}")
+        oracle = load_oracle(source_dir)
+        if oracle.dataset_id != dataset_id:
+            raise ValueError("oracle dataset_id does not match manifest dataset_id")
+        for item in manifest.files:
+            if item.status != "created":
+                continue
+            document_path = _safe_dataset_file_path(source_dir, item.name)
+            if not document_path.is_file():
+                raise ValueError(f"scenario package is missing created file: {item.name}")
+
+        destination = datasets_root / dataset_id
+        if destination.exists():
+            raise ValueError(f"dataset already exists: {dataset_id}")
+        datasets_root.mkdir(parents=True, exist_ok=True)
+        destination.parent.resolve()
+        shutil.move(str(source_dir), str(destination))
+        try:
+            payload = json.loads((destination / "manifest.json").read_text(encoding="utf-8"))
+            for item in payload.get("files") or []:
+                if item.get("status") == "created":
+                    item["path"] = str(_safe_dataset_file_path(destination, str(item.get("name") or "")))
+            (destination / "manifest.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+        except Exception:
+            # Keep a rejected package from looking importable on a retry.
+            shutil.rmtree(destination, ignore_errors=True)
+            raise
+        return load_manifest(destination).model_dump()
 
 
 def _coerce(value: Any, value_type: str) -> Any:
@@ -242,13 +349,14 @@ def _build_run_params(
         if not frozen_path.is_file():
             raise ValueError("frozen_context_run_id has no frozen_context.json artifact")
         extra.append(f"prompts={frozen_path}")
-    if spec.id == "end_to_end_baseline":
+    if spec.id == "end_to_end_baseline" and (
+        params.get("environment_profile_id") is not None
+        or params.get("environment_profile_version") is not None
+    ):
         profile_id = params.get("environment_profile_id")
         raw_version = params.get("environment_profile_version")
         if not profile_id or raw_version is None:
-            raise ValueError(
-                "end_to_end_baseline requires environment_profile_id and environment_profile_version"
-            )
+            raise ValueError("environment_profile_id and environment_profile_version must be supplied together")
         try:
             profile_version = int(raw_version)
         except (TypeError, ValueError) as exc:
@@ -887,6 +995,23 @@ def create_eval_routes(
         except Exception as exc:
             logger.error(f"Error listing datasets: {exc}")
             raise internal_server_error(exc)
+
+    # Keep this literal route before ``/datasets/{dataset_id}``, otherwise
+    # FastAPI would interpret ``import`` as a dataset identifier.
+    @router.post("/datasets/import", dependencies=[Depends(combined_auth)])
+    async def import_dataset(file: UploadFile = File(...)) -> dict[str, Any]:
+        try:
+            require_eval()
+            return _import_dataset_archive(archive=file, datasets_root=datasets)
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.error(f"Error importing generated scenario: {exc}")
+            raise internal_server_error(exc)
+        finally:
+            await file.close()
 
     @router.get("/datasets/{dataset_id}", dependencies=[Depends(combined_auth)])
     async def get_dataset(dataset_id: str) -> dict[str, Any]:

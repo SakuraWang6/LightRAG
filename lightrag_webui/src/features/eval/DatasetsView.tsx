@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeftIcon, TrashIcon } from 'lucide-react'
+import { ArrowLeftIcon, TrashIcon, UploadIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
   cancelEvalJob,
   createEvalJob,
   deleteDataset,
+  importEvalDataset,
   listDatasets,
   listEvalJobs,
   type DatasetSummary,
@@ -48,6 +49,8 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
   const [modalities, setModalities] = useState('text,tables,figures,equations')
   const [force, setForce] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -123,6 +126,26 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
     [refresh, t]
   )
 
+  const importScenario = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      toast.error('请选择包含 manifest.json、oracle.json 和文档的 .zip 场景包')
+      return
+    }
+    setImporting(true)
+    try {
+      const dataset = await importEvalDataset(file)
+      toast.success(`已导入测试场景：${dataset.dataset_id}`)
+      void refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      setImporting(false)
+    }
+  }, [refresh])
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center gap-3 border-b px-4 py-3">
@@ -135,7 +158,30 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
         <div className="mx-auto max-w-5xl space-y-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">{t('eval.createDataset')}</CardTitle>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-sm">生成或导入测试场景</CardTitle>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    场景包包含文档、oracle 与问题；评测时会上传到独立 LightRAG 工作区，不会污染当前知识库。
+                  </p>
+                </div>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".zip,application/zip"
+                  className="hidden"
+                  onChange={(event) => void importScenario(event)}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={importing}
+                  onClick={() => importInputRef.current?.click()}
+                >
+                  <UploadIcon className="mr-1 size-4" />
+                  {importing ? '导入中…' : '导入场景包'}
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="grid grid-cols-3 gap-3">
               <label className="flex flex-col gap-1 text-xs">

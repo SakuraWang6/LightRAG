@@ -65,6 +65,23 @@ def test_cancel_refuses_reused_pid(tmp_path: Path, monkeypatch) -> None:
     assert result["status"] == "stale"
 
 
+def test_cancel_terminates_supervisor_child_group(tmp_path: Path, monkeypatch) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / ".supervise-child.json").write_text('{"pid": 4567, "pgid": 4567}\n')
+    job = {
+        "id": "run-live", "kind": "run", "pid": os.getpid(),
+        "process_started_at": eval_jobs._probe_process_start(os.getpid()),
+        "output_dir": str(run_dir), "status": "running",
+    }
+    _job_dir(tmp_path, job)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(eval_jobs, "_terminate_process_tree", lambda pid, extra_pids=None: captured.update(pid=pid, extra=extra_pids))
+    result = eval_jobs.cancel_job(runs_root=tmp_path, datasets_root=tmp_path / "generated", job_id="run-live")
+    assert result and result["status"] == "cancelling"
+    assert captured == {"pid": os.getpid(), "extra": [4567]}
+
+
 def test_start_run_job_does_not_persist_credentials(
     tmp_path: Path, monkeypatch
 ) -> None:

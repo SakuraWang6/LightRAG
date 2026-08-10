@@ -13,6 +13,7 @@ from memory_eval_tests.experiments.execution_unit import (
     allocate_execution_unit,
     finalize_execution_unit,
     load_execution_unit,
+    preflight_execution_unit,
     start_execution_unit,
 )
 from memory_eval_tests.online.answer_eval import evaluate_answers
@@ -28,10 +29,28 @@ class IngestionFailure(RuntimeError):
 def _profile(context: RunContext) -> dict[str, Any]:
     profile_id = context.extra.get("environment_profile_id")
     raw_version = context.extra.get("environment_profile_version")
+    if not profile_id and not raw_version:
+        # A baseline must be runnable out of the box.  This is an internal
+        # execution configuration, not a prerequisite the user has to create
+        # in a separate screen.  Secrets remain in the server process env.
+        llm_provider = context.environment.get("llm_binding") or "ollama"
+        llm_model = context.environment.get("llm_model") or "qwen3:8b"
+        embedding_model = context.environment.get("embedding_model") or "bge-m3:latest"
+        return {
+            "id": "server-default",
+            "name": "当前服务器默认配置",
+            "version": 1,
+            "status": "published",
+            "configuration": {
+                "execution_mode": "managed_local",
+                "retention_policy": "retain",
+                "query": {"provider": llm_provider, "model": llm_model},
+                "embedding": {"provider": context.environment.get("embedding_binding") or "ollama", "model": embedding_model},
+                "parser_engine": context.baseline.get("engine") or "native",
+            },
+        }
     if not profile_id or not raw_version:
-        raise IngestionFailure(
-            "end_to_end_baseline requires environment_profile_id and environment_profile_version"
-        )
+        raise IngestionFailure("environment_profile_id and environment_profile_version must be supplied together")
     try:
         version = int(raw_version)
     except ValueError as exc:
@@ -158,6 +177,7 @@ def _diagnosis_markdown(diagnosis: dict[str, Any]) -> str:
 def _prepare(context: RunContext) -> None:
     """Allocate once before the initial envelope makes the manifest immutable."""
     profile = context.environment_profile or _profile(context)
+    preflight_execution_unit(profile)
     unit = context.execution_unit or load_execution_unit(context.output_dir)
     if unit is None:
         unit = allocate_execution_unit(
