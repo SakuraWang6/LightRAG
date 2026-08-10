@@ -105,6 +105,7 @@ class RunContext:
     last_restart_resume: bool | None = None
     execution_manifest: dict[str, Any] = field(default_factory=dict)
     runtime_snapshot: dict[str, Any] = field(default_factory=dict)
+    runs_root: Path | None = None
     started_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
     )
@@ -634,7 +635,17 @@ def write_envelope(
             parameters=context.baseline,
             started_at=context.started_at,
         )
-    runtime_snapshot = _existing_runtime_snapshot(output_dir) or context.runtime_snapshot
+    existing_snapshot = _existing_runtime_snapshot(output_dir)
+    # A run may begin before its isolated execution unit is provisioned. Keep
+    # a captured snapshot immutable, but allow the provisional observation to
+    # be replaced once by the unit's actual configuration.
+    if (
+        isinstance(existing_snapshot, dict)
+        and existing_snapshot.get("status") == "captured"
+    ):
+        runtime_snapshot = existing_snapshot
+    else:
+        runtime_snapshot = context.runtime_snapshot or existing_snapshot or {}
     if not runtime_snapshot:
         runtime_snapshot = capture_runtime_snapshot(
             rag_api_url=context.environment.get("rag_api_url"),

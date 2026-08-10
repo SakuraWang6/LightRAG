@@ -310,6 +310,7 @@ def main() -> None:
         ),
         started_at=args.original_started_at
         or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        runs_root=runs_root,
     )
     context.execution_manifest = build_execution_manifest(
         dataset=args.dataset,
@@ -319,10 +320,18 @@ def main() -> None:
         parameter_sources=parameter_sources,
         started_at=context.started_at,
     )
-    context.runtime_snapshot = capture_runtime_snapshot(
-        rag_api_url=args.rag_api_url,
-        api_key=args.api_key,
-        access_token=args.access_token,
+    context.runtime_snapshot = (
+        {
+            "snapshot_version": "1.0",
+            "status": "provisioning",
+            "reason": "isolated execution unit has not started yet",
+        }
+        if spec.id == "end_to_end_baseline"
+        else capture_runtime_snapshot(
+            rag_api_url=args.rag_api_url,
+            api_key=args.api_key,
+            access_token=args.access_token,
+        )
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     _install_sigterm_handler(args.output_dir)
@@ -398,10 +407,14 @@ def main() -> None:
                 error_type=type(exc).__name__,
             )
             failure = build_failure(
-                phase="execution",
+                phase=str(getattr(exc, "phase", "execution")),
                 error=exc,
-                retryable=False,
-                recommendation="inspect the error summary and run.log; fix the environment or input before retrying",
+                retryable=bool(getattr(exc, "retryable", False)),
+                recommendation=(
+                    "retry after checking ingestion and the isolated execution unit"
+                    if getattr(exc, "phase", "execution") == "ingestion"
+                    else "inspect the error summary and run.log; fix the environment or input before retrying"
+                ),
                 log_offset=offset,
             )
             write_envelope(

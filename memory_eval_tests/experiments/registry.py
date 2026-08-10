@@ -18,6 +18,9 @@ def _specs() -> list[ExperimentSpec]:
     from memory_eval_tests.experiments.evaluator_recheck import (
         spec as evaluator_recheck,
     )
+    from memory_eval_tests.experiments.end_to_end_baseline import (
+        spec as end_to_end_baseline,
+    )
     from memory_eval_tests.experiments.evidence_selector_experiment import (
         spec as evidence_selector,
     )
@@ -49,6 +52,7 @@ def _specs() -> list[ExperimentSpec]:
         custom_arms,
         structure_ablation,
         scale,
+        end_to_end_baseline,
         online_baseline,
         kg_ablation,
         evidence_selector,

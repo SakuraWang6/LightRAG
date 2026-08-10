@@ -528,6 +528,7 @@ def test_registry_specs() -> None:
         "custom_arms",
         "structure_ablation",
         "scale",
+        "end_to_end_baseline",
         "online_baseline",
         "kg_ablation",
         "evidence_selector",

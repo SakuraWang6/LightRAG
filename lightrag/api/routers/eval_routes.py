@@ -96,6 +96,8 @@ class ModelRoleReference(BaseModel):
 class EnvironmentProfileConfiguration(BaseModel):
     lightrag_version: str | None = Field(default=None, max_length=256)
     startup_template: str | None = Field(default=None, max_length=256)
+    execution_mode: Literal["managed_local", "assigned"] = "managed_local"
+    runtime_endpoint: str | None = Field(default=None, max_length=1024)
     extraction: ModelRoleReference | None = None
     query: ModelRoleReference | None = None
     answer: ModelRoleReference | None = None
