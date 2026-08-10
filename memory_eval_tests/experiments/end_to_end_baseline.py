@@ -231,6 +231,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             oracle=oracle,
             retrieval_results=retrieval.get("results") or [],
             answer_results=answer.get("results") or [],
+            retrieval_mode=str(baseline.get("mode") or "mix"),
         )
         diagnosis = build_diagnosis(case_traces)
         (context.output_dir / "case_trace.json").write_text(

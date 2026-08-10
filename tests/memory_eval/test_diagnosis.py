@@ -50,11 +50,13 @@ def test_case_trace_joins_oracle_retrieval_and_answer_without_claiming_prompt_vi
             "facts": [{"fact_id": "FACT-1", "answer": "42"}],
             "questions": [{"id": "Q-1", "question": "q", "answer": "42", "evidence_fact_ids": ["FACT-1"]}],
         },
-        retrieval_results=[{"question_id": "Q-1", "recall_at_k": 1.0, "top_contexts": [{"rank": 1}]}],
+        retrieval_results=[{"question_id": "Q-1", "recall_at_k": 1.0, "top_k_candidates": [{"rank": 1}]}],
         answer_results=[{"question_id": "Q-1", "answer": "wrong", "exact_match": False}],
+        retrieval_mode="mix",
     )
     assert traces[0]["oracle"]["evidence_facts"][0]["fact_id"] == "FACT-1"
     assert traces[0]["final_context"]["status"] == "unavailable"
     diagnosis = build_diagnosis(traces)
     assert diagnosis["cause_distribution"] == {"unclassified": 1}
     assert diagnosis["diagnosis_coverage"] == 0.0
+    assert diagnosis["by_retrieval_mode"]["mix"]["case_count"] == 1

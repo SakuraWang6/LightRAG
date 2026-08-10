@@ -19,7 +19,11 @@ def unavailable(reason: str) -> dict[str, str]:
 
 
 def build_case_traces(
-    *, oracle: dict[str, Any], retrieval_results: list[dict[str, Any]], answer_results: list[dict[str, Any]]
+    *,
+    oracle: dict[str, Any],
+    retrieval_results: list[dict[str, Any]],
+    answer_results: list[dict[str, Any]],
+    retrieval_mode: str | None = None,
 ) -> list[dict[str, Any]]:
     """Join safe API observations into one trace per oracle question.
 
@@ -45,6 +49,7 @@ def build_case_traces(
                     "answer": question.get("answer"),
                     "expected_behavior": question.get("expected_behavior", "answer"),
                     "question_type": question.get("question_type"),
+                    "modality": _modality(evidence_ids, facts),
                     "evidence_fact_ids": evidence_ids,
                     "evidence_facts": [facts[item] for item in evidence_ids if item in facts],
                 },
@@ -55,6 +60,7 @@ def build_case_traces(
                     {
                         "status": _OBSERVED,
                         "recall_at_k": retrieval_row.get("recall_at_k"),
+                        "mode": retrieval_mode,
                         "hit_fact_ids": retrieval_row.get("hit_fact_ids") or [],
                         "top_k_candidates": retrieval_row.get("top_k_candidates") or [],
                         "hit_evidence": retrieval_row.get("hit_evidence") or [],
@@ -149,7 +155,16 @@ def diagnose_case(trace: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_diagnosis(traces: list[dict[str, Any]]) -> dict[str, Any]:
-    cases = [{"question_id": trace.get("question_id"), **diagnose_case(trace)} for trace in traces]
+    cases = [
+        {
+            "question_id": trace.get("question_id"),
+            "question_type": (trace.get("oracle") or {}).get("question_type"),
+            "modality": (trace.get("oracle") or {}).get("modality"),
+            "retrieval_mode": (trace.get("retrieval") or {}).get("mode"),
+            **diagnose_case(trace),
+        }
+        for trace in traces
+    ]
     causes = Counter(case["primary_cause"] for case in cases)
     applicable = [case for case in cases if case["primary_cause"] != "not_applicable"]
     classified = [
@@ -173,6 +188,9 @@ def build_diagnosis(traces: list[dict[str, Any]]) -> dict[str, Any]:
             ),
         },
         "cause_distribution": dict(sorted(causes.items())),
+        "by_question_type": _group_distribution(cases, "question_type"),
+        "by_modality": _group_distribution(cases, "modality"),
+        "by_retrieval_mode": _group_distribution(cases, "retrieval_mode"),
     }
 
 
@@ -189,4 +207,29 @@ def _diagnosis(
         "evidence": evidence,
         "rule_version": DIAGNOSIS_RULE_VERSION,
         "review_required": review_required,
+    }
+
+
+def _modality(evidence_ids: list[str], facts: dict[str, dict[str, Any]]) -> str:
+    values = sorted(
+        {
+            str(facts[item].get("object_type") or "text")
+            for item in evidence_ids
+            if item in facts
+        }
+    )
+    return "+".join(values) if values else "unknown"
+
+
+def _group_distribution(cases: list[dict[str, Any]], key: str) -> dict[str, dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for case in cases:
+        label = str(case.get(key) or "unknown")
+        groups.setdefault(label, []).append(case)
+    return {
+        label: {
+            "case_count": len(rows),
+            "cause_distribution": dict(sorted(Counter(row["primary_cause"] for row in rows).items())),
+        }
+        for label, rows in sorted(groups.items())
     }

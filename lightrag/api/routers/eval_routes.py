@@ -8,6 +8,8 @@ keeps the WebUI refresh button meaningful.
 from __future__ import annotations
 
 import json
+import csv
+import io
 import os
 import re
 import shutil
@@ -18,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from lightrag.utils import logger
@@ -454,6 +456,53 @@ def create_eval_routes(
             raise
         except Exception as exc:
             logger.error(f"Error loading eval run diagnosis '{run_id}': {exc}")
+            raise internal_server_error(exc)
+
+    @router.get("/runs/{run_id:path}/diagnosis.csv", dependencies=[Depends(combined_auth)])
+    async def export_run_diagnosis(run_id: str) -> Response:
+        try:
+            require_eval()
+            detail = load_run(root, run_id)
+            if detail is None:
+                raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+            try:
+                diagnosis = json.loads(
+                    (Path(detail["run_dir"]) / "diagnosis.json").read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                raise HTTPException(status_code=404, detail="diagnosis not found") from None
+            cases = diagnosis.get("cases") if isinstance(diagnosis, dict) else None
+            if not isinstance(cases, list):
+                raise HTTPException(status_code=404, detail="diagnosis not found")
+            output = io.StringIO()
+            writer = csv.DictWriter(
+                output,
+                fieldnames=[
+                    "question_id", "question_type", "modality", "retrieval_mode",
+                    "primary_cause", "confidence", "review_required", "rule_version", "evidence",
+                ],
+            )
+            writer.writeheader()
+            for case in cases:
+                if not isinstance(case, dict):
+                    continue
+                writer.writerow(
+                    {
+                        key: "; ".join(str(item) for item in case.get(key, []))
+                        if key == "evidence"
+                        else case.get(key, "")
+                        for key in writer.fieldnames
+                    }
+                )
+            return Response(
+                content=output.getvalue(),
+                media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{run_id}-diagnosis.csv"'},
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error exporting eval run diagnosis '{run_id}': {exc}")
             raise internal_server_error(exc)
 
     @router.get("/runs/{run_id:path}", dependencies=[Depends(combined_auth)])

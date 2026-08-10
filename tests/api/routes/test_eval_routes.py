@@ -670,3 +670,18 @@ def test_run_diagnosis_endpoint_returns_trace_and_diagnosis(
     )
     assert response.status_code == 200
     assert response.json()["diagnosis"]["case_count"] == 0
+
+
+def test_run_diagnosis_csv_export_is_safe_and_structured(runs_tree: Path, monkeypatch) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    _write(
+        runs_tree / "context-selection-v1" / "diagnosis.json",
+        {"cases": [{"question_id": "Q-1", "primary_cause": "retrieval_miss", "evidence": ["recall=0"]}]},
+    )
+    client = _client(runs_tree, api_key="secret-key")
+    response = client.get(
+        "/eval/runs/context-selection-v1/diagnosis.csv", headers={"X-API-Key": "secret-key"}
+    )
+    assert response.status_code == 200
+    assert "question_id,question_type" in response.text
+    assert "Q-1" in response.text
