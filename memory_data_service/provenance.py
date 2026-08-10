@@ -26,6 +26,7 @@ _QUESTION_SCENARIOS: dict[str, list[str]] = {
     "equation_variable": ["formula"],
     "formula_variable": ["formula"],
     "multi_hop": ["multi_hop", "cross_page"],
+    "cross_document": ["multi_hop", "cross_document"],
     "abstain": ["unanswerable"],
 }
 

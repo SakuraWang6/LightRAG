@@ -22,6 +22,7 @@ ScenarioName = Literal[
     "formula",
     "image",
     "cross_page",
+    "cross_document",
     "distractor_fact",
     "contradictory_fact",
     "approximate_numeric",

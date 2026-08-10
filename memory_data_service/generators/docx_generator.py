@@ -17,6 +17,7 @@ from memory_data_service.provenance import (
     build_provenance,
     resolve_scenario_quotas,
 )
+from memory_data_service.cross_document import add_cross_document_case
 from memory_data_service.schemas import (
     DatasetCreateRequest,
     DatasetManifest,
@@ -47,6 +48,16 @@ def generate_dataset(
     docx_path = dataset_path / f"{dataset_id}.docx"
     with GenerationResourceMonitor() as resource_monitor:
         facts, questions = _write_docx(request, docx_path, pages)
+        companion_docx = (
+            add_cross_document_case(
+                dataset_id=dataset_id,
+                dataset_path=dataset_path,
+                facts=facts,
+                questions=questions,
+            )
+            if "docx" in request.formats
+            else None
+        )
         scenario_counts = annotate_question_scenarios(questions)
         scenario_quotas = resolve_scenario_quotas(
             requested=request.scenario_quotas, observed=scenario_counts
@@ -72,6 +83,8 @@ def generate_dataset(
         files.append(pdf_record)
     else:
         files.append(_skipped("pdf"))
+    if companion_docx is not None:
+        files.append(_file_record(companion_docx, "docx"))
     for name in ("facts.json", "questions.json", "objects.json", "relations.json", "oracle.json"):
         files.append(_file_record(dataset_path / name, "json"))
     for asset_path in sorted(dataset_path.glob("*.png")):
