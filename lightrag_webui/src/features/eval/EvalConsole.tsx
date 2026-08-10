@@ -34,6 +34,7 @@ import EvalRunDetailView from '@/features/eval/EvalRunDetail'
 import EvalCompare from '@/features/eval/EvalCompare'
 import ConditionChips from '@/features/eval/ConditionChips'
 import DatasetsView from '@/features/eval/DatasetsView'
+import EnvironmentProfilesView from '@/features/eval/EnvironmentProfilesView'
 import JobsView from '@/features/eval/JobsView'
 import NewRunWizard from '@/features/eval/NewRunWizard'
 import SimpleEvalWizard from '@/features/eval/SimpleEvalWizard'
@@ -73,7 +74,7 @@ export default function EvalConsole() {
   const [comparing, setComparing] = useState(false)
   const [compareRuns, setCompareRuns] = useState<EvalRunDetail[]>([])
   const [compareLoading, setCompareLoading] = useState(false)
-  const [view, setView] = useState<'runs' | 'new' | 'datasets' | 'jobs'>('runs')
+  const [view, setView] = useState<'runs' | 'new' | 'datasets' | 'jobs' | 'environment'>('runs')
   const [wizardMode, setWizardMode] = useState<'simple' | 'advanced'>('simple')
   const [wizardDraft, setWizardDraft] = useState<EvalTemplate | null>(null)
 
@@ -322,6 +323,10 @@ export default function EvalConsole() {
     return <DatasetsView onBack={() => setView('runs')} />
   }
 
+  if (view === 'environment') {
+    return <EnvironmentProfilesView onBack={() => setView('runs')} />
+  }
+
   if (view === 'jobs') {
     return <JobsView onBack={() => setView('runs')} />
   }
@@ -343,6 +348,9 @@ export default function EvalConsole() {
           <Button size="sm" variant="outline" onClick={() => setView('datasets')}>
             <DatabaseIcon className="mr-1 size-4" />
             {t('eval.datasets')}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setView('environment')}>
+            评测环境
           </Button>
           <Button size="sm" variant="outline" onClick={() => setView('jobs')}>
             {t('eval.jobs')}

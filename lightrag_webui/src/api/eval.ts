@@ -298,6 +298,16 @@ export async function listEnvironmentProfiles(): Promise<EnvironmentProfile[]> {
   return response.data.profiles
 }
 
+export async function getEnvironmentProfileVersion(
+  profileId: string,
+  version: number
+): Promise<EnvironmentProfile['versions'][number] & { configuration?: Record<string, unknown> }> {
+  const response = await evalApiClient.get(
+    `/eval/environment-profiles/${encodeURIComponent(profileId)}/versions/${version}`
+  )
+  return response.data
+}
+
 export async function deleteDataset(datasetId: string): Promise<unknown> {
   const response = await evalApiClient.delete(
     `/eval/datasets/${encodeURIComponent(datasetId)}`
