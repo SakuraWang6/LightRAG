@@ -91,12 +91,18 @@ function RunHeader({
       Boolean(activeJob),
     [run.progress?.status, run.status, activeJob]
   )
+  const [now, setNow] = useState(0)
+  useEffect(() => {
+    if (!isRunning) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [isRunning])
   const elapsedSeconds = useMemo(() => {
     if (!run.started_at) return null
     const started = new Date(run.started_at).getTime()
     if (Number.isNaN(started)) return null
-    return Math.max(0, (Date.now() - started) / 1000)
-  }, [run.started_at])
+    return Math.max(0, (now - started) / 1000)
+  }, [run.started_at, now])
   const etaSeconds = useMemo(() => {
     const done = run.progress?.done ?? 0
     const total = run.progress?.total ?? 0
@@ -475,7 +481,7 @@ export default function EvalRunDetail({
         setActiveJob(null)
       }
     })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [run.run_dir])
 
   const cancel = async () => {

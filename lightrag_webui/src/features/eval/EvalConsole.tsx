@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CheckSquareIcon,
@@ -66,7 +66,7 @@ export default function EvalConsole() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<EvalRunDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
-  const detailCache = useMemo(() => new Map<string, EvalRunDetail>(), [])
+  const detailCache = useRef(new Map<string, EvalRunDetail>())
 
   const [compareIds, setCompareIds] = useState<Set<string>>(new Set())
   const [comparing, setComparing] = useState(false)
@@ -102,13 +102,14 @@ export default function EvalConsole() {
   }, [])
 
   useEffect(() => {
-    void loadRuns()
+    const timer = window.setTimeout(() => void loadRuns(), 0)
+    return () => window.clearTimeout(timer)
   }, [loadRuns])
 
   const loadDetail = useCallback(
     async (id: string, force = false) => {
       if (!force) {
-        const cached = detailCache.get(id)
+        const cached = detailCache.current.get(id)
         if (cached) {
           setDetail(cached)
           return
@@ -117,7 +118,7 @@ export default function EvalConsole() {
       setDetailLoading(true)
       try {
         const data = await getEvalRun(id)
-        detailCache.set(id, data)
+        detailCache.current.set(id, data)
         setDetail(data)
       } catch (error) {
         toast.error(error instanceof Error ? error.message : String(error))
@@ -125,12 +126,13 @@ export default function EvalConsole() {
         setDetailLoading(false)
       }
     },
-    [detailCache]
+    []
   )
 
   useEffect(() => {
     if (selectedId) {
-      void loadDetail(selectedId)
+      const timer = window.setTimeout(() => void loadDetail(selectedId), 0)
+      return () => window.clearTimeout(timer)
     }
   }, [selectedId, loadDetail])
 
@@ -215,10 +217,10 @@ export default function EvalConsole() {
     try {
       const loaded = await Promise.all(
         ids.map(async (id) => {
-          const cached = detailCache.get(id)
+          const cached = detailCache.current.get(id)
           if (cached) return cached
           const data = await getEvalRun(id)
-          detailCache.set(id, data)
+          detailCache.current.set(id, data)
           return data
         })
       )
@@ -229,7 +231,7 @@ export default function EvalConsole() {
     } finally {
       setCompareLoading(false)
     }
-  }, [compareIds, detailCache])
+  }, [compareIds])
 
   const stopCompare = useCallback(() => {
     setComparing(false)

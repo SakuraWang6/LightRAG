@@ -96,16 +96,19 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
   }, [])
 
   useEffect(() => {
-    if (initial) {
-      setDataset(initial.dataset)
-      setExperiment(initial.experiment)
-      setParams(initial.params ?? {})
-      setExtraText(initial.extraText ?? '')
-      setOriginalParams({ ...(initial.params ?? {}) })
-      setSupervise(initial.supervise)
-    } else {
-      setOriginalParams(null)
-    }
+    const timer = window.setTimeout(() => {
+      if (initial) {
+        setDataset(initial.dataset)
+        setExperiment(initial.experiment)
+        setParams(initial.params ?? {})
+        setExtraText(initial.extraText ?? '')
+        setOriginalParams({ ...(initial.params ?? {}) })
+        setSupervise(initial.supervise)
+      } else {
+        setOriginalParams(null)
+      }
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [initial])
 
   const spec = useMemo(
@@ -152,7 +155,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
     }
-  }, [templateName, experiment, dataset, params, supervise, t])
+  }, [templateName, experiment, dataset, params, extraText, supervise, t])
 
   const loadTemplate = (name: string) => {
     const item = templates.find((template) => template.name === name)
@@ -432,26 +435,26 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
                 ) : null}
               </label>
               <div className="grid grid-cols-2 gap-3">
-              {GENERIC_FIELDS.map((field) => (
-                <label key={field.key} className="flex flex-col gap-1 text-xs">
-                  <span className="text-muted-foreground">
-                    {t(FIELD_LABEL_KEYS[field.key] ?? field.key)}
-                  </span>
-                  <Input
-                    type={field.type}
-                    value={params[field.key] == null ? '' : String(params[field.key])}
-                    placeholder={
-                      spec?.default_baseline?.[field.key] != null
-                        ? String(spec.default_baseline[field.key])
-                        : ''
-                    }
-                    onChange={(event) => {
-                      const raw = event.target.value
-                      setParam(field.key, raw === '' ? null : field.type === 'number' ? Number(raw) : raw)
-                    }}
-                  />
-                </label>
-              ))}
+                {GENERIC_FIELDS.map((field) => (
+                  <label key={field.key} className="flex flex-col gap-1 text-xs">
+                    <span className="text-muted-foreground">
+                      {t(FIELD_LABEL_KEYS[field.key] ?? field.key)}
+                    </span>
+                    <Input
+                      type={field.type}
+                      value={params[field.key] == null ? '' : String(params[field.key])}
+                      placeholder={
+                        spec?.default_baseline?.[field.key] != null
+                          ? String(spec.default_baseline[field.key])
+                          : ''
+                      }
+                      onChange={(event) => {
+                        const raw = event.target.value
+                        setParam(field.key, raw === '' ? null : field.type === 'number' ? Number(raw) : raw)
+                      }}
+                    />
+                  </label>
+                ))}
               </div>
               <label className="flex items-center gap-2 text-sm">
                 <input
@@ -463,18 +466,18 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
               </label>
               {spec && experiment !== 'custom_arms'
                 ? Object.entries(spec.extra_schema).map(([key, schemaType]) => (
-                    <label key={key} className="flex flex-col gap-1 text-xs">
-                      <span className="text-muted-foreground">{key}</span>
-                      <Input
-                        type={fieldInputType(schemaType)}
-                        value={params[key] == null ? '' : String(params[key])}
-                        onChange={(event) => {
-                          const raw = event.target.value
-                          setParam(key, raw === '' ? null : fieldInputType(schemaType) === 'number' ? Number(raw) : raw)
-                        }}
-                      />
-                    </label>
-                  ))
+                  <label key={key} className="flex flex-col gap-1 text-xs">
+                    <span className="text-muted-foreground">{key}</span>
+                    <Input
+                      type={fieldInputType(schemaType)}
+                      value={params[key] == null ? '' : String(params[key])}
+                      onChange={(event) => {
+                        const raw = event.target.value
+                        setParam(key, raw === '' ? null : fieldInputType(schemaType) === 'number' ? Number(raw) : raw)
+                      }}
+                    />
+                  </label>
+                ))
                 : null}
               <label className="flex flex-col gap-1 text-xs">
                 <span className="text-muted-foreground">{t('eval.wizardExtra')}</span>

@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FileTextIcon } from 'lucide-react'
 
@@ -13,37 +13,43 @@ interface ReportDocumentProps {
   artifact: EvalArtifact
 }
 
+function headingText(children: React.ReactNode): string {
+  if (Array.isArray(children)) return children.map(headingText).join('')
+  if (typeof children === 'string' || typeof children === 'number') return String(children)
+  return ''
+}
+
+function headingId(title: string): string {
+  return `report-heading-${encodeURIComponent(title)}`
+}
+
+function makeHeading(level: number) {
+  return function Heading(props: { children?: React.ReactNode }) {
+    const Tag = `h${level}` as 'h1'
+    return (
+      <Tag id={headingId(headingText(props.children))} className="scroll-mt-20">
+        {props.children}
+      </Tag>
+    )
+  }
+}
+
 export default function ReportDocument({ artifact }: ReportDocumentProps) {
   const { t } = useTranslation()
-  const counter = useRef(0)
-
-  const heading = (level: number) =>
-    function Heading(props: { children?: React.ReactNode }) {
-      const index = counter.current++
-      const Tag = `h${level}` as 'h1'
-      return (
-        <Tag id={`report-heading-${index}`} className="scroll-mt-20">
-          {props.children}
-        </Tag>
-      )
-    }
 
   const components = useMemo(
     () => ({
-      h1: heading(1),
-      h2: heading(2),
-      h3: heading(3),
-      h4: heading(4)
+      h1: makeHeading(1),
+      h2: makeHeading(2),
+      h3: makeHeading(3),
+      h4: makeHeading(4)
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   )
 
   if (!artifact.report_md) {
     return <EmptyCard title={t('eval.noReports')} description={t('eval.noReportsHint')} />
   }
-  counter.current = 0
-
   const toc = artifact.toc ?? []
 
   return (
@@ -63,7 +69,7 @@ export default function ReportDocument({ artifact }: ReportDocumentProps) {
                       title={entry.title}
                       onClick={() => {
                         document
-                          .getElementById(`report-heading-${index}`)
+                          .getElementById(headingId(entry.title))
                           ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
                       }}
                     >
@@ -87,7 +93,7 @@ export default function ReportDocument({ artifact }: ReportDocumentProps) {
         </div>
         <Card>
           <CardContent className="p-5">
-          <MarkdownReport content={artifact.report_md} components={components} />
+            <MarkdownReport content={artifact.report_md} components={components} />
           </CardContent>
         </Card>
       </div>

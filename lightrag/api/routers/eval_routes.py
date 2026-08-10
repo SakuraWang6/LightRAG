@@ -833,3 +833,14 @@ def create_eval_routes(
             raise internal_server_error(exc)
 
     return router
+
+
+def resume_pending_eval_jobs(*, delay_seconds: float = 0) -> None:
+    """Restart durable evaluation-job dispatching when the API server starts."""
+    if not _EVAL_AVAILABLE:
+        return
+    eval_jobs.resume_pending_jobs(
+        runs_root=default_runs_root(),
+        datasets_root=DEFAULT_GENERATED_ROOT,
+        delay_seconds=delay_seconds,
+    )

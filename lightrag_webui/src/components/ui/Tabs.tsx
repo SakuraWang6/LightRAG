@@ -42,19 +42,19 @@ type TabsContentProps = Omit<
 
 const TabsContent = React.forwardRef<React.ComponentRef<typeof TabsPrimitive.Content>, TabsContentProps>(
   ({ className, forceMount = true, ...props }, ref) => (
-  <TabsPrimitive.Content
-    ref={ref}
-    forceMount={forceMount ? true : undefined}
-    className={cn(
-      'ring-offset-background focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
-      // visibility-based hiding is required for WebGL canvases (forceMount),
-      // but it lets nested visible children escape; display:none avoids that.
-      forceMount ? 'data-[state=inactive]:invisible data-[state=active]:visible' : 'data-[state=inactive]:hidden',
-      'h-full w-full',
-      className
-    )}
-    {...props}
-  />
+    <TabsPrimitive.Content
+      ref={ref}
+      forceMount={forceMount ? true : undefined}
+      className={cn(
+        'ring-offset-background focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
+        // visibility-based hiding is required for WebGL canvases (forceMount),
+        // but it lets nested visible children escape; display:none avoids that.
+        forceMount ? 'data-[state=inactive]:invisible data-[state=active]:visible' : 'data-[state=inactive]:hidden',
+        'h-full w-full',
+        className
+      )}
+      {...props}
+    />
   )
 )
 TabsContent.displayName = TabsPrimitive.Content.displayName

@@ -456,6 +456,31 @@ def _start_dispatch_loop(runs_root: Path, datasets_root: Path | None = None) -> 
     threading.Thread(target=_loop, daemon=True).start()
 
 
+def resume_pending_jobs(
+    *,
+    runs_root: Path,
+    datasets_root: Path | None = None,
+    delay_seconds: float = 0,
+) -> None:
+    """Resume durable pending jobs after an API-server restart.
+
+    Job records outlive the in-process dispatcher.  A queued job can therefore
+    remain pending when the server that created it exits while a hold gate is
+    active.  Start the poller again and dispatch once the replacement server is
+    ready to accept the run's API calls.
+    """
+    datasets_root = datasets_root or _default_datasets_root(runs_root)
+    _start_dispatch_loop(runs_root, datasets_root)
+
+    if delay_seconds <= 0:
+        _dispatch(runs_root, datasets_root)
+        return
+
+    timer = threading.Timer(delay_seconds, _dispatch, args=(runs_root, datasets_root))
+    timer.daemon = True
+    timer.start()
+
+
 def start_run_job(
     *,
     runs_root: Path,

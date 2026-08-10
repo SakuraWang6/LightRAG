@@ -246,6 +246,39 @@ def test_list_jobs_queue_position_and_active_count(tmp_path: Path, monkeypatch) 
     assert by_id["run-d"]["queue_position"] is None
 
 
+def test_resume_pending_jobs_dispatches_after_server_restart(
+    tmp_path: Path, monkeypatch
+) -> None:
+    jobs = eval_jobs.jobs_root(tmp_path)
+    jobs.mkdir(parents=True, exist_ok=True)
+    pending = {
+        "id": "run-pending",
+        "kind": "run",
+        "output_dir": str(tmp_path / "out"),
+        "status": "pending",
+        "created_at": "2026-08-10T00:00:00+00:00",
+        "params": {"experiment": "context_size", "dataset": "dataset", "extra": []},
+    }
+    eval_jobs._write_job(jobs, pending)
+    monkeypatch.setattr(eval_jobs, "_start_dispatch_loop", lambda *args: None)
+    monkeypatch.setattr(eval_jobs, "_params_from_json", lambda payload: object())
+
+    def fake_spawn(**kwargs):
+        job = eval_jobs._read_job(jobs, kwargs["job_id"])
+        assert job is not None
+        job["status"] = "running"
+        job["pid"] = 1
+        eval_jobs._write_job(jobs, job)
+        return job
+
+    monkeypatch.setattr(eval_jobs, "_spawn_run_job", fake_spawn)
+    eval_jobs.resume_pending_jobs(runs_root=tmp_path, datasets_root=tmp_path / "datasets")
+
+    restarted = eval_jobs._read_job(jobs, "run-pending")
+    assert restarted is not None
+    assert restarted["status"] == "running"
+
+
 def test_delete_job_removes_audit_dir(tmp_path: Path) -> None:
     root = eval_jobs.jobs_root(tmp_path)
     root.mkdir(parents=True, exist_ok=True)

@@ -48,7 +48,10 @@ from lightrag.api.routers.document_routes import (
     DocumentManager,
     create_document_routes,
 )
-from lightrag.api.routers.eval_routes import create_eval_routes
+from lightrag.api.routers.eval_routes import (
+    create_eval_routes,
+    resume_pending_eval_jobs,
+)
 from lightrag.api.routers.graph_routes import create_graph_routes
 from lightrag.api.routers.ollama_api import OllamaAPI
 from lightrag.api.routers.query_routes import create_query_routes
@@ -1362,6 +1365,11 @@ def create_app(args):
                     f"{rag.max_pending_documents}, {active_now} document(s) "
                     "currently active"
                 )
+
+            # Evaluation jobs are file-backed and can survive this server
+            # process.  Resume their dispatcher only after storage setup, and
+            # defer its first launch until Uvicorn can accept local API calls.
+            resume_pending_eval_jobs(delay_seconds=1)
 
             ASCIIColors.green("\nServer is ready to accept connections! 🚀\n")
 
