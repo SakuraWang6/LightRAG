@@ -128,6 +128,10 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
     () => experiments.find((item) => item.id === experiment),
     [experiments, experiment]
   )
+  const webuiExperiments = useMemo(
+    () => experiments.filter((item) => item.webui_launchable),
+    [experiments]
+  )
 
   const modifiedKeys = useMemo(
     () => (originalParams ? diffParams(originalParams, params) : []),
@@ -290,7 +294,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
                   <SelectValue placeholder={t('eval.wizardPickExperiment')} />
                 </SelectTrigger>
                 <SelectContent>
-                  {experiments.map((item) => (
+                  {webuiExperiments.map((item) => (
                     <SelectItem key={item.id} value={item.id} disabled={!item.env_ready}>
                       {item.label} {item.env_ready ? '' : `(${t('eval.envMissing')})`}
                     </SelectItem>

@@ -646,7 +646,6 @@ def start_run_job(
     max_restarts: int,
     poll_seconds: int,
     output_dir: Path | None = None,
-    extra_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     jobs_root(runs_root).mkdir(parents=True, exist_ok=True)
     params.output_dir = (
@@ -691,7 +690,6 @@ def start_dataset_job(
     modalities: list[str],
     force: bool = False,
     allow_oversized_generation: bool = False,
-    extra_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", dataset_id):
         raise ValueError("invalid dataset_id")

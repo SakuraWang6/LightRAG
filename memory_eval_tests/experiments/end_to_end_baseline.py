@@ -439,4 +439,6 @@ spec = ExperimentSpec(
     },
     prepare=_prepare,
     runner=_runner,
+    webui_launchable=True,
+    webui_block_reason="",
 )

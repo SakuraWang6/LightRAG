@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import {
   CheckSquareIcon,
   Columns3Icon,
+  ListChecksIcon,
   PlusIcon,
   RefreshCwIcon,
   SearchIcon
@@ -35,6 +36,7 @@ import ConditionChips from '@/features/eval/ConditionChips'
 import DatasetsView from '@/features/eval/DatasetsView'
 import NewRunWizard from '@/features/eval/NewRunWizard'
 import SimpleEvalWizard from '@/features/eval/SimpleEvalWizard'
+import JobsView from '@/features/eval/JobsView'
 import type { EvalTemplate } from '@/api/eval'
 import {
   buildReproduceDraft,
@@ -71,7 +73,7 @@ export default function EvalConsole() {
   const [comparing, setComparing] = useState(false)
   const [compareRuns, setCompareRuns] = useState<EvalRunDetail[]>([])
   const [compareLoading, setCompareLoading] = useState(false)
-  const [view, setView] = useState<'runs' | 'new' | 'datasets'>('runs')
+  const [view, setView] = useState<'runs' | 'new' | 'datasets' | 'jobs'>('runs')
   const [wizardMode, setWizardMode] = useState<'simple' | 'advanced'>('simple')
   const [wizardDraft, setWizardDraft] = useState<EvalTemplate | null>(null)
 
@@ -274,7 +276,7 @@ export default function EvalConsole() {
               onManageDatasets={() => setView('datasets')}
               onAdvanced={() => setWizardMode('advanced')}
               onStarted={() => {
-                setView('runs')
+                setView('jobs')
                 void loadRuns()
               }}
             />
@@ -283,7 +285,7 @@ export default function EvalConsole() {
               initial={wizardDraft}
               onBack={() => setView('runs')}
               onStarted={() => {
-                setView('runs')
+                setView('jobs')
                 void loadRuns()
               }}
             />
@@ -295,6 +297,10 @@ export default function EvalConsole() {
 
   if (view === 'datasets') {
     return <DatasetsView onBack={() => setView('new')} />
+  }
+
+  if (view === 'jobs') {
+    return <JobsView onBack={() => setView('runs')} />
   }
 
   return (
@@ -310,6 +316,10 @@ export default function EvalConsole() {
           <Button size="sm" onClick={() => { setWizardDraft(null); setWizardMode('simple'); setView('new') }}>
             <PlusIcon className="mr-1 size-4" />
             新建测评
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setView('jobs')}>
+            <ListChecksIcon className="mr-1 size-4" />
+            {t('eval.jobs')}
           </Button>
           {compareIds.size > 0 && (
             <Button

@@ -318,6 +318,10 @@ def _build_run_params(
     datasets_root: Path,
 ) -> RunParams:
     spec = get_spec(experiment)
+    if not spec.webui_launchable:
+        raise ValueError(
+            f"{experiment} is not available in the WebUI: {spec.webui_block_reason}"
+        )
     unknown = set(params) - _GENERIC_PARAM_KEYS - _INFRA_PARAMS - set(spec.extra_schema)
     if unknown:
         raise ValueError(f"unknown parameters: {sorted(unknown)}")
@@ -741,6 +745,8 @@ def create_eval_routes(
                         "extra_schema": spec.extra_schema,
                         "env_required": spec.env_required,
                         "env_ready": all(os.getenv(key) for key in spec.env_required),
+                        "webui_launchable": spec.webui_launchable,
+                        "webui_block_reason": spec.webui_block_reason,
                     }
                 )
             return {"experiments": items}

@@ -229,6 +229,26 @@ def test_routes_require_api_key(runs_tree: Path, monkeypatch) -> None:
     assert len(response.json()["runs"]) == 2
 
 
+def test_webui_only_advertises_and_launches_isolated_end_to_end(runs_tree: Path, monkeypatch) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    client = _client(runs_tree)
+    experiments = client.get("/eval/experiments")
+    assert experiments.status_code == 200
+    items = {item["id"]: item for item in experiments.json()["experiments"]}
+    assert items["end_to_end_baseline"]["webui_launchable"] is True
+    assert items["context_size"]["webui_launchable"] is False
+    blocked = client.post(
+        "/eval/jobs",
+        json={
+            "kind": "run",
+            "experiment": "context_size",
+            "dataset": "rich-smoke-v1",
+        },
+    )
+    assert blocked.status_code == 400
+    assert "not available in the WebUI" in blocked.json()["detail"]
+
+
 def test_routes_open_when_no_auth(runs_tree: Path, monkeypatch) -> None:
     monkeypatch.setattr(_utils_api, "auth_configured", False)
     client = _client(runs_tree, api_key=None)

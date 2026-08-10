@@ -90,6 +90,10 @@ class ExperimentSpec:
     extra_schema: dict[str, str] = field(default_factory=dict)
     env_required: list[str] = field(default_factory=list)
     prepare: Callable[["RunContext"], None] | None = None
+    webui_launchable: bool = False
+    webui_block_reason: str = (
+        "requires CLI-only inputs or an existing prepared index that the WebUI does not manage"
+    )
 
 
 @dataclass

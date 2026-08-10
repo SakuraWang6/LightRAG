@@ -132,6 +132,8 @@ export type EvalExperiment = {
   extra_schema: Record<string, string>
   env_required: string[]
   env_ready: boolean
+  webui_launchable: boolean
+  webui_block_reason: string
 }
 
 export type EvalJob = {

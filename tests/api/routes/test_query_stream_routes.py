@@ -386,3 +386,36 @@ class TestQueryStreamProtocolOrder:
 
         await iterator.aclose()
         assert cleanup_complete.is_set()
+
+
+@pytest.mark.asyncio
+async def test_query_data_includes_chunk_content_when_requested():
+    """The evaluation client must receive ranked reference text from /query/data."""
+    from lightrag.api.routers.query_routes import QueryRequest, create_query_routes
+
+    class DataRag:
+        async def aquery_data(self, *_args, **_kwargs):
+            return {
+                "status": "success",
+                "message": "ok",
+                "data": {
+                    "references": [
+                        {"reference_id": "source-a", "file_path": "a.docx"},
+                        {"reference_id": "graph-only", "file_path": "a.docx"},
+                    ],
+                    "chunks": [
+                        {"reference_id": "source-a", "content": "first evidence"},
+                        {"reference_id": "source-a", "content": "second evidence"},
+                    ],
+                },
+                "metadata": {},
+            }
+
+    router = create_query_routes(DataRag())
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/query/data")
+    response = await endpoint(
+        QueryRequest(query="test", mode="mix", include_chunk_content=True)
+    )
+    references = response.data["references"]
+    assert references[0]["content"] == ["first evidence", "second evidence"]
+    assert references[1]["content"] == []
