@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeftIcon, PlayIcon } from 'lucide-react'
+import { ArrowLeftIcon, PlayIcon, ShieldCheckIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
   createEvalJob,
   listDatasets,
+  listEnvironmentProfiles,
   listEvalJobs,
-  listEvalModels,
-  type DatasetSummary
+  type DatasetSummary,
+  type EnvironmentProfile
 } from '@/api/eval'
 import { hasRunningJobs } from '@/features/eval/utils'
 import Button from '@/components/ui/Button'
@@ -30,18 +31,15 @@ interface SimpleEvalWizardProps {
 export default function SimpleEvalWizard({ onBack, onStarted }: SimpleEvalWizardProps) {
   const { t } = useTranslation()
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
-  const [models, setModels] = useState<string[]>([])
+  const [profiles, setProfiles] = useState<EnvironmentProfile[]>([])
   const [dataset, setDataset] = useState('')
-  const [model, setModel] = useState('')
-  const [customModel, setCustomModel] = useState(false)
+  const [profileVersion, setProfileVersion] = useState('')
   const [topK, setTopK] = useState('5')
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     void listDatasets().then((data) => setDatasets(data.datasets)).catch(() => undefined)
-    void listEvalModels()
-      .then((data) => setModels(data.models))
-      .catch(() => setModels([]))
+    void listEnvironmentProfiles().then(setProfiles).catch(() => setProfiles([]))
   }, [])
 
   const start = useCallback(async () => {
@@ -49,8 +47,9 @@ export default function SimpleEvalWizard({ onBack, onStarted }: SimpleEvalWizard
       toast.error(t('eval.wizardIncomplete'))
       return
     }
-    if (model === '__custom__' || !model.trim()) {
-      toast.error(t('eval.paramModelPick'))
+    const [profileId, rawVersion] = profileVersion.split('@')
+    if (!profileId || !rawVersion) {
+      toast.error('请选择已发布的评测环境')
       return
     }
     setSubmitting(true)
@@ -61,9 +60,14 @@ export default function SimpleEvalWizard({ onBack, onStarted }: SimpleEvalWizard
       }
       await createEvalJob({
         kind: 'run',
-        experiment: 'online_baseline',
+        experiment: 'end_to_end_baseline',
         dataset,
-        params: { model, top_k: Number(topK) || 5, mode: 'mix' }
+        params: {
+          environment_profile_id: profileId,
+          environment_profile_version: Number(rawVersion),
+          top_k: Number(topK) || 5,
+          mode: 'mix'
+        }
       })
       toast.success(t('eval.jobStarted'))
       onStarted()
@@ -72,7 +76,16 @@ export default function SimpleEvalWizard({ onBack, onStarted }: SimpleEvalWizard
     } finally {
       setSubmitting(false)
     }
-  }, [dataset, model, topK, t, onStarted])
+  }, [dataset, profileVersion, topK, t, onStarted])
+
+  const publishedProfiles = profiles.flatMap((profile) =>
+    profile.versions
+      .filter((version) => version.status === 'published')
+      .map((version) => ({
+        value: `${profile.id}@${version.version}`,
+        label: `${profile.name} · v${version.version}`
+      }))
+  )
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -104,47 +117,30 @@ export default function SimpleEvalWizard({ onBack, onStarted }: SimpleEvalWizard
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="border-primary/30 bg-primary/[0.02]">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">{t('eval.paramModel')}</CardTitle>
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <ShieldCheckIcon className="size-4" />
+                已发布的评测环境
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              {!customModel ? (
-                <Select value={model} onValueChange={setModel}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder={t('eval.paramModelPick')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {models.map((name) => (
-                      <SelectItem key={name} value={name}>
-                        {name}
-                      </SelectItem>
-                    ))}
-                    <SelectItem value="__custom__">{t('eval.paramModelCustom')}</SelectItem>
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input
-                  value={model}
-                  onChange={(event) => setModel(event.target.value)}
-                  placeholder="qwen3:8b"
-                />
-              )}
-              {model === '__custom__' && !customModel ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setCustomModel(true)
-                    setModel('')
-                  }}
-                >
-                  {t('eval.paramModelCustom')}
-                </Button>
+              <Select value={profileVersion} onValueChange={setProfileVersion}>
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="选择已发布环境" />
+                </SelectTrigger>
+                <SelectContent>
+                  {publishedProfiles.map((profile) => (
+                    <SelectItem key={profile.value} value={profile.value}>
+                      {profile.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {publishedProfiles.length === 0 ? (
+                <p className="text-muted-foreground text-xs">尚无已发布环境；请先在高级评测计划中创建并发布环境档案。</p>
               ) : null}
-              {models.length === 0 ? (
-                <p className="text-muted-foreground text-xs">{t('eval.modelsUnavailable')}</p>
-              ) : null}
+              <p className="text-muted-foreground text-xs">将在独立 workspace 与 storage 中执行：入库、索引、检索、回答和诊断。</p>
             </CardContent>
           </Card>
 

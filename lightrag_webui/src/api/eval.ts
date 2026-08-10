@@ -162,6 +162,17 @@ export type DatasetSummary = {
   files: string[]
 }
 
+export type EnvironmentProfile = {
+  id: string
+  name: string
+  versions: Array<{
+    version: number
+    status: 'draft' | 'published' | string
+    created_at?: string
+    published_at?: string
+  }>
+}
+
 export type EvalTemplate = {
   name: string
   experiment: string
@@ -280,6 +291,11 @@ export async function listDatasets(
 ): Promise<{ datasets: DatasetSummary[]; total: number }> {
   const response = await evalApiClient.get('/eval/datasets', { params })
   return response.data
+}
+
+export async function listEnvironmentProfiles(): Promise<EnvironmentProfile[]> {
+  const response = await evalApiClient.get('/eval/environment-profiles')
+  return response.data.profiles
 }
 
 export async function deleteDataset(datasetId: string): Promise<unknown> {
