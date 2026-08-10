@@ -67,6 +67,20 @@ def _run_custom_arms(context: RunContext) -> dict[str, Any]:
     if base.id == "custom_arms":
         raise ValueError("custom_arms cannot be its own base experiment")
     axes = _parse_axes(str(extra.get("axes") or "{}"))
+    comparison_type = str(extra.get("comparison_type") or "").strip()
+    comparison_plan: dict[str, Any] | None = None
+    if comparison_type:
+        from lightrag.api.eval_comparison import validate_plan
+
+        comparison_plan = validate_plan(
+            comparison_type=comparison_type,
+            variables=axes,
+            inputs=extra,
+        )
+        if comparison_type == "answer_model" and base.id != "frozen_prompt_llm_eval":
+            raise ValueError(
+                "answer_model comparisons must use frozen_prompt_llm_eval as base_experiment"
+            )
     max_arms = int(extra.get("max_arms") or DEFAULT_MAX_ARMS)
     if max_arms < 1 or max_arms > MAX_ARMS_CAP:
         raise ValueError(f"max_arms must be between 1 and {MAX_ARMS_CAP}")
@@ -89,10 +103,13 @@ def _run_custom_arms(context: RunContext) -> dict[str, Any]:
     ]
     for index, combo in enumerate(combos, start=1):
         arm_values = {key: value for key, value in zip(keys, combo)}
+        child_arm_values = dict(arm_values)
+        if comparison_type == "answer_model" and "answer_model" in child_arm_values:
+            child_arm_values["model"] = child_arm_values.pop("answer_model")
         child_baseline = {
             **dict(base.default_baseline),
             **dict(context.baseline),
-            **arm_values,
+            **child_arm_values,
         }
         label = _arm_label(arm_values)
         child_dir = context.output_dir / f"arm-{index}"
@@ -171,6 +188,16 @@ def _run_custom_arms(context: RunContext) -> dict[str, Any]:
             "",
         ]
     )
+    if comparison_plan:
+        report_lines.extend(
+            [
+                "",
+                f"- 比较模板：`{comparison_type}`",
+                f"- 索引要求：`{comparison_plan['index_requirement']}`",
+                "- 执行依赖："
+                + ", ".join(f"`{item}`" for item in comparison_plan["execution_dependencies"]),
+            ]
+        )
     return {
         "methods": methods,
         "report": "\n".join(report_lines),
@@ -188,5 +215,14 @@ spec = ExperimentSpec(
     ),
     runner=_run_custom_arms,
     kind="experiment",
-    extra_schema={"base_experiment": "str", "axes": "str", "max_arms": "int"},
+    extra_schema={
+        "base_experiment": "str",
+        "axes": "str",
+        "max_arms": "int",
+        "comparison_type": "str",
+        "frozen_context_run_id": "str",
+        "source_run_id": "str",
+        "environment_profile_id": "str",
+        "environment_profile_version": "int",
+    },
 )

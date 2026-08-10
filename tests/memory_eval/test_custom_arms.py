@@ -161,5 +161,10 @@ def test_custom_arms_registered(monkeypatch, tmp_path: Path) -> None:
         "base_experiment": "str",
         "axes": "str",
         "max_arms": "int",
+        "comparison_type": "str",
+        "frozen_context_run_id": "str",
+        "source_run_id": "str",
+        "environment_profile_id": "str",
+        "environment_profile_version": "int",
     }
     assert MAX_ARMS_CAP == 16

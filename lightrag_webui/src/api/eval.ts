@@ -171,6 +171,15 @@ export type EvalTemplate = {
   supervise: boolean
 }
 
+export type ComparisonTemplate = {
+  type: string
+  label: string
+  allowed_variables: string[]
+  required_inputs: string[]
+  index_requirement: string
+  dependencies: string[]
+}
+
 const evalApiClient = axios.create({
   baseURL: backendBaseUrl,
   headers: { 'Content-Type': 'application/json' }
@@ -298,6 +307,20 @@ export async function listEvalModels(): Promise<{
 export async function listEvalTemplates(): Promise<EvalTemplate[]> {
   const response = await evalApiClient.get('/eval/templates')
   return response.data.templates
+}
+
+export async function listComparisonTemplates(): Promise<ComparisonTemplate[]> {
+  const response = await evalApiClient.get('/eval/comparison-templates')
+  return response.data.templates
+}
+
+export async function validateComparisonPlan(payload: {
+  comparison_type: string
+  variables: Record<string, unknown[]>
+  inputs: Record<string, unknown>
+}): Promise<{ arm_count: number; index_requirement: string; execution_dependencies: string[] }> {
+  const response = await evalApiClient.post('/eval/comparison-plans/validate', payload)
+  return response.data
 }
 
 export async function saveEvalTemplate(

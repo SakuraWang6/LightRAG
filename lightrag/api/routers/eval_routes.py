@@ -228,6 +228,20 @@ def _build_run_params(
     for key in spec.extra_schema:
         if key in params:
             extra.append(f"{key}={_coerce(params[key], spec.extra_schema[key])}")
+    if (
+        spec.id == "custom_arms"
+        and params.get("comparison_type") == "answer_model"
+    ):
+        frozen_run_id = str(params.get("frozen_context_run_id") or "")
+        source = load_run(runs_root, frozen_run_id)
+        if source is None:
+            raise ValueError("frozen_context_run_id was not found")
+        if source.get("dataset") != dataset:
+            raise ValueError("answer-model comparison dataset must match frozen_context_run_id")
+        frozen_path = Path(source["run_dir"]) / "frozen_context.json"
+        if not frozen_path.is_file():
+            raise ValueError("frozen_context_run_id has no frozen_context.json artifact")
+        extra.append(f"prompts={frozen_path}")
     if spec.id == "end_to_end_baseline":
         profile_id = params.get("environment_profile_id")
         raw_version = params.get("environment_profile_version")

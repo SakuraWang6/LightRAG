@@ -10,7 +10,10 @@ import {
   listEvalJobs,
   listEvalModels,
   listEvalTemplates,
+  listComparisonTemplates,
   saveEvalTemplate,
+  validateComparisonPlan,
+  type ComparisonTemplate,
   type DatasetSummary,
   type EvalExperiment,
   type EvalTemplate
@@ -69,6 +72,8 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
   const [experiments, setExperiments] = useState<EvalExperiment[]>([])
   const [templates, setTemplates] = useState<EvalTemplate[]>([])
+  const [comparisonTemplates, setComparisonTemplates] = useState<ComparisonTemplate[]>([])
+  const [comparisonType, setComparisonType] = useState('')
   const [dataset, setDataset] = useState<string>('')
   const [experiment, setExperiment] = useState<string>('')
   const [params, setParams] = useState<Record<string, unknown>>({})
@@ -87,6 +92,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
     void listDatasets().then((data) => setDatasets(data.datasets)).catch(() => undefined)
     void listEvalExperiments().then(setExperiments).catch(() => undefined)
     void listEvalTemplates().then(setTemplates).catch(() => undefined)
+    void listComparisonTemplates().then(setComparisonTemplates).catch(() => undefined)
     void listEvalModels()
       .then((data) => setModels(data.models))
       .catch(() => setModels([]))
@@ -129,6 +135,10 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
     if (!armAxes) return 0
     return Object.values(armAxes).reduce((product, values) => product * values.length, 1)
   }, [armAxes])
+  const comparisonTemplate = useMemo(
+    () => comparisonTemplates.find((item) => item.type === comparisonType),
+    [comparisonTemplates, comparisonType]
+  )
 
   const modelValue = params.model == null ? '' : String(params.model)
   const modelInList = modelValue !== '' && models.includes(modelValue)
@@ -185,13 +195,28 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
       const payload: Record<string, unknown> = { ...params }
       if (experiment === 'custom_arms') {
         const baseId = String(payload.base_experiment ?? '')
-        if (!baseId || !armAxes) {
+        if (!baseId || !armAxes || !comparisonTemplate) {
           toast.error(t('eval.customArmsIncomplete'))
           return
         }
+        const rejected = Object.keys(armAxes).filter(
+          (key) => !comparisonTemplate.allowed_variables.includes(key)
+        )
+        if (rejected.length > 0) {
+          toast.error(`“${comparisonTemplate.label}” 不允许比较：${rejected.join(', ')}`)
+          return
+        }
+        await validateComparisonPlan({
+          comparison_type: comparisonTemplate.type,
+          variables: armAxes,
+          inputs: Object.fromEntries(
+            comparisonTemplate.required_inputs.map((key) => [key, payload[key]])
+          )
+        })
         payload.base_experiment = baseId
         payload.axes = JSON.stringify(armAxes)
         payload.max_arms = 8
+        payload.comparison_type = comparisonTemplate.type
       }
       if (extra.length > 0) payload.extra = extra
       await createEvalJob({
@@ -209,7 +234,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
     } finally {
       setSubmitting(false)
     }
-  }, [experiment, dataset, params, extraText, supervise, supervision, armAxes, t, onStarted])
+  }, [experiment, dataset, params, extraText, supervise, supervision, armAxes, comparisonTemplate, t, onStarted])
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -320,6 +345,26 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
                 <div className="space-y-2 rounded-md border p-3">
                   <p className="text-sm font-medium">{t('eval.customArms')}</p>
                   <label className="flex flex-col gap-1 text-xs">
+                    <span className="text-muted-foreground">比较类型</span>
+                    <Select value={comparisonType} onValueChange={setComparisonType}>
+                      <SelectTrigger className="h-9">
+                        <SelectValue placeholder="选择比较模板" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {comparisonTemplates.map((item) => (
+                          <SelectItem key={item.type} value={item.type}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {comparisonTemplate ? (
+                      <p className="text-muted-foreground text-xs">
+                        允许变量：{comparisonTemplate.allowed_variables.join('、')}；索引：{comparisonTemplate.index_requirement}
+                      </p>
+                    ) : null}
+                  </label>
+                  <label className="flex flex-col gap-1 text-xs">
                     <span className="text-muted-foreground">{t('eval.baseExperiment')}</span>
                     <Select
                       value={params.base_experiment == null ? '' : String(params.base_experiment)}
@@ -341,18 +386,23 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
                   </label>
                   {armRows.map((row, index) => (
                     <div key={index} className="flex items-center gap-2">
-                      <Input
-                        className="w-40"
-                        placeholder={t('eval.armAxis')}
-                        value={row.key}
-                        onChange={(event) =>
-                          setArmRows((rows) =>
-                            rows.map((r, i) =>
-                              i === index ? { ...r, key: event.target.value } : r
+                      {comparisonTemplate ? (
+                        <Select
+                          value={row.key}
+                          onValueChange={(value) =>
+                            setArmRows((rows) =>
+                              rows.map((r, i) => (i === index ? { ...r, key: value } : r))
                             )
-                          )
-                        }
-                      />
+                          }
+                        >
+                          <SelectTrigger className="h-9 w-40"><SelectValue placeholder={t('eval.armAxis')} /></SelectTrigger>
+                          <SelectContent>
+                            {comparisonTemplate.allowed_variables.map((key) => <SelectItem key={key} value={key}>{key}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input className="w-40" placeholder={t('eval.armAxis')} value={row.key} onChange={(event) => setArmRows((rows) => rows.map((r, i) => i === index ? { ...r, key: event.target.value } : r))} />
+                      )}
                       <Input
                         className="flex-1"
                         placeholder={t('eval.armValues')}
@@ -393,10 +443,16 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
                       </span>
                     ) : null}
                   </div>
+                  {comparisonTemplate?.required_inputs.map((key) => (
+                    <label key={key} className="flex flex-col gap-1 text-xs">
+                      <span className="text-muted-foreground">{key}</span>
+                      <Input value={params[key] == null ? '' : String(params[key])} onChange={(event) => setParam(key, event.target.value)} />
+                    </label>
+                  ))}
                 </div>
               ) : null}
-              <label className="flex flex-col gap-1 text-xs">
-                <span className="text-muted-foreground">{t('eval.paramModel')}</span>
+              {experiment !== 'custom_arms' ? <label className="flex flex-col gap-1 text-xs">
+                <span className="text-muted-foreground">回答模型</span>
                 {!useCustomModel ? (
                   <Select
                     value={params.model == null ? '' : String(params.model)}
@@ -433,7 +489,7 @@ export default function NewRunWizard({ initial, onBack, onStarted }: NewRunWizar
                 {models.length === 0 ? (
                   <p className="text-muted-foreground text-xs">{t('eval.modelsUnavailable')}</p>
                 ) : null}
-              </label>
+              </label> : null}
               <div className="grid grid-cols-2 gap-3">
                 {GENERIC_FIELDS.map((field) => (
                   <label key={field.key} className="flex flex-col gap-1 text-xs">
