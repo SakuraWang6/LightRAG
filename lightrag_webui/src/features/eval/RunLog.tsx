@@ -21,12 +21,10 @@ function sameLines(previous: string[] | null, next: string[]): boolean {
 export default function RunLog({ runId, events = [], active = false }: RunLogProps) {
   const { t } = useTranslation()
   const [lines, setLines] = useState<string[] | null>(null)
-  const [loading, setLoading] = useState(false)
   const [followTail, setFollowTail] = useState(true)
   const logViewportRef = useRef<HTMLPreElement | null>(null)
 
   const load = useCallback(async (silent = false) => {
-    setLoading(true)
     try {
       const result = await getEvalRunLog(runId)
       setLines((previous) => (sameLines(previous, result.lines) ? previous : result.lines))
@@ -34,8 +32,6 @@ export default function RunLog({ runId, events = [], active = false }: RunLogPro
       if (!silent) {
         toast.error(error instanceof Error ? error.message : String(error))
       }
-    } finally {
-      setLoading(false)
     }
   }, [runId])
 
@@ -97,13 +93,7 @@ export default function RunLog({ runId, events = [], active = false }: RunLogPro
       ) : null}
       {lines.length > 0 ? (
         <section className="overflow-hidden rounded-md border bg-muted/20">
-          <div className="flex items-center justify-between border-b px-3 py-2">
-            <p className="text-sm font-medium">实时运行日志</p>
-            <span className="text-muted-foreground flex items-center gap-1.5 text-xs">
-              {active ? <span className="bg-emerald-500 size-1.5 animate-pulse rounded-full" /> : null}
-              {active ? '自动更新中' : loading ? t('eval.loading') : '日志已停止更新'}
-            </span>
-          </div>
+          <p className="border-b px-3 py-2 text-sm font-medium">运行日志</p>
           <pre
             ref={logViewportRef}
             onScroll={handleLogScroll}

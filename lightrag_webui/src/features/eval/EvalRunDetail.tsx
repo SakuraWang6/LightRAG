@@ -105,14 +105,6 @@ function RunHeader({
     if (Number.isNaN(started)) return null
     return Math.max(0, (now - started) / 1000)
   }, [run.started_at, now])
-  const etaSeconds = useMemo(() => {
-    const done = run.progress?.done ?? 0
-    const total = run.progress?.total ?? 0
-    if (!run.started_at || elapsedSeconds == null || done <= 0 || total <= 1) return null
-    const rate = done / elapsedSeconds
-    if (rate <= 0) return null
-    return (total - done) / rate
-  }, [run.started_at, elapsedSeconds, run.progress?.done, run.progress?.total])
   return (
     <div className="border-b px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -160,12 +152,6 @@ function RunHeader({
           <>
             {' · '}
             {t('eval.elapsed')}: {formatDuration(elapsedSeconds)}
-          </>
-        ) : null}
-        {isRunning && etaSeconds != null ? (
-          <>
-            {' · '}
-            {t('eval.eta')}: {formatDuration(etaSeconds)}
           </>
         ) : null}
         {run.duration_seconds != null ? (
