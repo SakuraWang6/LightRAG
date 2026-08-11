@@ -18,7 +18,11 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/Select'
-import { buildCasesCsv, formatMetricValue } from '@/features/eval/utils'
+import {
+  buildCasesCsv,
+  formatMetricValue,
+  questionTypeLabel
+} from '@/features/eval/utils'
 
 type Detail = Record<string, unknown>
 
@@ -273,7 +277,9 @@ export default function CasesView({ rows }: CasesViewProps) {
             <SelectTrigger className="h-8"><SelectValue placeholder="题型" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部题型</SelectItem>
-              {types.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
+              {types.map((type) => (
+                <SelectItem key={type} value={type}>{questionTypeLabel(type)}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -293,7 +299,7 @@ export default function CasesView({ rows }: CasesViewProps) {
               <div className={`absolute inset-y-0 left-0 w-1 ${c.passed === true ? 'bg-emerald-500' : c.passed === false ? 'bg-red-500' : 'bg-muted-foreground/40'}`} />
               <header className="flex flex-wrap items-center gap-2 border-b bg-muted/25 px-5 py-3 pl-6">
                 <span className="font-serif text-lg font-semibold">第 {index + 1} 题</span>
-                {c.type ? <span className="rounded-full border bg-background px-2 py-0.5 text-xs text-muted-foreground">{c.type}</span> : null}
+                {c.type ? <span className="rounded-full border bg-background px-2 py-0.5 text-xs text-muted-foreground">{questionTypeLabel(c.type)}</span> : null}
                 <Verdict c={c} />
               </header>
               <div className="space-y-5 px-5 py-5 pl-6">

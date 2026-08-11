@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from memory_eval_tests.sampling import sample_evenly
+
 SCHEMA_VERSION = "3.0"
 _SCAN_INDEX_NAME = ".eval_index.json"
 _SENSITIVE_EXTRA_RE = re.compile(r"(key|token|secret|authorization)", re.IGNORECASE)
@@ -182,7 +184,9 @@ def _sha256(path: Path) -> str | dict[str, str]:
 
 def _git_commit() -> str | dict[str, str]:
     try:
-        root = Path(__file__).resolve().parents[3]
+        # artifacts.py lives in <repo>/memory_eval_tests/.  The repository root
+        # is therefore its parent directory, not the user's home/workspace root.
+        root = Path(__file__).resolve().parents[1]
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=root,
@@ -226,6 +230,22 @@ def _source_document_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
             else True
         )
     ]
+
+
+def selected_case_ids(dataset: Path | None, max_cases: int | None) -> list[str] | None:
+    """Return the exact deterministic oracle subset, or ``None`` if unknown."""
+    if dataset is None:
+        return None
+    try:
+        oracle = json.loads((Path(dataset) / "oracle.json").read_text(encoding="utf-8"))
+        questions = oracle.get("questions")
+        if not isinstance(questions, list):
+            return None
+        selected = sample_evenly(questions, max_cases)
+        case_ids = [str(question["id"]) for question in selected if isinstance(question, dict)]
+        return case_ids if len(case_ids) == len(selected) else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def build_execution_manifest(
@@ -308,6 +328,11 @@ def build_execution_manifest(
             "random_seed": _manifest_value(manifest, "random_seed", "seed")
             if manifest
             else _unknown(manifest_error or "dataset manifest is unavailable"),
+            "pages": manifest.get("pages") if manifest else None,
+            "tier": manifest.get("tier") if manifest else None,
+            "profile": manifest.get("profile") if manifest else None,
+            "formats": manifest.get("formats") if manifest else None,
+            "title": manifest.get("title") if manifest else None,
         },
         "evaluation": {"id": evaluation_id, "type": evaluation_type},
         "code": {"git_commit": _git_commit(), "framework_version": framework_version},
@@ -323,7 +348,9 @@ def _existing_execution_manifest(output_dir: Path) -> dict[str, Any] | None:
         )
     except (OSError, ValueError):
         return None
-    return value if isinstance(value, dict) else None
+    if not isinstance(value, dict) or value.get("provisional") is True:
+        return None
+    return value
 
 
 def _existing_runtime_snapshot(output_dir: Path) -> dict[str, Any] | None:
@@ -708,6 +735,15 @@ def write_envelope(
         baseline=context.baseline,
         runtime_snapshot=runtime_snapshot,
     )
+    answer_summary = next(
+        (
+            method.get("summary") or {}
+            for method in methods
+            if isinstance(method, dict) and method.get("method") == "answer"
+        ),
+        {},
+    )
+    scorers = answer_summary.get("scorers") if isinstance(answer_summary, dict) else None
     run_label = (context.label or "").strip() or context.definition.label
     envelope: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -732,6 +768,9 @@ def write_envelope(
         "declared_model": declared_model,
         "effective_model": effective_model,
         "configuration_mismatch": configuration_mismatch,
+        # A completed run may use one or more deterministic/semantic scorers.
+        # Persist their full inventory at the envelope level for comparison.
+        "scorers": scorers if isinstance(scorers, list) else [],
     }
     if status in {"complete", "failed"}:
         envelope["finished_at"] = now
@@ -760,6 +799,45 @@ def write_envelope(
             output_dir, status=status, done=1, total=1, phase="done", message=""
         )
     return path
+
+
+def mark_envelope_failed(
+    output_dir: Path,
+    *,
+    failure: dict[str, Any],
+    runs_root: Path | None = None,
+) -> bool:
+    """Atomically turn an already-published queued envelope into a failure.
+
+    The job dispatcher can fail before the evaluation CLI starts, when no
+    ``RunContext`` exists to call :func:`write_envelope`.  Keeping this update
+    here gives the console a terminal run state instead of a permanent queue.
+    """
+    path = output_dir / "run.json"
+    try:
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    envelope.update({"status": "failed", "finished_at": now, "failure": failure})
+    _write_json_atomic(path, envelope)
+    write_progress(
+        output_dir,
+        status="failed",
+        done=0,
+        total=1,
+        phase=str(failure.get("phase") or "dispatch"),
+        message=str(failure.get("summary") or "evaluation worker could not start"),
+    )
+    append_run_event(
+        output_dir,
+        phase=str(failure.get("phase") or "dispatch"),
+        severity="error",
+        message=str(failure.get("summary") or "evaluation worker could not start"),
+        error_type=str(failure.get("error_type") or "Error"),
+    )
+    _invalidate_scan_index(runs_root)
+    return True
 
 
 def write_progress(

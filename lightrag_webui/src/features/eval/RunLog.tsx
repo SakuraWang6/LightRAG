@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 
 import { getEvalRunLog, type EvalRunEvent } from '@/api/eval'
 import EmptyCard from '@/components/ui/EmptyCard'
+import { compactRunStages } from '@/features/eval/utils'
 
 interface RunLogProps {
   runId: string
@@ -64,6 +65,8 @@ export default function RunLog({ runId, events = [], active = false }: RunLogPro
     setFollowTail(distanceFromBottom <= FOLLOW_TAIL_THRESHOLD_PX)
   }
 
+  const stages = compactRunStages(events)
+
   if (lines === null) {
     return <p className="text-muted-foreground text-sm">{t('eval.loading')}</p>
   }
@@ -72,11 +75,11 @@ export default function RunLog({ runId, events = [], active = false }: RunLogPro
   }
   return (
     <div className="space-y-2">
-      {events.length > 0 ? (
+      {stages.length > 0 ? (
         <div className="space-y-2 rounded-md border p-3">
           <p className="text-muted-foreground text-xs font-medium">运行阶段</p>
           <ol className="space-y-3">
-            {events.map((event, index) => (
+            {stages.map((event, index) => (
               <li key={`${event.timestamp}-${index}`} className="flex gap-3 text-sm">
                 <span className={`mt-1.5 size-2 shrink-0 rounded-full ${event.severity === 'error' ? 'bg-destructive' : 'bg-primary'}`} />
                 <div className="min-w-0">

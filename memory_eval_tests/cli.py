@@ -24,6 +24,7 @@ from memory_eval_tests.artifacts import (
     read_progress,
     redact_launch_extra,
     redact_sensitive_text,
+    selected_case_ids,
     write_envelope,
     write_progress,
 )
@@ -48,7 +49,9 @@ def _parse_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _launch_params(baseline: dict[str, Any], extra_items: list[str]) -> dict[str, Any]:
+def _launch_params(
+    baseline: dict[str, Any], extra_items: list[str], case_ids: list[str] | None
+) -> dict[str, Any]:
     """Snapshot the launch-time parameters for exact one-click reproduction.
 
     Written only by the product evaluation harness into its envelope.
@@ -57,6 +60,10 @@ def _launch_params(baseline: dict[str, Any], extra_items: list[str]) -> dict[str
         key: baseline[key] for key in _LAUNCH_KEYS if key in baseline
     }
     params["extra"] = redact_launch_extra(list(extra_items))
+    # The comparison contract must know the exact oracle subset, not merely
+    # the requested max_cases cap. ``None`` deliberately represents an
+    # unreadable oracle and prevents that run from being ranked.
+    params["case_ids"] = case_ids
     return params
 
 
@@ -292,7 +299,8 @@ def main() -> None:
     for item in args.extra:
         key, _, value = item.partition("=")
         extra[key.strip()] = value.strip()
-    launch_params = _launch_params(baseline, args.extra)
+    case_ids = selected_case_ids(args.dataset, args.max_cases)
+    launch_params = _launch_params(baseline, args.extra, case_ids)
     parameter_sources = _parameter_sources(args, baseline)
 
     storage_dir = args.storage_dir or (args.output_dir / "rag_storage")
@@ -339,6 +347,11 @@ def main() -> None:
         parameter_sources=parameter_sources,
         started_at=context.started_at,
     )
+    context.execution_manifest["case_selection"] = {
+        "algorithm": "deterministic_even_stride_v1",
+        "requested_max_cases": args.max_cases,
+        "case_ids": case_ids,
+    }
     args.output_dir.mkdir(parents=True, exist_ok=True)
     preflight_error: Exception | None = None
     if definition.prepare is not None:

@@ -1,4 +1,9 @@
-# LightRAG 能力测评平台：迭代需求总览
+# 历史设计记录：LightRAG 能力测评平台迭代需求
+
+> 本目录记录的是重构前的设计演进，不是当前产品测评的实现说明。其中的
+> `legacy`、`online_baseline`、多实验计划和兼容性分层概念均已不再属于现行
+> 产品路径。当前唯一可信的使用说明与目录契约见
+> [`memory_eval_tests/README.md`](../../memory_eval_tests/README.md)。
 
 ## 产品定位
 

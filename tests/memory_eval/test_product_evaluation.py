@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from memory_eval_tests import cli
+from lightrag.api import eval_comparison
+from memory_eval_tests import artifacts, cli, http
 from memory_eval_tests.artifacts import (
     EvaluationDefinition,
     RunContext,
@@ -53,6 +54,115 @@ def test_progress_is_valid_json_after_each_update(tmp_path: Path) -> None:
     write_progress(tmp_path, status="running", done=1, total=3, phase="ingestion")
     assert read_progress(tmp_path)["phase"] == "ingestion"
     assert not (tmp_path / ".progress.json.tmp").exists()
+
+
+def test_manifest_resolves_the_repository_root_for_git_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Result:
+        stdout = "abc123\n"
+
+    def fake_run(*args: object, **kwargs: object) -> Result:
+        captured["cwd"] = kwargs["cwd"]
+        return Result()
+
+    monkeypatch.setattr(artifacts.subprocess, "run", fake_run)
+    assert artifacts._git_commit() == "abc123"
+    assert captured["cwd"] == Path(artifacts.__file__).resolve().parents[1]
+
+
+def test_comparison_requires_exact_case_set_and_scorer_inventory() -> None:
+    base = {
+        "status": "complete",
+        "evaluation": {"id": "end_to_end_baseline"},
+        "execution_manifest": {
+            "dataset": {"manifest_sha256": "dataset-sha"},
+            "case_selection": {"case_ids": ["Q-1", "Q-2"]},
+            "execution_unit": {
+                "profile": {"id": "server-default", "version": 1},
+                "configuration_fingerprint": "config-sha",
+            },
+        },
+        "scorers": [{"name": "deterministic-answer-rules", "version": "1.1"}],
+    }
+    assert eval_comparison.compare_contract([base, dict(base)])["comparable"] is True
+
+    changed_cases = {
+        **base,
+        "execution_manifest": {
+            **base["execution_manifest"],
+            "case_selection": {"case_ids": ["Q-1"]},
+        },
+    }
+    result = eval_comparison.compare_contract([base, changed_cases])
+    assert result["comparable"] is False
+    assert "case_set" in result["incompatible_fields"]
+
+    missing_scorers = {**base, "scorers": []}
+    result = eval_comparison.compare_contract([base, missing_scorers])
+    assert result["comparable"] is False
+    assert "scorers" in result["incompatible_fields"]
+
+    result = eval_comparison.compare_contract(
+        [{**base, "scorers": []}, {**base, "scorers": []}]
+    )
+    assert result["comparable"] is False
+    assert "scorers" in result["incompatible_fields"]
+
+
+def test_upload_streams_document_instead_of_reading_the_whole_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document = tmp_path / "document.docx"
+    document.write_bytes(b"document-bytes")
+    sent: list[bytes] = []
+    headers: dict[str, str] = {}
+
+    class Response:
+        status = 200
+
+        @staticmethod
+        def read() -> bytes:
+            return b'{"status":"success"}'
+
+    class Connection:
+        def __init__(self, host: str, timeout: int) -> None:
+            assert host == "127.0.0.1:9621"
+            assert timeout == 12
+
+        @staticmethod
+        def putrequest(method: str, target: str) -> None:
+            assert method == "POST"
+            assert target == "/documents/upload"
+
+        @staticmethod
+        def putheader(name: str, value: str) -> None:
+            headers[name] = value
+
+        @staticmethod
+        def endheaders() -> None:
+            return None
+
+        @staticmethod
+        def send(chunk: bytes) -> None:
+            sent.append(chunk)
+
+        @staticmethod
+        def getresponse() -> Response:
+            return Response()
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    monkeypatch.setattr(http.http.client, "HTTPConnection", Connection)
+    assert http.upload_file(
+        document, "http://127.0.0.1:9621/documents/upload", timeout=12
+    ) == {"status": "success"}
+    assert b"".join(sent).count(b"document-bytes") == 1
+    assert int(headers["Content-Length"]) == sum(len(chunk) for chunk in sent)
 
 
 def test_disabling_kg_requires_vector_query_mode(

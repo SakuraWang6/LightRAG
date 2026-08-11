@@ -157,7 +157,6 @@ function RunHeader({
         {' · '}
         {run.artifacts.length} {t('eval.artifactLabel')}
       </p>
-      {run.description ? <p className="text-muted-foreground mt-1 text-sm">{run.description}</p> : null}
       {run.failure ? (
         <div className="mt-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm">
           <span className="font-medium">{t('eval.failed')} · {run.failure.phase}: </span>

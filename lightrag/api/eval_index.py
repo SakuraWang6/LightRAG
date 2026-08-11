@@ -80,6 +80,24 @@ def _dataset_meta(runs_root: Path, dataset: str | None) -> dict[str, Any]:
     return {}
 
 
+def _snapshot_dataset_meta(
+    execution_manifest: dict[str, Any], dataset: str | None
+) -> dict[str, Any]:
+    """Read reviewer-facing dataset metadata from an immutable run snapshot."""
+    captured = execution_manifest.get("dataset") or {}
+    if not isinstance(captured, dict):
+        return {}
+    values = {
+        key: captured.get(key)
+        for key in ("pages", "tier", "profile", "formats", "title")
+        if captured.get(key) not in (None, "")
+    }
+    dataset_id = captured.get("dataset_id") or dataset
+    if isinstance(dataset_id, str) and dataset_id:
+        values["dataset"] = dataset_id
+    return values
+
+
 def _scalar_rows(methods: list[dict[str, Any]]) -> dict[str, Any]:
     """Method comparison table: one row per method, scalar summary metrics."""
     rows: list[dict[str, Any]] = []
@@ -496,7 +514,12 @@ def _run_record(
         execution_dataset if isinstance(execution_dataset, str) else None
     )
     methods = envelope.get("methods") or []
-    dataset_meta = _dataset_meta(runs_root, dataset)
+    dataset_meta = _snapshot_dataset_meta(
+        envelope.get("execution_manifest") or {}, dataset
+    )
+    if not dataset_meta:
+        # Historical envelopes predate immutable display metadata.
+        dataset_meta = _dataset_meta(runs_root, dataset)
     conditions = build_conditions(
         envelope.get("environment") or {},
         baseline,

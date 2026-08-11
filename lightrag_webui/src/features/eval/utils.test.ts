@@ -5,12 +5,14 @@ import {
   buildCasesCsv,
   buildReproduceDraft,
   caseFieldLabel,
+  compactRunStages,
   compareCompatible,
   diffParams,
   formatDelta,
   hasRunningJobs,
   metricStats,
   metricRank,
+  questionTypeLabel,
   statusLabel
 } from '@/features/eval/utils'
 
@@ -55,6 +57,22 @@ describe('eval utils', () => {
     expect(caseFieldLabel('hit_fact_ids', 'zh-CN')).toBe('命中证据')
     expect(caseFieldLabel('hit_fact_ids', 'en')).toBe('Hit facts')
     expect(caseFieldLabel('unknown_key', 'zh')).toBe('unknown_key')
+  })
+
+  test('questionTypeLabel renders formal reviewer-facing names', () => {
+    expect(questionTypeLabel('direct_numeric')).toBe('数值事实题')
+    expect(questionTypeLabel('multi_hop')).toBe('多跳推理题')
+    expect(questionTypeLabel('unknown_type')).toBe('其他题型')
+  })
+
+  test('compactRunStages keeps one latest event per stage in first-seen order', () => {
+    const stages = compactRunStages([
+      { timestamp: '09:00', phase: 'answer', severity: 'info', message: '第 1 题' },
+      { timestamp: '09:01', phase: 'retrieval', severity: 'info', message: '检索完成' },
+      { timestamp: '09:02', phase: 'answer', severity: 'info', message: '第 2 题' }
+    ])
+    expect(stages.map((stage) => stage.phase)).toEqual(['answer', 'retrieval'])
+    expect(stages[0]?.message).toBe('第 2 题')
   })
 
   test('buildCasesCsv includes detail fields without capping', () => {

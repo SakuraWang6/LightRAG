@@ -127,11 +127,11 @@ export default function EvalConsole() {
     }
   }, [selectedId, loadDetail])
 
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = useCallback(async (silent = false) => {
     setRefreshing(true)
     try {
       const result = await refreshEvalIndex()
-      toast.success(`已刷新 ${result.run_count} 个测评`)
+      if (!silent) toast.success(`已刷新 ${result.run_count} 个测评`)
       detailCache.current.clear()
       await loadRuns()
       if (selectedId) await loadDetail(selectedId, true)
@@ -255,8 +255,9 @@ export default function EvalConsole() {
             initial={simpleDraft}
             onBack={() => setView('runs')}
             onStarted={() => {
-              setView('jobs')
-              void loadRuns()
+              setView('runs')
+              void handleRefresh(true)
+              window.setTimeout(() => void handleRefresh(true), 1200)
             }}
           />
         </div>
@@ -299,7 +300,7 @@ export default function EvalConsole() {
               {t('eval.compare')} ({compareIds.size})
             </Button>
           )}
-          <Button size="sm" variant="outline" onClick={handleRefresh} disabled={refreshing}>
+          <Button size="sm" variant="outline" onClick={() => void handleRefresh()} disabled={refreshing}>
             <RefreshCwIcon className={`mr-1 size-4 ${refreshing ? 'animate-spin' : ''}`} />
             刷新列表
           </Button>

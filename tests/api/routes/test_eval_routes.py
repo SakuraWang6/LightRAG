@@ -95,6 +95,47 @@ def test_runs_endpoint_exposes_only_product_evaluation_shape(
     assert "experiment" not in payload[0]
 
 
+def test_runs_endpoint_uses_dataset_metadata_captured_by_the_run(
+    client: TestClient, runs_root: Path
+) -> None:
+    run = runs_root / "evaluation-snapshot"
+    run.mkdir()
+    (run / "run.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "3.0",
+                "run_id": "evaluation-snapshot",
+                "status": "complete",
+                "label": "快照测评",
+                "dataset": "sample",
+                "evaluation": {"id": "end_to_end_baseline", "label": "端到端测评"},
+                "environment": {},
+                "baseline": {},
+                "methods": [],
+                "reports": {},
+                "execution_manifest": {
+                    "dataset": {
+                        "dataset_id": "sample",
+                        "pages": 99,
+                        "tier": "archived",
+                        "profile": "frozen",
+                        "formats": ["pdf"],
+                    }
+                },
+                "runtime_snapshot": {"status": "captured"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = client.get("/eval/runs").json()["runs"]
+    snapshot = next(item for item in payload if item["id"] == "evaluation-snapshot")
+    conditions = {item["key"]: item["value"] for item in snapshot["conditions"]}
+    assert conditions["pages"] == "99"
+    assert conditions["tier"] == "archived"
+    assert conditions["formats"] == "pdf"
+
+
 def test_create_job_rejects_removed_experiment_field(client: TestClient) -> None:
     response = client.post(
         "/eval/jobs",

@@ -1,4 +1,51 @@
-import type { MetricItem } from '@/api/eval'
+import type { EvalRunEvent, MetricItem } from '@/api/eval'
+
+const QUESTION_TYPE_LABELS: Record<string, string> = {
+  abstain: '信息缺失拒答题',
+  conflict_resolution: '冲突规则裁决题',
+  direct_numeric: '数值事实题',
+  direct_text: '文本事实题',
+  equation: '公式内容题',
+  equation_variable: '公式变量释义题',
+  figure_caption: '图示信息题',
+  figure_text: '图文关联题',
+  formula: '公式题',
+  formula_variable: '公式与变量综合题',
+  multi_hop: '多跳推理题',
+  negative_constraint: '负向约束题',
+  table_cell: '表格单元格题',
+  version_condition: '版本与生效条件题'
+}
+
+/** Translate stored question-type codes into reviewer-facing labels. */
+export function questionTypeLabel(type: string | null | undefined): string {
+  const normalized = type?.trim().toLowerCase()
+  if (!normalized) return '未标注题型'
+  return QUESTION_TYPE_LABELS[normalized] ?? '其他题型'
+}
+
+/**
+ * Keep the stage timeline readable while preserving its chronological order.
+ * A stage may emit per-case progress events; the latest event replaces the
+ * previous one in that stage's original position instead of adding a new row.
+ */
+export function compactRunStages(events: EvalRunEvent[]): EvalRunEvent[] {
+  const indexByPhase = new Map<string, number>()
+  const stages: EvalRunEvent[] = []
+  for (const event of events) {
+    const phase = event.phase.trim() || '运行'
+    const normalized = phase.toLowerCase()
+    const displayEvent = phase === event.phase ? event : { ...event, phase }
+    const existingIndex = indexByPhase.get(normalized)
+    if (existingIndex === undefined) {
+      indexByPhase.set(normalized, stages.length)
+      stages.push(displayEvent)
+    } else {
+      stages[existingIndex] = displayEvent
+    }
+  }
+  return stages
+}
 
 export function formatMetricValue(value: MetricItem['value']): string {
   if (typeof value === 'boolean') {

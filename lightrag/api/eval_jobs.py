@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from memory_eval_tests.artifacts import build_failure, mark_envelope_failed
 from memory_eval_tests.runner import (
     RunParams,
     build_run_command,
@@ -278,6 +279,11 @@ def _refresh_job(
     datasets_root: Path,
     recover_expired_claim: bool = False,
 ) -> dict[str, Any]:
+    """Refresh one job while the caller holds ``_claim_file_lock``.
+
+    This is a read-modify-write operation.  Calling it from an unlocked read
+    route can otherwise overwrite a concurrent cancellation or lease renewal.
+    """
     previous = job.get("status")
     job["status"] = _derive_status(
         job, runs_root=runs_root, datasets_root=datasets_root
@@ -381,6 +387,137 @@ def _params_from_json(payload: dict[str, Any]) -> RunParams:
             data[key] = Path(data[key])
     data["extra"] = list(data.get("extra") or [])
     return RunParams(**data)
+
+
+def _write_queued_run_envelope(*, runs_root: Path, params: RunParams) -> None:
+    """Publish a provisional run record before dispatching its child process.
+
+    A queued job is already a user-visible evaluation.  Without this envelope
+    the run index ignores it until a worker starts the CLI, making jobs queued
+    behind another run disappear from the measurement page.
+    """
+    from memory_eval_tests.artifacts import (
+        BASELINE_DEFAULTS,
+        RunContext,
+        append_run_event,
+        build_execution_manifest,
+        capture_environment,
+        redact_launch_extra,
+        selected_case_ids,
+        write_envelope,
+        write_progress,
+    )
+    from memory_eval_tests.workflow import definition
+
+    baseline = dict(definition.default_baseline)
+    baseline.update(
+        {key: value for key, value in BASELINE_DEFAULTS.items() if key not in baseline}
+    )
+    parameter_sources = {key: "default" for key in baseline}
+    for key in (
+        "model",
+        "mode",
+        "top_k",
+        "chunk_top_k",
+        "num_ctx",
+        "num_predict",
+        "max_total_tokens",
+        "temperature",
+        "engine",
+    ):
+        value = getattr(params, key)
+        if value is not None:
+            baseline[key] = value
+            parameter_sources[key] = "user"
+    baseline["max_cases"] = params.max_cases
+    if params.max_cases:
+        parameter_sources["max_cases"] = "user"
+    if params.skip_kg:
+        baseline["kg"] = False
+        baseline["mode"] = "naive"
+        parameter_sources["kg"] = "user"
+        parameter_sources["mode"] = "user"
+
+    started_at = _now_iso()
+    case_ids = selected_case_ids(params.dataset, params.max_cases)
+    manifest = build_execution_manifest(
+        dataset=params.dataset,
+        evaluation_id=definition.id,
+        evaluation_type="evaluation",
+        parameters=baseline,
+        parameter_sources=parameter_sources,
+        started_at=started_at,
+    )
+    manifest.update(
+        {
+            "provisional": True,
+            "case_selection": {
+                "algorithm": "deterministic_even_stride_v1",
+                "requested_max_cases": params.max_cases,
+                "case_ids": case_ids,
+            },
+        }
+    )
+    context = RunContext(
+        definition=definition,
+        dataset=params.dataset,
+        output_dir=params.output_dir,
+        baseline=baseline,
+        environment=capture_environment(
+            rag_api_url=params.rag_api_url,
+            ollama_url=params.ollama_url,
+            api_key=params.api_key,
+            access_token=params.access_token,
+            storage_dir=str(params.output_dir / "rag_storage"),
+        ),
+        run_id=params.run_id or params.output_dir.name,
+        label=params.label,
+        started_at=started_at,
+        runs_root=runs_root,
+    )
+    context.execution_manifest = manifest
+    context.runtime_snapshot = {
+        "snapshot_version": "1.0",
+        "status": "queued",
+        "reason": "waiting for an execution slot",
+    }
+    write_envelope(
+        params.output_dir,
+        context=context,
+        status="queued",
+        methods=[],
+        write_progress_file=False,
+        runs_root=runs_root,
+        extra={
+            "launch_params": {
+                **{
+                    key: baseline[key]
+                    for key in (
+                        "model", "mode", "top_k", "chunk_top_k", "max_cases",
+                        "num_ctx", "num_predict", "max_total_tokens", "temperature",
+                        "engine", "kg",
+                    )
+                    if key in baseline
+                },
+                "case_ids": case_ids,
+                "extra": redact_launch_extra(list(params.extra)),
+            }
+        },
+    )
+    write_progress(
+        params.output_dir,
+        status="queued",
+        done=0,
+        total=1,
+        phase="starting",
+        message="等待执行队列",
+    )
+    append_run_event(
+        params.output_dir,
+        phase="starting",
+        severity="info",
+        message="evaluation job queued",
+    )
 
 
 def _spawn_run_job(
@@ -534,61 +671,77 @@ def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
             return
         jobs = jobs_root(runs_root)
         with _claim_file_lock(runs_root):
-            raw = [
-                _refresh_job(
-                    j,
-                    runs_root=runs_root,
-                    datasets_root=datasets_root,
-                    recover_expired_claim=True,
+            # Re-scan after each launch so MEMORY_EVAL_MAX_ACTIVE_JOBS is a
+            # real capacity rather than a misleading one-job-per-dispatch cap.
+            while True:
+                raw = [
+                    _refresh_job(
+                        j,
+                        runs_root=runs_root,
+                        datasets_root=datasets_root,
+                        recover_expired_claim=True,
+                    )
+                    for j in _raw_jobs(runs_root)
+                ]
+                active = [j for j in raw if j.get("status") in _ACTIVE_STATUSES]
+                if len(active) >= _max_active_jobs():
+                    return
+                pending = [j for j in raw if j.get("status") == "pending"]
+                if not pending:
+                    return
+                pending.sort(key=lambda j: (j.get("created_at") or "", j.get("id") or ""))
+                job = pending[0]
+                claim = _claim_owner()
+                job.update(
+                    {
+                        "status": "claiming",
+                        "claim": claim,
+                        "lease_expires_at": claim["lease_expires_at"],
+                    }
                 )
-                for j in _raw_jobs(runs_root)
-            ]
-            active = [j for j in raw if j.get("status") in _ACTIVE_STATUSES]
-            if len(active) >= _max_active_jobs():
-                return
-            pending = [j for j in raw if j.get("status") == "pending"]
-            if not pending:
-                return
-            pending.sort(key=lambda j: (j.get("created_at") or "", j.get("id") or ""))
-            job = pending[0]
-            claim = _claim_owner()
-            job.update(
-                {
-                    "status": "claiming",
-                    "claim": claim,
-                    "lease_expires_at": claim["lease_expires_at"],
-                }
-            )
-            _write_job(jobs, job)
-            try:
-                if job["kind"] == "run":
-                    _spawn_run_job(
-                        job_id=job["id"],
-                        runs_root=runs_root,
-                        datasets_root=datasets_root,
-                        params=_params_from_json(job["params"]),
-                        supervise=bool(job.get("supervise", False)),
-                        supervision=str(job.get("supervision") or "auto"),
-                        stale_minutes=int(job.get("stale_minutes") or 60),
-                        max_restarts=int(job.get("max_restarts") or 3),
-                        poll_seconds=int(job.get("poll_seconds") or 30),
-                        owner_id=claim["owner_id"],
-                    )
-                else:
-                    _spawn_dataset_job(
-                        job_id=job["id"],
-                        runs_root=runs_root,
-                        datasets_root=datasets_root,
-                        params=job["params"],
-                        owner_id=claim["owner_id"],
-                    )
-            except Exception:
-                # A broken queued job must not block the rest of the queue.
-                failed = _read_job(jobs, job["id"])
-                if failed is not None:
-                    failed["status"] = "failed"
-                    failed["finished_at"] = _now_iso()
-                    _write_job(jobs, failed)
+                _write_job(jobs, job)
+                try:
+                    if job["kind"] == "run":
+                        _spawn_run_job(
+                            job_id=job["id"],
+                            runs_root=runs_root,
+                            datasets_root=datasets_root,
+                            params=_params_from_json(job["params"]),
+                            supervise=bool(job.get("supervise", False)),
+                            supervision=str(job.get("supervision") or "auto"),
+                            stale_minutes=int(job.get("stale_minutes") or 60),
+                            max_restarts=int(job.get("max_restarts") or 3),
+                            poll_seconds=int(job.get("poll_seconds") or 30),
+                            owner_id=claim["owner_id"],
+                        )
+                    else:
+                        _spawn_dataset_job(
+                            job_id=job["id"],
+                            runs_root=runs_root,
+                            datasets_root=datasets_root,
+                            params=job["params"],
+                            owner_id=claim["owner_id"],
+                        )
+                except Exception as exc:
+                    # A broken queued job must not block the rest of the queue.
+                    failed = _read_job(jobs, job["id"])
+                    if failed is not None:
+                        failed["status"] = "failed"
+                        failed["finished_at"] = _now_iso()
+                        failed["failure"] = f"{type(exc).__name__}: {exc}"
+                        _write_job(jobs, failed)
+                    if job["kind"] == "run":
+                        mark_envelope_failed(
+                            Path(job["output_dir"]),
+                            failure=build_failure(
+                                phase="dispatch",
+                                error=exc,
+                                retryable=True,
+                                recommendation="inspect the job failure and retry the evaluation",
+                                log_offset=0,
+                            ),
+                            runs_root=runs_root,
+                        )
 
 
 def _start_dispatch_loop(runs_root: Path, datasets_root: Path | None = None) -> None:
@@ -654,6 +807,7 @@ def start_run_job(
         else _unique_run_dir(runs_root)
     )
     params.output_dir.mkdir(parents=True, exist_ok=True)
+    _write_queued_run_envelope(runs_root=runs_root, params=params)
     job = {
         "id": _job_id("run"),
         "kind": "run",
@@ -729,10 +883,11 @@ def start_dataset_job(
 
 
 def list_jobs(*, runs_root: Path, datasets_root: Path) -> list[dict[str, Any]]:
-    jobs = [
-        _refresh_job(job, runs_root=runs_root, datasets_root=datasets_root)
-        for job in _raw_jobs(runs_root)
-    ]
+    with _claim_file_lock(runs_root):
+        jobs = [
+            _refresh_job(job, runs_root=runs_root, datasets_root=datasets_root)
+            for job in _raw_jobs(runs_root)
+        ]
     jobs = sorted(
         jobs,
         key=lambda job: (job.get("created_at") or "", job.get("id") or ""),
@@ -754,11 +909,12 @@ def delete_job(*, runs_root: Path, job_id: str) -> bool:
     """Remove a job's audit directory (``runs/.jobs/<job_id>``)."""
     if not _valid_job_id(job_id):
         return False
-    target = jobs_root(runs_root) / job_id
-    if not target.exists():
-        return False
-    shutil.rmtree(target)
-    return True
+    with _claim_file_lock(runs_root):
+        target = jobs_root(runs_root) / job_id
+        if not target.exists():
+            return False
+        shutil.rmtree(target)
+        return True
 
 
 def _tracked_child_pids(job: dict[str, Any]) -> list[int]:
@@ -802,10 +958,11 @@ def get_job(
 ) -> dict[str, Any] | None:
     if not _valid_job_id(job_id):
         return None
-    job = _read_job(jobs_root(runs_root), job_id)
-    if job is None:
-        return None
-    return _refresh_job(job, runs_root=runs_root, datasets_root=datasets_root)
+    with _claim_file_lock(runs_root):
+        job = _read_job(jobs_root(runs_root), job_id)
+        if job is None:
+            return None
+        return _refresh_job(job, runs_root=runs_root, datasets_root=datasets_root)
 
 
 def _pid_alive(pid: int) -> bool:
