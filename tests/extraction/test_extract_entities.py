@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from lightrag.utils import Tokenizer, TokenizerInterface
+from lightrag.utils import Tokenizer, TokenizerInterface, TruncatedResponse
 
 
 @pytest.fixture
@@ -153,6 +153,43 @@ async def test_no_gleaning_when_max_gleaning_zero(monkeypatch):
     )
 
     assert llm_func.await_count == 1
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_truncated_initial_extraction_requires_a_recovery_pass(monkeypatch):
+    """A cut-off extraction must not be indexed when recovery is disabled."""
+    from lightrag.operate import extract_entities
+
+    monkeypatch.setenv("MAX_EXTRACT_INPUT_TOKENS", "999999")
+    global_config = _make_global_config(entity_extract_max_gleaning=0)
+    llm_func = global_config["llm_model_func"]
+    llm_func.return_value = TruncatedResponse("(entity<|#|>PARTIAL")
+
+    with pytest.raises(RuntimeError, match="chunk-001.*no recovery pass"):
+        await extract_entities(chunks=_make_chunks(), global_config=global_config)
+
+    assert llm_func.await_count == 1
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_truncated_recovery_extraction_is_not_indexed(monkeypatch):
+    """A continuation that also hits its output limit must fail the chunk."""
+    from lightrag.operate import extract_entities
+
+    monkeypatch.setenv("MAX_EXTRACT_INPUT_TOKENS", "999999")
+    global_config = _make_global_config(entity_extract_max_gleaning=1)
+    llm_func = global_config["llm_model_func"]
+    llm_func.side_effect = [
+        TruncatedResponse("(entity<|#|>PARTIAL"),
+        TruncatedResponse("(relation<|#|>PARTIAL"),
+    ]
+
+    with pytest.raises(RuntimeError, match="chunk-001.*continuation was truncated"):
+        await extract_entities(chunks=_make_chunks(), global_config=global_config)
+
+    assert llm_func.await_count == 2
 
 
 @pytest.mark.offline

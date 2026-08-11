@@ -3756,6 +3756,12 @@ async def extract_entities(
             response_format=({"type": "json_object"} if use_json_extraction else None),
             llm_cache_identity=get_llm_cache_identity(global_config, "extract"),
         )
+        initial_result_truncated = is_truncated_response(final_result)
+        if initial_result_truncated:
+            logger.warning(
+                f"{chunk_key}: entity extraction reached the model output limit; "
+                "attempting one complete continuation before indexing this chunk"
+            )
 
         history = pack_user_ass_to_openai_messages(
             entity_extraction_user_prompt, final_result
@@ -3809,6 +3815,12 @@ async def extract_entities(
                 )
                 run_gleaning = False
 
+        if initial_result_truncated and not run_gleaning:
+            raise RuntimeError(
+                "entity extraction response was truncated and no recovery pass is "
+                "enabled; increase the EXTRACT role output limit or set MAX_GLEANING>=1"
+            )
+
         if run_gleaning:
             glean_result, timestamp = await use_llm_func_with_cache(
                 entity_continue_extraction_user_prompt,
@@ -3824,6 +3836,12 @@ async def extract_entities(
                 ),
                 llm_cache_identity=get_llm_cache_identity(global_config, "extract"),
             )
+            if is_truncated_response(glean_result):
+                raise RuntimeError(
+                    "entity extraction continuation was truncated; refusing to index "
+                    "a partial knowledge graph. Increase the EXTRACT role output limit "
+                    "and retry this document."
+                )
 
             # Process gleaning result with appropriate parser
             if use_json_extraction:

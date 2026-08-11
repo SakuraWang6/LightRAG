@@ -2,7 +2,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from lightrag.utils import TruncatedResponse, use_llm_func_with_cache
+from lightrag.utils import (
+    TruncatedResponse,
+    is_truncated_response,
+    use_llm_func_with_cache,
+)
 
 
 class _FakeKVStorage:
@@ -98,6 +102,7 @@ async def test_use_llm_func_with_cache_skips_caching_truncated_response():
 
     # Content is returned to the caller for tolerant parsing/salvage...
     assert result == '{"entities":[{"name":"Ali'
+    assert is_truncated_response(result)
     # ...but nothing was written to the cache.
     assert cache._store == {}
     llm_func.assert_awaited_once()
@@ -131,6 +136,7 @@ async def test_use_llm_func_with_cache_truncated_response_is_not_reused():
     )
 
     assert first == '{"entities":[{"name":"Ali'
+    assert is_truncated_response(first)
     assert second == '{"entities":[{"name":"Alice"}]}'
     # Both calls hit the LLM (the truncated first result was not cached);
     # only the complete second result is now persisted.

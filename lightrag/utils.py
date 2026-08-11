@@ -4164,6 +4164,11 @@ async def use_llm_func_with_cache(
         res_truncated = is_truncated_response(res)
 
         res = remove_think_tags(res)
+        # Keep the marker for the caller as well as for the cache layer.  In
+        # particular, entity extraction must be able to reject a continuation
+        # that was cut off instead of merging its incomplete tuples into the KG.
+        if res_truncated:
+            res = TruncatedResponse(res)
 
         # Generate timestamp for cache miss (LLM call completion time)
         current_timestamp = int(time.time())
@@ -4214,9 +4219,14 @@ async def use_llm_func_with_cache(
         # Re-raise with the same exception type but modified message
         raise type(e)(error_msg) from e
 
+    # Preserve the marker after think-tag cleanup for callers that need to
+    # distinguish a complete answer from best-effort partial content.
+    res_truncated = is_truncated_response(res)
+    res = remove_think_tags(res)
+
     # Generate timestamp for non-cached LLM call
     current_timestamp = int(time.time())
-    return remove_think_tags(res), current_timestamp
+    return (TruncatedResponse(res) if res_truncated else res), current_timestamp
 
 
 def get_content_summary(content: str, max_length: int = 250) -> str:
