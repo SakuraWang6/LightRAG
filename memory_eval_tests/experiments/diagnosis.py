@@ -34,9 +34,15 @@ def build_case_traces(
     facts = {str(fact.get("fact_id")): fact for fact in oracle.get("facts") or []}
     retrieval = {str(row.get("question_id")): row for row in retrieval_results}
     answers = {str(row.get("question_id")): row for row in answer_results}
+    # A sampled run must never grow placeholder cases for questions that were
+    # not sent to either evaluator.  Those placeholders made the per-question
+    # page show the full dataset while metrics used only ``max_cases``.
+    evaluated_question_ids = set(retrieval) | set(answers)
     traces: list[dict[str, Any]] = []
     for question in oracle.get("questions") or []:
         question_id = str(question.get("id"))
+        if question_id not in evaluated_question_ids:
+            continue
         evidence_ids = [str(item) for item in question.get("evidence_fact_ids") or []]
         retrieval_row = retrieval.get(question_id)
         answer_row = answers.get(question_id)
@@ -61,8 +67,9 @@ def build_case_traces(
                         "status": _OBSERVED,
                         "recall_at_k": retrieval_row.get("recall_at_k"),
                         "mode": retrieval_mode,
+                        "expected_fact_ids": retrieval_row.get("expected_fact_ids") or [],
                         "hit_fact_ids": retrieval_row.get("hit_fact_ids") or [],
-                        "top_k_candidates": retrieval_row.get("top_k_candidates") or [],
+                        "first_evidence_rank": retrieval_row.get("first_evidence_rank"),
                         "hit_evidence": retrieval_row.get("hit_evidence") or [],
                     }
                     if retrieval_row is not None
@@ -79,12 +86,11 @@ def build_case_traces(
                         "abstention_correct": answer_row.get("abstention_correct"),
                         "citation_presence": answer_row.get("citation_presence"),
                         "citation_correctness": answer_row.get("citation_correctness"),
-                        "response_references": answer_row.get("response_references") or [],
+                        "response_reference_count": answer_row.get("response_reference_count", 0),
                     }
                     if answer_row is not None
                     else unavailable("no answer trace was produced for this question")
                 ),
-                "oracle_upper_bound": unavailable("no linked oracle upper-bound run"),
             }
         )
     return traces
@@ -120,7 +126,7 @@ def diagnose_case(trace: dict[str, Any]) -> dict[str, Any]:
             return _diagnosis(
                 "retrieval_miss",
                 0.9,
-                [f"retrieval.recall_at_k={recall}", "retrieval.top_k_candidates observed"],
+                [f"retrieval.recall_at_k={recall}", "retrieval candidates observed"],
             )
 
     final_context = trace.get("final_context") or {}
@@ -133,13 +139,6 @@ def diagnose_case(trace: dict[str, Any]) -> dict[str, Any]:
                 ["retrieval contains evidence", "final_context lacks complete oracle evidence"],
             )
         if sufficient is True:
-            upper = trace.get("oracle_upper_bound") or {}
-            if upper.get("status") == _OBSERVED and upper.get("exact_match") is False:
-                return _diagnosis(
-                    "oracle_or_scorer_uncertain",
-                    0.8,
-                    ["oracle upper-bound answer also failed"],
-                )
             return _diagnosis(
                 "generation_or_prompt_failure",
                 0.85,
@@ -170,7 +169,7 @@ def build_diagnosis(traces: list[dict[str, Any]]) -> dict[str, Any]:
     classified = [
         case
         for case in applicable
-        if case["primary_cause"] not in {"unclassified", "oracle_or_scorer_uncertain"}
+        if case["primary_cause"] != "unclassified"
     ]
     return {
         "schema_version": DIAGNOSIS_SCHEMA_VERSION,

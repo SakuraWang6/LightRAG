@@ -6,8 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-DATASET_SCHEMA_VERSION = "1.1"
-_SUPPORTED_SCHEMA_VERSIONS = frozenset({"1.0", DATASET_SCHEMA_VERSION})
+DATASET_SCHEMA_VERSION = "1.2"
+_SUPPORTED_SCHEMA_VERSIONS = frozenset({"1.0", "1.1", DATASET_SCHEMA_VERSION})
 
 
 TierName = Literal["smoke", "medium", "large", "stress"]
@@ -88,8 +88,17 @@ class DatasetCreateRequest(BaseModel):
 
 
 class GeneratedFile(BaseModel):
+    """One generated file and its role in the evaluation contract.
+
+    A dataset contains both source documents and evaluation-only artefacts
+    (facts, questions and, critically, the answer oracle).  Keeping that
+    distinction in the manifest makes it impossible for an ingestion runner to
+    mistake scoring data for a document to index.
+    """
+
     name: str
     format: DocumentFormat | Literal["json", "png"]
+    role: Literal["source_document", "evaluation_artifact"] = "evaluation_artifact"
     path: str
     size_bytes: int = 0
     status: Literal["created", "skipped"] = "created"

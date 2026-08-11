@@ -25,14 +25,14 @@ export default function ProgressBar({ progress }: ProgressBarProps) {
   return (
     <div className="mt-2">
       <div className="text-muted-foreground mb-1 flex items-center justify-between text-xs">
-        <span>{phase ? `当前阶段：${phase}` : t('eval.running')}</span>
-        <span>流程节点 {done}/{total || '?'}</span>
+        <span>{progress.message || (phase ? `当前阶段：${phase}` : t('eval.running'))}</span>
+        <span>已完成 {done}/{total || '?'}</span>
       </div>
       <div className="bg-muted h-1.5 w-full overflow-hidden rounded-full">
         <div
           className="bg-emerald-500 h-full rounded-full transition-all"
           style={{ width: `${percent}%` }}
-          aria-label={`流程节点 ${done}/${total || '?'}`}
+          aria-label={`已完成 ${done}/${total || '?'}`}
         />
       </div>
     </div>

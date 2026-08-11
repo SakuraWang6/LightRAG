@@ -77,14 +77,16 @@ def generate_dataset(
         write_json(dataset_path / "relations.json", {"dataset_id": dataset_id, "relations": []})
         write_json(dataset_path / "oracle.json", oracle)
     files: list[GeneratedFile] = [
-        _file_record(docx_path, "docx") if "docx" in request.formats else _skipped("docx")
+        _file_record(docx_path, "docx", role="source_document")
+        if "docx" in request.formats
+        else _skipped("docx")
     ]
     if "pdf" in request.formats:
         files.append(pdf_record)
     else:
         files.append(_skipped("pdf"))
     if companion_docx is not None:
-        files.append(_file_record(companion_docx, "docx"))
+        files.append(_file_record(companion_docx, "docx", role="source_document"))
     for name in ("facts.json", "questions.json", "objects.json", "relations.json", "oracle.json"):
         files.append(_file_record(dataset_path / name, "json"))
     for asset_path in sorted(dataset_path.glob("*.png")):
@@ -352,13 +354,16 @@ def _convert_pdf(docx_path: Path, dataset_path: Path) -> GeneratedFile:
     pdf_path = docx_path.with_suffix(".pdf")
     if not pdf_path.exists():
         return _skipped("pdf", "PDF conversion did not produce an output file")
-    return _file_record(pdf_path, "pdf")
+    return _file_record(pdf_path, "pdf", role="source_document")
 
 
-def _file_record(path: Path, fmt: str) -> GeneratedFile:
+def _file_record(
+    path: Path, fmt: str, *, role: str = "evaluation_artifact"
+) -> GeneratedFile:
     return GeneratedFile(
         name=path.name,
         format=fmt,  # type: ignore[arg-type]
+        role=role,  # type: ignore[arg-type]
         path=str(path),
         size_bytes=path.stat().st_size if path.exists() else 0,
     )
@@ -368,6 +373,7 @@ def _skipped(fmt: str, message: str = "not requested") -> GeneratedFile:
     return GeneratedFile(
         name=f"skipped.{fmt}",
         format=fmt,  # type: ignore[arg-type]
+        role="source_document" if fmt in {"docx", "pdf"} else "evaluation_artifact",
         path="",
         size_bytes=0,
         status="skipped",

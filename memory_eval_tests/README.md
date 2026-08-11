@@ -9,7 +9,7 @@ memory_eval_tests/
 ├── common/       # DatasetClient, deterministic sampling, evidence normalization, auth HTTP helpers
 ├── offline/      # parser, integrity, provenance, layout and performance audits
 ├── online/       # API preflight, ingestion, retrieval and answer evaluation
-├── experiments/  # 14 registered experiments + unified harness (run.py) and supervise watchdog
+├── experiments/  # product baseline plus research scripts, unified harness (run.py) and supervise watchdog
 ├── reporting/    # single-run, comparison, scale, readiness and baseline reports
 ├── tools/        # legacy run/report migration
 └── runs/         # generated artifacts; never move or edit by framework cleanup
@@ -40,7 +40,7 @@ Useful environment variables:
 | `MEMORY_EVAL_DATASETS_ROOT` | Dataset generation/read root; **required for wheel installs** (site-packages is usually read-only) |
 | `MEMORY_EVAL_RUNS_ROOT` | Runs root shared by envelope invalidation and the console scan |
 | `LIGHTRAG_API_KEY` / `LIGHTRAG_ACCESS_TOKEN` | `X-API-Key` / Bearer auth for online evaluation; persisted envelopes redact these to `configured` |
-| `OLLAMA_URL` / `OLLAMA_MODEL` | Server-side model endpoint/name for the console "AI analysis" |
+| `OLLAMA_URL` / `OLLAMA_MODEL` | Server-side Ollama endpoint/default answer model; the WebUI only lists locally installed, non-embedding models |
 
 ## Offline Suite
 
@@ -237,14 +237,16 @@ conda run -n lightrag-memory-eval python -m memory_eval_tests.experiments.superv
 
 - **运行**：runs 列表、详情（指标/逐题/报告/日志）、对比与导出、取消活跃运行、
   一键复现。
-- **新建运行**：选数据集 → 选实验（显示看护/续跑能力与环境变量就绪状态）→
-  填参数（通用字段 + 实验 `extra_schema` 高级参数）→ 启动（可选看护）。
+- **新建运行**：为单次基础测评命名，选择服务器可用的模型、解析引擎、检索与生成
+  参数后启动。一次运行只处理该数据集声明的源文档（DOCX/PDF），不会把 oracle、
+  答案或标注文件入库。
 - **数据集**：列表（tier/页数/模态/文件数/生成时间）、表单化生成（含资源预估与
   pages 上限提示）、删除（生成中的数据集拒绝删除，返回 409）。
 
-后端接口：`GET /eval/experiments`、`POST/GET /eval/jobs`、`POST
+后端接口：`GET /eval/models`、`POST/GET /eval/jobs`、`POST
 /eval/jobs/{id}/cancel`、`GET/DELETE /eval/datasets`（生成走
-`POST /eval/jobs` 的 `kind=dataset`）、`GET/POST/DELETE /eval/templates`。
+`POST /eval/jobs` 的 `kind=dataset`）。研究实验、模板、环境 Profile 和 LLM
+后二次解读均不属于产品测评路径。
 作业状态以 `runs/.jobs/<job_id>/job.json`
 （pid + 进程启动时间）为准，API 重启后可恢复取消；job.json 不存凭据。
 “一键复现”读取 envelope 的 `launch_params`（仅实验类 run 由 harness 写入，
@@ -255,10 +257,9 @@ conda run -n lightrag-memory-eval python -m memory_eval_tests.experiments.superv
 `memory_eval_tests` / `memory_data_service` 包，包缺失时返回 503。
 
 并发与队列：作业按 FIFO 排队，`MEMORY_EVAL_MAX_ACTIVE_JOBS`（默认 1）控制
-同时运行数，`MEMORY_EVAL_WAIT_FOR_RUN` 可让队列等待指定 run 完成后自动启动。
-前端“作业”子视图展示全部 job（排队位/状态/日志 tail/取消），有活跃 job 时
-每 5s 轮询；运行详情可删除运行（含取消确认），向导提供简易评测与
-`/eval/models` 模型下拉。
+同时运行数。前端“作业”子视图展示全部 job（排队位/状态/日志 tail/取消），有
+活跃 job 时每 5s 轮询；运行详情可删除运行（含取消确认），向导通过
+`/eval/models` 显示实际可运行的模型。
 
 ### 数据集根目录
 

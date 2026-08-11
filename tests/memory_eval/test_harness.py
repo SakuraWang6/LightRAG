@@ -19,6 +19,17 @@ from memory_eval_tests.experiments.common import (
 pytestmark = pytest.mark.offline
 
 
+def test_completed_case_count_uses_answer_rows_for_end_to_end_runs() -> None:
+    from memory_eval_tests.experiments.run import _completed_case_count
+
+    assert _completed_case_count(
+        [
+            {"method": "retrieval", "results": [{"question_id": "Q-1"}]},
+            {"method": "answer", "results": [{"question_id": "Q-1"}]},
+        ]
+    ) == 1
+
+
 def test_metric_alias_normalization() -> None:
     summary = normalize_summary(
         {

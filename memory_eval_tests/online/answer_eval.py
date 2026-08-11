@@ -4,7 +4,7 @@ import argparse
 import json
 import re
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from memory_eval_tests.common.dataset_client import DatasetClient
 from memory_eval_tests.common.http import post_json as _http_post_json
@@ -40,14 +40,17 @@ def evaluate_answers(
     api_key: str | None = None,
     access_token: str | None = None,
     evaluation_trace: bool = False,
+    enable_rerank: bool = False,
     semantic_scorer: SemanticAnswerScorer | None = None,
     question_variant: str = "canonical",
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     oracle = DatasetClient(dataset_source).oracle()
     facts_by_id = {fact["fact_id"]: fact for fact in oracle.get("facts", [])}
     results = []
     questions = sample_evenly(oracle.get("questions", []), max_cases)
-    for question in questions:
+    total_questions = len(questions)
+    for position, question in enumerate(questions, start=1):
         question_text = _question_variant(question, question_variant)
         payload = {
             "query": question_text,
@@ -56,6 +59,7 @@ def evaluate_answers(
             "include_chunk_content": True,
             "response_type": "Multiple Paragraphs",
             "evaluation_trace": evaluation_trace,
+            "enable_rerank": enable_rerank,
         }
         if top_k is not None:
             payload["top_k"] = top_k
@@ -105,13 +109,17 @@ def evaluate_answers(
                 "expected_behavior": question.get("expected_behavior", "answer"),
                 "question_variant": question_variant,
                 "scenario_labels": question.get("scenario_labels", []),
-                # References are kept as a response-side observation only. They
-                # are not used as proof of the final prompt context (I2).
-                "response_references": response.get("references", []),
+                # Raw candidate references are used only by the deterministic
+                # scorer above.  They are intentionally not persisted: they
+                # can be megabytes of repeated chunk text and are not proof of
+                # model-visible final context.
+                "response_reference_count": len(response.get("references", []) or []),
                 "final_context_trace": final_context_trace,
                 "final_context_evidence": final_context_evidence,
             }
         )
+        if progress_callback:
+            progress_callback(position, total_questions)
     total = len(results)
     decisive = [row for row in results if row.get("answer_verdict") != "uncertain"]
     return {

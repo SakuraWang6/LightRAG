@@ -35,14 +35,12 @@ interface SimpleEvalWizardProps {
   onStarted: () => void
 }
 
-function positiveInteger(value: string, fallback: number): number {
-  const parsed = Math.floor(Number(value))
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function nonNegativeInteger(value: string): number {
-  const parsed = Math.floor(Number(value))
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+function integerParam(value: string, label: string, minimum: number): number {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < minimum) {
+    throw new Error(`${label}必须是${minimum}以上的整数`)
+  }
+  return parsed
 }
 
 function stringParam(params: SimpleEvalParams | undefined, key: string, fallback: string): string {
@@ -93,7 +91,9 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
         setEngineOptions(engines)
         setModel((current) => (models.includes(current) ? current : defaultModel ?? ''))
         setEngine((current) => (engines.includes(current) ? current : defaultEngine ?? ''))
-        if (!Array.isArray(data.parser_engines)) {
+        if (data.configuration_error) {
+          setOptionsError(data.configuration_error)
+        } else if (!Array.isArray(data.parser_engines)) {
           setOptionsError('当前 LightRAG API 尚未更新，请重启 LightRAG API 后重试。')
         } else if (models.length === 0 || engines.length === 0) {
           setOptionsError('服务器没有可用于测评的模型或解析引擎，请先完成服务配置。')
@@ -118,6 +118,27 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
       toast.error(optionsError ?? '正在加载服务器运行选项，请稍后重试。')
       return
     }
+    let numericParams: {
+      top_k: number
+      chunk_top_k: number
+      max_cases: number
+      num_ctx: number
+      max_total_tokens: number
+      num_predict: number
+    }
+    try {
+      numericParams = {
+        top_k: integerParam(topK, '检索条数', 1),
+        chunk_top_k: integerParam(chunkTopK, 'Chunk Top-K', 1),
+        max_cases: integerParam(maxCases, '最多运行题数', 0),
+        num_ctx: integerParam(numCtx, '上下文窗口', 1),
+        max_total_tokens: integerParam(maxTotalTokens, '最大上下文 Token', 1),
+        num_predict: integerParam(numPredict, '回答最大输出 Token', 1)
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+      return
+    }
     const parsedTemperature = Number(temperature)
     if (!Number.isFinite(parsedTemperature) || parsedTemperature < 0 || parsedTemperature > 2) {
       toast.error('温度需介于 0 和 2 之间')
@@ -137,12 +158,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
         params: {
           model: model.trim() || undefined,
           mode: effectiveMode,
-          top_k: positiveInteger(topK, 5),
-          chunk_top_k: positiveInteger(chunkTopK, 5),
-          max_cases: nonNegativeInteger(maxCases),
-          num_ctx: positiveInteger(numCtx, 16384),
-          max_total_tokens: positiveInteger(maxTotalTokens, 8192),
-          num_predict: positiveInteger(numPredict, 128),
+          ...numericParams,
           temperature: parsedTemperature,
           engine: engine.trim() || 'native',
           kg
@@ -197,7 +213,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-sm">检索与评分范围</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-1.5"><span className="text-sm font-medium">模型</span><Select value={model} onValueChange={setModel} disabled={optionsLoading || modelOptions.length === 0}><SelectTrigger><SelectValue placeholder="选择服务器已配置的模型" /></SelectTrigger><SelectContent>{modelOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">仅显示当前服务器可用的回答模型。</span></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">模型</span><Select value={model} onValueChange={setModel} disabled={optionsLoading || modelOptions.length === 0 || optionsError !== null}><SelectTrigger><SelectValue placeholder="选择服务器已配置的模型" /></SelectTrigger><SelectContent>{modelOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">仅显示当前服务器实际可运行的回答模型。</span></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">检索模式</span><Select value={effectiveMode} onValueChange={setMode} disabled={!kg}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="naive">Naive</SelectItem><SelectItem value="mix">Mix</SelectItem><SelectItem value="local">Local</SelectItem><SelectItem value="global">Global</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select>{!kg ? <span className="text-muted-foreground block text-xs">关闭 KG 时自动使用 Naive，确保只评测向量检索。</span> : null}</label>
               <label className="space-y-1.5"><span className="text-sm font-medium">检索条数（Top-K）</span><Input type="number" min="1" value={topK} onChange={(event) => setTopK(event.target.value)} /></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">Chunk Top-K</span><Input type="number" min="1" value={chunkTopK} onChange={(event) => setChunkTopK(event.target.value)} /></label>

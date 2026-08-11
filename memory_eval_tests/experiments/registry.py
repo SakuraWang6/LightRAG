@@ -2,76 +2,50 @@
 
 from __future__ import annotations
 
+from importlib import import_module
+
 from memory_eval_tests.experiments.common import ExperimentSpec
 
 
-def _specs() -> list[ExperimentSpec]:
-    # Lazy imports so a single broken experiment never blocks the registry.
-    from memory_eval_tests.experiments.combined_pipeline_experiment import (
-        spec as combined_pipeline,
-    )
-    from memory_eval_tests.experiments.context_selection import (
-        spec as context_selection,
-    )
-    from memory_eval_tests.experiments.context_size import spec as context_size
-    from memory_eval_tests.experiments.custom_arms import spec as custom_arms
-    from memory_eval_tests.experiments.evaluator_recheck import (
-        spec as evaluator_recheck,
-    )
-    from memory_eval_tests.experiments.end_to_end_baseline import (
-        spec as end_to_end_baseline,
-    )
-    from memory_eval_tests.experiments.evidence_selector_experiment import (
-        spec as evidence_selector,
-    )
-    from memory_eval_tests.experiments.evidence_selector_failure_analysis import (
-        spec as evidence_selector_failure_analysis,
-    )
-    from memory_eval_tests.experiments.frozen_prompt_llm_eval import (
-        spec as frozen_prompt_llm_eval,
-    )
-    from memory_eval_tests.experiments.kg_ablation import spec as kg_ablation
-    from memory_eval_tests.experiments.online_baseline import spec as online_baseline
-    from memory_eval_tests.experiments.oracle_upper_bound import (
-        spec as oracle_upper_bound,
-    )
-    from memory_eval_tests.experiments.relation_selector_experiment import (
-        spec as relation_selector,
-    )
-    from memory_eval_tests.experiments.scale import spec as scale
-    from memory_eval_tests.experiments.structure_ablation import (
-        spec as structure_ablation,
-    )
-    from memory_eval_tests.experiments.table_packing_experiment import (
-        spec as table_packing,
-    )
+_SPEC_MODULES = {
+    "context_selection": "context_selection",
+    "context_size": "context_size",
+    "custom_arms": "custom_arms",
+    "structure_ablation": "structure_ablation",
+    "scale": "scale",
+    "end_to_end_baseline": "end_to_end_baseline",
+    "online_baseline": "online_baseline",
+    "kg_ablation": "kg_ablation",
+    "evidence_selector": "evidence_selector_experiment",
+    "relation_selector": "relation_selector_experiment",
+    "table_packing": "table_packing_experiment",
+    "combined_pipeline": "combined_pipeline_experiment",
+    "oracle_upper_bound": "oracle_upper_bound",
+    "frozen_prompt_llm_eval": "frozen_prompt_llm_eval",
+    "evaluator_recheck": "evaluator_recheck",
+    "evidence_selector_failure_analysis": "evidence_selector_failure_analysis",
+}
 
-    return [
-        context_selection,
-        context_size,
-        custom_arms,
-        structure_ablation,
-        scale,
-        end_to_end_baseline,
-        online_baseline,
-        kg_ablation,
-        evidence_selector,
-        relation_selector,
-        table_packing,
-        combined_pipeline,
-        oracle_upper_bound,
-        frozen_prompt_llm_eval,
-        evaluator_recheck,
-        evidence_selector_failure_analysis,
-    ]
+
+def _load_spec(experiment_id: str) -> ExperimentSpec:
+    module_name = _SPEC_MODULES.get(experiment_id)
+    if module_name is None:
+        known = ", ".join(sorted(_SPEC_MODULES))
+        raise ValueError(f"Unknown experiment '{experiment_id}'. Known: {known}")
+    module = import_module(f"memory_eval_tests.experiments.{module_name}")
+    spec = getattr(module, "spec", None)
+    if not isinstance(spec, ExperimentSpec):
+        raise TypeError(f"experiment module {module_name!r} does not export an ExperimentSpec")
+    return spec
+
+
+def _specs() -> list[ExperimentSpec]:
+    """Load research specs only for callers that explicitly list them."""
+    return [_load_spec(experiment_id) for experiment_id in _SPEC_MODULES]
 
 
 def get_spec(experiment_id: str) -> ExperimentSpec:
-    for spec in _specs():
-        if spec.id == experiment_id:
-            return spec
-    known = ", ".join(spec.id for spec in _specs())
-    raise ValueError(f"Unknown experiment '{experiment_id}'. Known: {known}")
+    return _load_spec(experiment_id)
 
 
 def list_specs() -> list[ExperimentSpec]:

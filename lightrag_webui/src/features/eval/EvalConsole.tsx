@@ -146,6 +146,10 @@ export default function EvalConsole() {
     if (!runs) return []
     const needle = search.trim().toLowerCase()
     return runs.filter((run) => {
+      // The console is the product view for complete single evaluations.
+      // Historical research experiments remain readable on disk for audit,
+      // but must not reintroduce an "experiment" category into this UI.
+      if (run.experiment !== 'end_to_end_baseline') return false
       if (datasetFilter !== 'all' && run.dataset !== datasetFilter) return false
       if (needle) {
         const haystack = `${run.label} ${run.dataset ?? ''} ${run.artifact_titles.join(' ')}`.toLowerCase()
@@ -158,7 +162,7 @@ export default function EvalConsole() {
   const datasetOptions = useMemo(() => {
     const values = new Set<string>()
     for (const run of runs ?? []) {
-      if (run.dataset) values.add(run.dataset)
+      if (run.experiment === 'end_to_end_baseline' && run.dataset) values.add(run.dataset)
     }
     return Array.from(values).sort()
   }, [runs])
@@ -166,6 +170,7 @@ export default function EvalConsole() {
   const hasActiveRuns = useMemo(
     () =>
       (runs ?? []).some((run) =>
+        run.experiment === 'end_to_end_baseline' &&
         ['running', 'queued'].includes(run.progress?.status ?? '')
       ),
     [runs]

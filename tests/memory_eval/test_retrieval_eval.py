@@ -83,6 +83,7 @@ def test_api_recall_and_mrr_use_reference_rank(monkeypatch, tmp_path) -> None:
     )
     assert captured_payloads[0]["mode"] == "mix"
     assert captured_payloads[0]["chunk_top_k"] == 10
+    assert captured_payloads[0]["enable_rerank"] is False
     assert report["backend"] == "api"
     assert report["cases"] == 1
     assert report["average_recall"] == pytest.approx(1.0)
@@ -93,6 +94,7 @@ def test_api_recall_and_mrr_use_reference_rank(monkeypatch, tmp_path) -> None:
     assert report["object_hit_rate"] is None
     case = report["results"][0]
     assert case["hit_fact_ids"] == ["FACT-1", "FACT-2"]
+    assert case["first_evidence_rank"] == 2
     assert case["object_hit_rate"] is None
     evidence = case["hit_evidence"]
     assert [item["fact_id"] for item in evidence] == ["FACT-1", "FACT-2"]

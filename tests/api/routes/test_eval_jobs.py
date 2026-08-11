@@ -1,4 +1,4 @@
-"""Route-level tests for the eval workbench (jobs, datasets, templates)."""
+"""Route-level tests for the product evaluation workbench."""
 
 from __future__ import annotations
 
@@ -80,17 +80,12 @@ def _live_job(
     eval_jobs._write_job(root, job)
 
 
-def test_experiments_include_env_ready(
+def test_product_router_does_not_expose_research_experiment_catalog(
     runs_root: Path, tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(_utils_api, "auth_configured", False)
-    monkeypatch.delenv("LIGHTRAG_PROJECT_OPENAI_API_KEY", raising=False)
     client = _client(runs_root, tmp_path)
-    payload = client.get("/eval/experiments").json()["experiments"]
-    by_id = {item["id"]: item for item in payload}
-    assert by_id["frozen_prompt_llm_eval"]["env_ready"] is False
-    assert by_id["context_size"]["env_ready"] is True
-    assert by_id["scale"]["extra_schema"] == {"stage": "str"}
+    assert client.get("/eval/experiments").status_code == 404
 
 
 def test_run_job_rejects_infra_and_unknown_params(
@@ -145,6 +140,15 @@ def test_run_job_starts_and_dataset_delete_is_guarded(
     runs_root: Path, tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(_utils_api, "auth_configured", False)
+    monkeypatch.setattr(
+        _eval_routes,
+        "_evaluation_model_capability",
+        lambda: {
+            "default_model": "qwen3:8b",
+            "selectable_models": ["qwen3:8b"],
+            "configuration_error": None,
+        },
+    )
     _write_dataset(tmp_path, "rich-smoke-v1")
     client = _client(runs_root, tmp_path)
     started = eval_jobs._probe_process_start(os.getpid())
@@ -180,39 +184,6 @@ def test_run_job_starts_and_dataset_delete_is_guarded(
     assert deleted.status_code == 409
     assert "dataset-abc" in deleted.json()["detail"]
 
-
-def test_templates_sanitize_and_crud(
-    runs_root: Path, tmp_path: Path, monkeypatch
-) -> None:
-    monkeypatch.setattr(_utils_api, "auth_configured", False)
-    client = _client(runs_root, tmp_path)
-    bad = client.post(
-        "/eval/templates",
-        json={
-            "name": "../evil",
-            "experiment": "context_size",
-            "dataset": "rich-smoke-v1",
-            "params": {},
-        },
-    )
-    assert bad.status_code == 400
-    saved = client.post(
-        "/eval/templates",
-        json={
-            "name": "smoke-1",
-            "experiment": "context_size",
-            "dataset": "rich-smoke-v1",
-            "params": {"top_k": 5},
-            "supervise": True,
-        },
-    )
-    assert saved.status_code == 200
-    items = client.get("/eval/templates").json()["templates"]
-    assert items[0]["name"] == "smoke-1"
-    assert (runs_root / "templates.json").exists()
-    deleted = client.delete("/eval/templates?name=smoke-1")
-    assert deleted.status_code == 200
-    assert client.get("/eval/templates").json()["templates"] == []
 
 
 def test_delete_rejects_encoded_path_traversal(
@@ -410,31 +381,20 @@ def test_models_endpoint_filters_embeddings(
     assert client.get("/eval/models").json()["models"] == []
 
 
-def test_template_extra_text_roundtrip(
-    runs_root: Path, tmp_path: Path, monkeypatch
-) -> None:
-    monkeypatch.setattr(_utils_api, "auth_configured", False)
-    client = _client(runs_root, tmp_path)
-    response = client.post(
-        "/eval/templates",
-        json={
-            "name": "t1",
-            "experiment": "context_size",
-            "dataset": "rich-smoke-v1",
-            "params": {},
-            "extraText": "stage=eval",
-            "supervise": False,
-        },
-    )
-    assert response.status_code == 200
-    items = client.get("/eval/templates").json()["templates"]
-    assert items[0]["extraText"] == "stage=eval"
-
 
 def test_jobs_queue_when_max_active_reached(
     runs_root: Path, tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(_utils_api, "auth_configured", False)
+    monkeypatch.setattr(
+        _eval_routes,
+        "_evaluation_model_capability",
+        lambda: {
+            "default_model": "qwen3:8b",
+            "selectable_models": ["qwen3:8b"],
+            "configuration_error": None,
+        },
+    )
     _write_dataset(tmp_path, "rich-smoke-v1")
     client = _client(runs_root, tmp_path)
     spawned: dict = {}

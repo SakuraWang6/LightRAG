@@ -488,34 +488,15 @@ def _end_to_end_report_content(run_dir: Path, envelope: dict[str, Any]) -> str:
         lines.append("本次没有需要归因的失败题。")
     else:
         labels = {
-            "retrieval_failure": "检索未命中",
-            "selection_failure": "上下文选择不足",
-            "answer_failure": "回答与标准答案不符",
-            "grounding_failure": "回答缺少证据支撑",
+            "abstention_failure": "拒答结果不正确",
+            "retrieval_miss": "检索未命中",
+            "selection_or_truncation_miss": "上下文选择或截断不足",
+            "generation_or_prompt_failure": "回答与标准答案不符",
         }
         lines.append(f"- 可归因覆盖率：{rate(diagnosis.get('diagnosis_coverage'))}")
         for cause, count in actionable.items():
             lines.append(f"- {labels.get(cause, cause)}：{count} 题")
     return "\n".join(lines) + "\n"
-
-
-def _diagnosis_artifact(run_dir: Path, envelope: dict[str, Any]) -> dict[str, Any] | None:
-    """Expose saved case traces as a first-class detail artifact."""
-    try:
-        payload = json.loads((run_dir / "case_trace.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    rows = payload.get("cases") if isinstance(payload, dict) else None
-    if not isinstance(rows, list):
-        return None
-    columns = [{"key": key, "label": key} for key in ("question_id", "primary_cause", "question_type")]
-    return {
-        "rel_path": "case_trace.json", "kind": "diagnosis", "title": "失败诊断",
-        "updated_at": envelope.get("created_at"), "metrics": [],
-        "table": {"columns": columns, "rows": [row for row in rows if isinstance(row, dict)]},
-        "meta": {"coverage": envelope.get("diagnosis_coverage"), "cause_distribution": envelope.get("cause_distribution") or {}},
-        "report_md": None, "toc": [], "error": None,
-    }
 
 
 def _run_record(
@@ -537,7 +518,12 @@ def _run_record(
         else persisted_kind
     )
     baseline = envelope.get("baseline") or {}
-    dataset = baseline.get("dataset") or envelope.get("dataset")
+    execution_dataset = ((envelope.get("execution_manifest") or {}).get("dataset") or {}).get(
+        "dataset_id"
+    )
+    dataset = baseline.get("dataset") or envelope.get("dataset") or (
+        execution_dataset if isinstance(execution_dataset, str) else None
+    )
     methods = envelope.get("methods") or []
     dataset_meta = _dataset_meta(runs_root, dataset)
     conditions = build_conditions(
@@ -580,7 +566,7 @@ def _run_record(
         "restarts": int(envelope.get("restarts") or 0),
         "last_restart_resume": envelope.get("last_restart_resume"),
         "launch_params": envelope.get("launch_params"),
-        "label": experiment.get("label") or run_dir.name,
+        "label": envelope.get("label") or experiment.get("label") or run_dir.name,
         "experiment": experiment.get("id"),
         "description": experiment.get("description") or "",
         "dataset": dataset or dataset_meta.get("dataset"),
@@ -602,8 +588,6 @@ def _run_record(
         "diagnosis_coverage": envelope.get("diagnosis_coverage"),
         "cause_distribution": envelope.get("cause_distribution"),
         "trace_availability": envelope.get("trace_availability"),
-        "diagnoses_run_id": envelope.get("diagnoses_run_id"),
-        "oracle_upper_bound_contract": envelope.get("oracle_upper_bound_contract"),
         "declared_model": envelope.get("declared_model"),
         "effective_model": envelope.get("effective_model"),
         "configuration_mismatch": envelope.get("configuration_mismatch"),
@@ -661,7 +645,7 @@ def _run_record(
                 {
                     "rel_path": "cases",
                     "kind": "cases",
-                    "title": "逐题明细",
+                    "title": "逐题详情",
                     "updated_at": envelope.get("created_at"),
                     "metrics": [],
                     "table": cases,
@@ -674,9 +658,6 @@ def _run_record(
     report = _report_artifact(run_dir, envelope)
     if report:
         artifacts.append(report)
-    diagnosis = _diagnosis_artifact(run_dir, envelope)
-    if diagnosis:
-        artifacts.append(diagnosis)
     record["artifacts"] = artifacts
     record["events"] = _read_events(run_dir)
     record["artifact_titles"] = [artifact["title"] for artifact in artifacts]

@@ -1440,11 +1440,13 @@ def generate_rich_dataset(
         )
         write_json(dataset_path / "oracle.json", oracle)
     files: list[GeneratedFile] = [
-        _file_record(docx_path, "docx") if "docx" in request.formats else _skipped("docx")
+        _file_record(docx_path, "docx", role="source_document")
+        if "docx" in request.formats
+        else _skipped("docx")
     ]
     files.append(pdf_record)
     if companion_docx is not None:
-        files.append(_file_record(companion_docx, "docx"))
+        files.append(_file_record(companion_docx, "docx", role="source_document"))
     for name in ("facts.json", "questions.json", "objects.json", "relations.json", "oracle.json"):
         files.append(_file_record(dataset_path / name, "json"))
     for asset_path in sorted(dataset_path.glob("*.png")):

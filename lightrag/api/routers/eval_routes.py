@@ -39,13 +39,10 @@ try:
         load_oracle,
     )
     from memory_eval_tests import __version__ as _eval_framework_version
-    from memory_eval_tests.experiments.common.chat import chat_ollama
-    from memory_eval_tests.experiments.registry import get_spec, list_specs
+    from memory_eval_tests.experiments.registry import get_spec
     from memory_eval_tests.experiments.supervise import RunParams
-    from memory_eval_tests.experiments.frozen_context import freeze_final_contexts
 
     from .. import eval_jobs
-    from .. import eval_profiles
     from .. import eval_comparison
     from ..eval_index import clear_scan_cache, default_runs_root, load_run, scan_runs
 
@@ -74,72 +71,7 @@ class CreateJobRequest(BaseModel):
     dataset: str | None = None
     name: str | None = Field(default=None, max_length=128)
     params: dict[str, Any] = Field(default_factory=dict)
-    supervise: bool = False
-    supervision: Literal["auto", "none", "heartbeat"] = "auto"
-    stale_minutes: int = Field(default=60, ge=1)
-    max_restarts: int = 3
-    poll_seconds: int = 30
     dataset_create: DatasetCreateJobRequest | None = None
-
-    model_config = {"extra": "forbid"}
-
-
-class TemplateRequest(BaseModel):
-    name: str
-    experiment: str
-    dataset: str
-    params: dict[str, Any] = Field(default_factory=dict)
-    extraText: str = ""
-    supervise: bool = False
-
-
-class ModelRoleReference(BaseModel):
-    provider: str = Field(min_length=1, max_length=128)
-    model: str = Field(min_length=1, max_length=256)
-    endpoint: str | None = Field(default=None, max_length=1024)
-    secret_ref: str | None = Field(default=None, max_length=256)
-
-    model_config = {"extra": "forbid"}
-
-
-class EnvironmentProfileConfiguration(BaseModel):
-    lightrag_version: str | None = Field(default=None, max_length=256)
-    startup_template: str | None = Field(default=None, max_length=256)
-    execution_mode: Literal["managed_local", "assigned"] = "managed_local"
-    runtime_endpoint: str | None = Field(default=None, max_length=1024)
-    retention_policy: Literal["retain", "archive", "cleanup"] = "retain"
-    extraction: ModelRoleReference | None = None
-    query: ModelRoleReference | None = None
-    answer: ModelRoleReference | None = None
-    embedding: ModelRoleReference
-    vlm: ModelRoleReference | None = None
-    reranker: ModelRoleReference | None = None
-    parser_engine: str = Field(min_length=1, max_length=128)
-    storage_backends: dict[str, str] = Field(default_factory=dict)
-    retrieval_defaults: dict[str, int | float | bool | str] = Field(default_factory=dict)
-    concurrency: dict[str, int] = Field(default_factory=dict)
-
-    model_config = {"extra": "forbid"}
-
-
-class EnvironmentProfileDraftRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=128)
-    profile_id: str | None = Field(default=None, max_length=64)
-    configuration: EnvironmentProfileConfiguration
-
-    model_config = {"extra": "forbid"}
-
-
-class ComparisonPlanValidationRequest(BaseModel):
-    comparison_type: Literal["answer_model", "retrieval_configuration", "embedding", "full_pipeline"]
-    variables: dict[str, list[Any]]
-    inputs: dict[str, Any] = Field(default_factory=dict)
-
-    model_config = {"extra": "forbid"}
-
-
-class FreezeContextRequest(BaseModel):
-    parent_run_id: str = Field(min_length=1, max_length=256)
 
     model_config = {"extra": "forbid"}
 
@@ -171,7 +103,6 @@ _INFRA_PARAMS = {
     "access_token",
     "runs_root",
 }
-_TEMPLATE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _DATASET_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _MAX_DATASET_ARCHIVE_BYTES = 512 * 1024 * 1024
@@ -382,6 +313,104 @@ def _configured_query_model() -> str:
     )
 
 
+def _configured_query_provider() -> str:
+    return (
+        os.getenv("QUERY_LLM_BINDING")
+        or os.getenv("LLM_BINDING")
+        or "ollama"
+    ).strip().lower()
+
+
+def _configured_ollama_url() -> str:
+    return (
+        os.getenv("QUERY_LLM_BINDING_HOST")
+        or os.getenv("LLM_BINDING_HOST")
+        or os.getenv("OLLAMA_URL")
+        or "http://127.0.0.1:11434"
+    )
+
+
+def _is_embedding_model(name: str) -> bool:
+    lowered = name.split(":")[0].lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "embed",
+            "bge",
+            "mxbai",
+            "nomic",
+            "e5-",
+            "gte",
+            "text-embedding",
+            "jina-embeddings",
+        )
+    )
+
+
+def _evaluation_model_capability() -> dict[str, Any]:
+    """Describe only models this deployment can actually run for evaluation."""
+    provider = _configured_query_provider()
+    default_model = _configured_query_model()
+    parser_engines = _available_parser_engines()
+    result: dict[str, Any] = {
+        "provider": provider,
+        "default_model": default_model,
+        "parser_engines": parser_engines,
+        "default_parser_engine": "native"
+        if "native" in parser_engines
+        else (parser_engines[0] if parser_engines else None),
+        "models": [],
+        "embedding_filtered": [],
+        "selectable_models": [],
+        "model_selection": "fixed",
+        "configuration_error": None,
+    }
+    if provider != "ollama":
+        # Remote providers do not offer a safe generic model-discovery API.
+        # The configured model is still selectable in the form, but cannot be
+        # silently replaced with an arbitrary client-supplied identifier.
+        result.update(
+            {
+                "models": [default_model],
+                "selectable_models": [default_model],
+                "model_selection": "fixed",
+            }
+        )
+        return result
+
+    try:
+        request = urllib.request.Request(
+            f"{_configured_ollama_url().rstrip('/')}/api/tags",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, TimeoutError, ValueError):
+        payload = {}
+    installed = sorted(
+        {
+            str(item.get("name") or "")
+            for item in payload.get("models") or []
+            if isinstance(item, dict) and str(item.get("name") or "")
+        }
+    )
+    models = [name for name in installed if not _is_embedding_model(name)]
+    embedding_filtered = [name for name in installed if _is_embedding_model(name)]
+    result.update(
+        {
+            "models": models,
+            "embedding_filtered": embedding_filtered,
+            "selectable_models": models,
+            "model_selection": "selectable",
+        }
+    )
+    if default_model not in models:
+        result["configuration_error"] = (
+            f"服务器配置的回答模型 {default_model!r} 未安装或不可用"
+        )
+    return result
+
+
 def _build_run_params(
     *,
     experiment: str,
@@ -413,62 +442,6 @@ def _build_run_params(
     for key in spec.extra_schema:
         if key in params:
             extra.append(f"{key}={_coerce(params[key], spec.extra_schema[key])}")
-    if (
-        spec.id == "custom_arms"
-        and params.get("comparison_type") == "answer_model"
-    ):
-        frozen_run_id = str(params.get("frozen_context_run_id") or "")
-        source = load_run(runs_root, frozen_run_id)
-        if source is None:
-            raise ValueError("frozen_context_run_id was not found")
-        if source.get("dataset") != dataset:
-            raise ValueError("answer-model comparison dataset must match frozen_context_run_id")
-        frozen_path = Path(source["run_dir"]) / "frozen_context.json"
-        if not frozen_path.is_file():
-            raise ValueError("frozen_context_run_id has no frozen_context.json artifact")
-        extra.append(f"prompts={frozen_path}")
-    if spec.id == "custom_arms" and params.get("comparison_type"):
-        try:
-            axes = json.loads(str(params.get("axes") or "{}"))
-        except ValueError as exc:
-            raise ValueError("axes must be a JSON object") from exc
-        if not isinstance(axes, dict):
-            raise ValueError("axes must be a JSON object")
-        eval_comparison.validate_plan(
-            comparison_type=str(params["comparison_type"]),
-            variables=axes,
-            inputs=params,
-        )
-        base_id = str(params.get("base_experiment") or "")
-        allowed_bases = {
-            "answer_model": {"frozen_prompt_llm_eval"},
-            "retrieval_configuration": {"end_to_end_baseline"},
-            "embedding": {"end_to_end_baseline"},
-            "full_pipeline": {"end_to_end_baseline"},
-        }
-        if base_id not in allowed_bases[str(params["comparison_type"])]:
-            raise ValueError(
-                f"{params['comparison_type']} comparison requires base_experiment "
-                f"in {sorted(allowed_bases[str(params['comparison_type'])])}"
-            )
-    if spec.id == "end_to_end_baseline" and (
-        params.get("environment_profile_id") is not None
-        or params.get("environment_profile_version") is not None
-    ):
-        profile_id = params.get("environment_profile_id")
-        raw_version = params.get("environment_profile_version")
-        if not profile_id or raw_version is None:
-            raise ValueError("environment_profile_id and environment_profile_version must be supplied together")
-        try:
-            profile_version = int(raw_version)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("environment_profile_version must be an integer") from exc
-        profile = eval_profiles.get_profile_version(runs_root, str(profile_id), profile_version)
-        if profile is None:
-            raise ValueError("environment profile version was not found")
-        if profile.get("status") != "published":
-            raise ValueError("end-to-end runs may only use a published environment profile")
-        eval_profiles.validate_profile_configuration(profile.get("configuration") or {})
     dataset_dir = datasets_root / dataset
     if not (dataset_dir / "manifest.json").exists():
         raise ValueError(f"dataset not found under generated root: {dataset}")
@@ -498,19 +471,35 @@ def _build_run_params(
         raise ValueError("max_cases must be an integer") from exc
     if max_cases < 0:
         raise ValueError("max_cases must be 0 or greater")
+    top_k = _positive_int_param(params, "top_k")
+    chunk_top_k = _positive_int_param(params, "chunk_top_k")
+    num_ctx = _positive_int_param(params, "num_ctx")
+    num_predict = _positive_int_param(params, "num_predict")
+    max_total_tokens = _positive_int_param(params, "max_total_tokens")
+    temperature = _temperature_param(params)
+    model_capability = _evaluation_model_capability()
+    capability_error = model_capability.get("configuration_error")
+    if capability_error:
+        raise ValueError(str(capability_error))
+    model = params.get("model") or model_capability.get("default_model")
+    selectable_models = model_capability.get("selectable_models") or []
+    if not isinstance(model, str) or model not in selectable_models:
+        raise ValueError(
+            f"model must be one of the server-available models: {selectable_models}"
+        )
     return RunParams(
         experiment=experiment,
         dataset=dataset_dir,
         output_dir=Path("."),
         label=_run_label(name),
-        model=params.get("model"),
+        model=model,
         mode=mode,
-        top_k=_positive_int_param(params, "top_k"),
-        chunk_top_k=_positive_int_param(params, "chunk_top_k"),
-        num_ctx=_positive_int_param(params, "num_ctx"),
-        num_predict=_positive_int_param(params, "num_predict"),
-        max_total_tokens=_positive_int_param(params, "max_total_tokens"),
-        temperature=_temperature_param(params),
+        top_k=top_k,
+        chunk_top_k=chunk_top_k,
+        num_ctx=num_ctx,
+        num_predict=num_predict,
+        max_total_tokens=max_total_tokens,
+        temperature=temperature,
         ollama_url=env.get("OLLAMA_URL", "http://127.0.0.1:11434"),
         rag_api_url=env.get("RAG_API_URL", "http://127.0.0.1:9621"),
         api_key=env.get("LIGHTRAG_API_KEY"),
@@ -521,29 +510,6 @@ def _build_run_params(
         skip_kg=not kg_enabled,
         extra=extra,
     )
-
-
-def _templates_path(runs_root: Path) -> Path:
-    return runs_root / "templates.json"
-
-
-def _read_templates(runs_root: Path) -> list[dict[str, Any]]:
-    try:
-        payload = json.loads(_templates_path(runs_root).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    return payload if isinstance(payload, list) else []
-
-
-def _write_templates(runs_root: Path, items: list[dict[str, Any]]) -> None:
-    path = _templates_path(runs_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(
-        json.dumps(items, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    tmp.replace(path)
 
 
 def create_eval_routes(
@@ -738,26 +704,6 @@ def create_eval_routes(
             logger.error(f"Error loading eval run diagnosis '{run_id}': {exc}")
             raise internal_server_error(exc)
 
-    @router.get("/runs/{run_id:path}/oracle-upper-bounds", dependencies=[Depends(combined_auth)])
-    async def list_oracle_upper_bounds(run_id: str) -> dict[str, Any]:
-        """List diagnostic upper-bound runs explicitly linked to this run."""
-        try:
-            require_eval()
-            if load_run(root, run_id) is None:
-                raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-            linked = [
-                item
-                for item in scan_runs(root)
-                if item.get("experiment") == "oracle_upper_bound"
-                and item.get("diagnoses_run_id") == run_id
-            ]
-            return {"run_id": run_id, "oracle_upper_bounds": linked}
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(f"Error loading oracle upper bounds for '{run_id}': {exc}")
-            raise internal_server_error(exc)
-
     @router.get("/runs/{run_id:path}/diagnosis.csv", dependencies=[Depends(combined_auth)])
     async def export_run_diagnosis(run_id: str) -> Response:
         try:
@@ -835,97 +781,6 @@ def create_eval_routes(
             logger.error(traceback.format_exc())
             raise internal_server_error(exc)
 
-    @router.get("/experiments", dependencies=[Depends(combined_auth)])
-    async def list_experiments() -> dict[str, Any]:
-        try:
-            require_eval()
-            items = []
-            for spec in list_specs():
-                items.append(
-                    {
-                        "id": spec.id,
-                        "label": spec.label,
-                        "description": spec.description,
-                        "supervision": spec.supervision,
-                        "supports_resume": spec.supports_resume,
-                        "default_baseline": spec.default_baseline,
-                        "variables": spec.variables,
-                        "extra_schema": spec.extra_schema,
-                        "env_required": spec.env_required,
-                        "env_ready": all(os.getenv(key) for key in spec.env_required),
-                        "webui_launchable": spec.webui_launchable,
-                        "webui_block_reason": spec.webui_block_reason,
-                    }
-                )
-            return {"experiments": items}
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(f"Error listing experiments: {exc}")
-            raise internal_server_error(exc)
-
-    @router.get("/environment-profiles", dependencies=[Depends(combined_auth)])
-    async def list_environment_profiles() -> dict[str, Any]:
-        try:
-            require_eval()
-            return {"profiles": eval_profiles.list_profiles(root)}
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(f"Error listing environment profiles: {exc}")
-            raise internal_server_error(exc)
-
-    @router.get("/comparison-templates", dependencies=[Depends(combined_auth)])
-    async def list_comparison_templates() -> dict[str, Any]:
-        try:
-            require_eval()
-            return {"templates": eval_comparison.list_templates()}
-        except Exception as exc:
-            logger.error(f"Error listing comparison templates: {exc}")
-            raise internal_server_error(exc)
-
-    @router.post("/comparison-plans/validate", dependencies=[Depends(combined_auth)])
-    async def validate_comparison_plan(request: ComparisonPlanValidationRequest) -> dict[str, Any]:
-        try:
-            require_eval()
-            try:
-                return eval_comparison.validate_plan(
-                    comparison_type=request.comparison_type,
-                    variables=request.variables,
-                    inputs=request.inputs,
-                )
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(f"Error validating comparison plan: {exc}")
-            raise internal_server_error(exc)
-
-    @router.post("/frozen-contexts", dependencies=[Depends(combined_auth)])
-    async def create_frozen_context(request: FreezeContextRequest) -> dict[str, Any]:
-        try:
-            require_eval()
-            parent = load_run(root, request.parent_run_id)
-            if parent is None or parent.get("experiment") != "end_to_end_baseline":
-                raise HTTPException(status_code=400, detail="parent_run_id must be an end_to_end_baseline run")
-            output = Path(parent["run_dir"]) / "frozen_context.json"
-            try:
-                frozen = freeze_final_contexts(parent_run_dir=Path(parent["run_dir"]), output_path=output)
-            except (OSError, ValueError) as exc:
-                raise HTTPException(status_code=409, detail=str(exc)) from exc
-            return {
-                "parent_run_id": request.parent_run_id,
-                "artifact": "frozen_context.json",
-                "input_hash": frozen["input_hash"],
-                "case_count": len(frozen["prompts"]),
-            }
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(f"Error freezing comparison context: {exc}")
-            raise internal_server_error(exc)
-
     @router.post("/comparisons/validate", dependencies=[Depends(combined_auth)])
     async def validate_run_comparison(request: CompareRunsRequest) -> dict[str, Any]:
         try:
@@ -941,72 +796,6 @@ def create_eval_routes(
             raise
         except (OSError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    @router.post("/environment-profiles", dependencies=[Depends(combined_auth)])
-    async def create_environment_profile(
-        request: EnvironmentProfileDraftRequest,
-    ) -> dict[str, Any]:
-        try:
-            require_eval()
-            try:
-                return eval_profiles.create_draft_version(
-                    runs_root=root,
-                    name=request.name,
-                    profile_id=request.profile_id,
-                    configuration=request.configuration.model_dump(),
-                )
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(f"Error creating environment profile: {exc}")
-            raise internal_server_error(exc)
-
-    @router.get(
-        "/environment-profiles/{profile_id}/versions/{version}",
-        dependencies=[Depends(combined_auth)],
-    )
-    async def get_environment_profile_version(
-        profile_id: str,
-        version: int,
-    ) -> dict[str, Any]:
-        try:
-            require_eval()
-            item = eval_profiles.get_profile_version(root, profile_id, version)
-            if item is None:
-                raise HTTPException(status_code=404, detail="environment profile version not found")
-            return item
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(f"Error reading environment profile version: {exc}")
-            raise internal_server_error(exc)
-
-    @router.post(
-        "/environment-profiles/{profile_id}/versions/{version}/publish",
-        dependencies=[Depends(combined_auth)],
-    )
-    async def publish_environment_profile_version(
-        profile_id: str,
-        version: int,
-    ) -> dict[str, Any]:
-        try:
-            require_eval()
-            try:
-                item = eval_profiles.publish_version(
-                    runs_root=root, profile_id=profile_id, version=version
-                )
-            except ValueError as exc:
-                raise HTTPException(status_code=409, detail=str(exc)) from exc
-            if item is None:
-                raise HTTPException(status_code=404, detail="environment profile version not found")
-            return item
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(f"Error publishing environment profile version: {exc}")
-            raise internal_server_error(exc)
 
     @router.post("/jobs", dependencies=[Depends(combined_auth)])
     async def create_job(request: CreateJobRequest) -> dict[str, Any]:
@@ -1033,11 +822,15 @@ def create_eval_routes(
                     runs_root=root,
                     datasets_root=datasets,
                     params=params,
-                    supervise=request.supervise,
-                    supervision=request.supervision,
-                    stale_minutes=request.stale_minutes,
-                    max_restarts=request.max_restarts,
-                    poll_seconds=request.poll_seconds,
+                    # E2E runs have no safe resume contract.  Do not expose a
+                    # restart switch that suggests failed partial ingestion can
+                    # be resumed; users can explicitly reproduce a completed
+                    # run after reviewing its immutable inputs.
+                    supervise=False,
+                    supervision="none",
+                    stale_minutes=60,
+                    max_restarts=0,
+                    poll_seconds=30,
                 )
                 return job
             if request.dataset_create is None:
@@ -1243,233 +1036,11 @@ def create_eval_routes(
     async def list_models() -> dict[str, Any]:
         try:
             require_eval()
-            ollama_url = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
-            models: list[str] = []
-            embedding_filtered: list[str] = []
-            try:
-                request = urllib.request.Request(
-                    f"{ollama_url.rstrip('/')}/api/tags",
-                    headers={"Content-Type": "application/json"},
-                )
-                with urllib.request.urlopen(request, timeout=5) as response:
-                    payload = json.loads(response.read().decode("utf-8"))
-            except (OSError, urllib.error.URLError, TimeoutError, ValueError):
-                payload = {}
-            for item in payload.get("models") or []:
-                name = str(item.get("name") or "")
-                if not name:
-                    continue
-                lowered = name.split(":")[0].lower()
-                if any(
-                    marker in lowered
-                    for marker in (
-                        "embed",
-                        "bge",
-                        "mxbai",
-                        "nomic",
-                        "e5-",
-                        "gte",
-                        "text-embedding",
-                        "jina-embeddings",
-                    )
-                ):
-                    embedding_filtered.append(name)
-                else:
-                    models.append(name)
-            parser_engines = _available_parser_engines()
-            return {
-                "models": sorted(set(models)),
-                "embedding_filtered": sorted(set(embedding_filtered)),
-                "selectable_models": sorted(set([_configured_query_model(), *models])),
-                "default_model": _configured_query_model(),
-                "parser_engines": parser_engines,
-                "default_parser_engine": "native"
-                if "native" in parser_engines
-                else (parser_engines[0] if parser_engines else None),
-            }
+            return _evaluation_model_capability()
         except HTTPException:
             raise
         except Exception as exc:
             logger.error(f"Error listing Ollama models: {exc}")
-            raise internal_server_error(exc)
-
-    @router.get("/templates", dependencies=[Depends(combined_auth)])
-    async def list_templates() -> dict[str, Any]:
-        try:
-            require_eval()
-            return {"templates": _read_templates(root)}
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(f"Error listing templates: {exc}")
-            raise internal_server_error(exc)
-
-    @router.post("/templates", dependencies=[Depends(combined_auth)])
-    async def save_template(request: TemplateRequest) -> dict[str, Any]:
-        try:
-            require_eval()
-            if not _TEMPLATE_NAME_RE.fullmatch(request.name):
-                raise HTTPException(
-                    status_code=400,
-                    detail="template name must match [A-Za-z0-9_.-]{1,64}",
-                )
-            items = _read_templates(root)
-            items = [item for item in items if item.get("name") != request.name]
-            items.append(
-                {
-                    "name": request.name,
-                    "experiment": request.experiment,
-                    "dataset": request.dataset,
-                    "params": request.params,
-                    "extraText": request.extraText,
-                    "supervise": request.supervise,
-                }
-            )
-            _write_templates(root, items)
-            return {"saved": request.name}
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(f"Error saving template: {exc}")
-            raise internal_server_error(exc)
-
-    @router.delete("/templates", dependencies=[Depends(combined_auth)])
-    async def delete_template(name: str = Query(...)) -> dict[str, Any]:
-        try:
-            require_eval()
-            items = _read_templates(root)
-            remaining = [item for item in items if item.get("name") != name]
-            if len(remaining) == len(items):
-                raise HTTPException(
-                    status_code=404, detail=f"Template not found: {name}"
-                )
-            _write_templates(root, remaining)
-            return {"deleted": name}
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(f"Error deleting template: {exc}")
-            raise internal_server_error(exc)
-
-    @router.post("/runs/{run_id:path}/analyze", dependencies=[Depends(combined_auth)])
-    def analyze_run(
-        run_id: str,
-        force: bool = Query(
-            default=False, description="Regenerate instead of returning the cache"
-        ),
-    ) -> dict[str, Any]:
-        """Ask the local LLM to produce a concise analysis of one run.
-
-        Implemented as a sync endpoint so FastAPI runs it in the threadpool:
-        the long Ollama call no longer blocks the event loop, keeping the
-        WebUI polling responsive while an analysis is in flight.  The Ollama
-        endpoint and model are fixed to server-side configuration
-        (``OLLAMA_URL`` / ``OLLAMA_MODEL``) instead of trusting client-supplied
-        values.
-        """
-        try:
-            require_eval()
-            detail = load_run(root, run_id)
-            if detail is None:
-                raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-            run_dir = Path(detail["run_dir"])
-            cache_path = run_dir / "analysis.json"
-            if cache_path.exists() and not force:
-                return json.loads(cache_path.read_text(encoding="utf-8"))
-
-            methods = detail.get("artifacts", [])
-            summary_methods = next(
-                (a for a in methods if a.get("table", {}).get("rows")),
-                None,
-            )
-            report = next(
-                (a for a in methods if a.get("report_md")),
-                None,
-            )
-            conditions = {
-                c["key"]: c["value"]
-                for c in detail.get("conditions", [])
-                if c["key"]
-                in {
-                    "dataset",
-                    "pages",
-                    "tier",
-                    "model",
-                    "mode",
-                    "top_k",
-                    "num_ctx",
-                    "kg",
-                    "methods",
-                }
-            }
-            rows = (summary_methods or {}).get("table", {}).get("rows", [])
-            snippet = []
-            for row in rows[:12]:
-                label = row.get("label") or row.get("method") or row.get("arm")
-                picked = {
-                    key: row.get(key)
-                    for key in (
-                        "answer_accuracy",
-                        "accuracy",
-                        "groundedness",
-                        "ungrounded_rate",
-                        "abstention_accuracy",
-                        "average_recall",
-                        "mrr",
-                        "candidate_recall",
-                        "selected_recall",
-                        "selection_precision",
-                        "role_coverage",
-                        "retrieval_recall",
-                        "mean_context_chars",
-                        "mean_selected_context_chars",
-                        "cases",
-                    )
-                    if row.get(key) is not None
-                }
-                snippet.append({"method": label, **picked})
-            report_excerpt = (report or {}).get("report_md", "")[:2000]
-            prompt = (
-                f"测评：{detail.get('label')}\n"
-                f"说明：{detail.get('description') or ''}\n"
-                f"条件：{conditions}\n"
-                f"结果：{snippet}\n"
-                f"报告摘录：\n{report_excerpt}\n"
-            )
-            text = chat_ollama(
-                host=os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
-                model=os.getenv("OLLAMA_MODEL", "qwen3:8b"),
-                system=(
-                    "你是测评分析助手。用简洁的中文分析这段测评结果：先说结论，再指出可能的失败模式"
-                    "（如检索失败/选择失败/上下文过大/拒答问题）和可执行的改进建议。"
-                    "不要罗列参数，不要超过 300 字。"
-                ),
-                user=prompt,
-                num_predict=700,
-                num_ctx=8192,
-                timeout=1800,
-                read_timeout=600,
-                retries=1,
-            )
-            payload = {
-                "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "model": os.getenv("OLLAMA_MODEL", "qwen3:8b"),
-                "text": text,
-            }
-            # Write atomically so a failed regeneration never destroys the
-            # previous analysis.
-            tmp_path = run_dir / "analysis.json.tmp"
-            tmp_path.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            tmp_path.replace(cache_path)
-            return payload
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.error(f"Error analyzing eval run '{run_id}': {exc}")
-            logger.error(traceback.format_exc())
             raise internal_server_error(exc)
 
     return router

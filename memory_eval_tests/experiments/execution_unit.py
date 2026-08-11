@@ -45,6 +45,7 @@ def allocate_execution_unit(
     workspace_id = f"eval_{run_id.replace('-', '_')[:32]}_{suffix}"
     storage_id = f"storage-{suffix}"
     workspace_dir = output_dir / "isolated" / storage_id
+    input_dir = workspace_dir / "inputs"
     configuration = profile.get("configuration") or {}
     mode = str(configuration.get("execution_mode") or "managed_local")
     endpoint = configuration.get("runtime_endpoint")
@@ -53,11 +54,12 @@ def allocate_execution_unit(
     if mode == "assigned" and not isinstance(endpoint, str):
         raise ValueError("assigned environment profile requires runtime_endpoint")
     unit = {
-        "schema_version": "1.1",
+        "schema_version": "1.2",
         "run_id": run_id,
         "workspace_id": workspace_id,
         "storage_id": storage_id,
         "storage_dir": str(workspace_dir),
+        "input_dir": str(input_dir),
         "mode": mode,
         "profile": {"id": profile.get("id"), "version": profile.get("version")},
         "allocated_at": _now(),
@@ -68,6 +70,7 @@ def allocate_execution_unit(
     if unit["retention_policy"] not in {"retain", "archive", "cleanup"}:
         raise ValueError("environment profile retention_policy must be retain, archive, or cleanup")
     workspace_dir.mkdir(parents=True, exist_ok=False)
+    input_dir.mkdir(parents=True, exist_ok=False)
     _write_unit(output_dir, unit)
     return unit
 
@@ -249,6 +252,7 @@ def _profile_environment(
     # ``override=False``.  Provider credentials intentionally remain intact.
     env["AUTH_ACCOUNTS"] = ""
     env["LIGHTRAG_API_KEY"] = ""
+    env["INPUT_DIR"] = str(unit["input_dir"])
     env["WORKSPACE"] = str(unit["workspace_id"])
     return env
 
@@ -330,6 +334,15 @@ def _write_unit(output_dir: Path, unit: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def _ensure_run_input_dir(unit: dict[str, Any]) -> Path:
+    """Backfill pre-1.2 units while keeping every upload inside its run."""
+    configured = unit.get("input_dir")
+    input_dir = Path(str(configured)) if configured else Path(str(unit["storage_dir"])) / "inputs"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    unit["input_dir"] = str(input_dir)
+    return input_dir
+
+
 def start_execution_unit(
     *,
     output_dir: Path,
@@ -357,6 +370,8 @@ def start_execution_unit(
         )
         _write_unit(output_dir, unit)
         return unit
+
+    _ensure_run_input_dir(unit)
 
     existing_endpoint = unit.get("runtime_endpoint")
     if isinstance(existing_endpoint, str) and existing_endpoint:
@@ -391,6 +406,8 @@ def start_execution_unit(
         str(port),
         "--working-dir",
         str(unit["storage_dir"]),
+        "--input-dir",
+        str(unit["input_dir"]),
         "--workspace",
         str(unit["workspace_id"]),
     ]

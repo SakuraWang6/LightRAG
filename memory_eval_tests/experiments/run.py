@@ -130,6 +130,20 @@ def _log(output_dir: Path, message: str) -> None:
         )
 
 
+def _completed_case_count(methods: list[dict[str, Any]]) -> int:
+    """Count answer sheets once for product E2E runs, not each pipeline stage."""
+    answer_rows = [
+        row
+        for method in methods
+        if method.get("method") == "answer"
+        for row in (method.get("results") or [])
+        if isinstance(row, dict)
+    ]
+    if answer_rows:
+        return len(answer_rows)
+    return sum(len(method.get("results") or []) for method in methods)
+
+
 class _Tee:
     """Write through to the real stream while appending to run.log."""
 
@@ -433,7 +447,7 @@ def main() -> None:
             )
             _log(
                 args.output_dir,
-                f"finished status={status} cases={sum(len(m.get('results') or []) for m in methods)}",
+                f"finished status={status} cases={_completed_case_count(methods)}",
             )
             saved_progress = read_progress(args.output_dir)
             total = int(saved_progress.get("total") or 1)

@@ -38,6 +38,8 @@ def test_allocated_units_never_share_workspace_or_storage(tmp_path: Path) -> Non
     assert first["workspace_id"] != second["workspace_id"]
     assert first["storage_id"] != second["storage_id"]
     assert Path(first["storage_dir"]).is_dir()
+    assert Path(first["input_dir"]).is_dir()
+    assert Path(first["input_dir"]).is_relative_to(Path(first["storage_dir"]))
     persisted = json.loads((tmp_path / "run-a" / "execution_unit.json").read_text())
     assert persisted["profile"] == {"id": "profile-a", "version": 2}
 
@@ -51,6 +53,7 @@ def test_managed_unit_does_not_inherit_main_server_auth(tmp_path: Path, monkeypa
     environment = execution_unit._profile_environment(_profile("managed_local"), unit)
     assert environment["AUTH_ACCOUNTS"] == ""
     assert environment["LIGHTRAG_API_KEY"] == ""
+    assert environment["INPUT_DIR"] == unit["input_dir"]
 
 
 def test_managed_unit_applies_supported_profile_settings(tmp_path: Path) -> None:
@@ -208,12 +211,11 @@ def test_cleanup_retention_only_removes_the_run_owned_storage(tmp_path: Path) ->
     assert persisted["lifecycle_status"] == "cleaned"
 
 
-def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
+def test_end_to_end_runner_uses_server_configuration_and_writes_receipts(
     tmp_path: Path, monkeypatch
 ) -> None:
     import memory_eval_tests.experiments.end_to_end_baseline as end_to_end
 
-    profile = {**_profile(), "status": "published"}
     monkeypatch.setattr(end_to_end, "preflight_execution_unit", lambda _profile: None)
     context = RunContext(
         spec=ExperimentSpec(id="end_to_end_baseline", label="E2E", description="d", runner=lambda _c: {}),
@@ -223,10 +225,8 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
         environment={"rag_api_url": "http://old.test"},
         variables=[],
         run_id="e2e-run",
-        extra={"environment_profile_id": "profile-a", "environment_profile_version": "2"},
         runs_root=tmp_path / "runs",
     )
-    monkeypatch.setattr(end_to_end.eval_profiles, "get_profile_version", lambda *_args: profile)
     monkeypatch.setattr(
         end_to_end,
         "allocate_execution_unit",
@@ -270,6 +270,29 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
     monkeypatch.setattr(end_to_end, "evaluate_answers", fake_evaluate_answers)
 
     context.dataset.mkdir()
+    (context.dataset / "source.docx").write_bytes(b"source")
+    (context.dataset / "manifest.json").write_text(
+        json.dumps(
+            {
+                "formats": ["docx"],
+                "files": [
+                    {
+                        "name": "source.docx",
+                        "format": "docx",
+                        "role": "source_document",
+                        "status": "created",
+                    },
+                    {
+                        "name": "oracle.json",
+                        "format": "json",
+                        "role": "evaluation_artifact",
+                        "status": "created",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     (context.dataset / "oracle.json").write_text(
         json.dumps({"facts": [], "questions": []}), encoding="utf-8"
     )
@@ -282,10 +305,19 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
     assert json.loads((context.output_dir / "diagnosis.json").read_text())["case_count"] == 0
     assert "失败归因" in result["report"]
     assert answer_call["evaluation_trace"] is True
+    assert answer_call["enable_rerank"] is False
     assert start_call["runtime_options"]["skip_kg"] is True
     assert start_call["runtime_options"]["generation"]["num_predict"] == 2048
     assert start_call["runtime_options"]["extraction_generation"]["num_predict"] == 8192
     assert start_call["runtime_options"]["extraction_safeguards"]["use_json"] is True
+
+
+def test_product_retrieval_results_drop_raw_candidate_payloads() -> None:
+    from memory_eval_tests.experiments.end_to_end_baseline import _product_retrieval_results
+
+    assert _product_retrieval_results(
+        [{"question_id": "Q-1", "hit_evidence": [{"text": "evidence"}], "top_k_candidates": [{"text": "raw"}]}]
+    ) == [{"question_id": "Q-1", "hit_evidence": [{"text": "evidence"}]}]
 
 
 def test_prepare_binds_workspace_to_immutable_execution_manifest(
@@ -293,18 +325,25 @@ def test_prepare_binds_workspace_to_immutable_execution_manifest(
 ) -> None:
     import memory_eval_tests.experiments.end_to_end_baseline as end_to_end
 
-    profile = {**_profile(), "status": "published"}
     context = RunContext(
         spec=ExperimentSpec(id="end_to_end_baseline", label="E2E", description="d", runner=lambda _c: {}),
         dataset=tmp_path / "dataset",
         output_dir=tmp_path / "run",
         baseline={}, environment={}, variables=[], run_id="e2e-run",
-        extra={"environment_profile_id": "profile-a", "environment_profile_version": "2"},
         runs_root=tmp_path / "runs", execution_manifest={"manifest_version": "1.0"},
     )
     context.output_dir.mkdir()
+    context.dataset.mkdir()
+    (context.dataset / "manifest.json").write_text(
+        json.dumps(
+            {
+                "formats": ["docx"],
+                "files": [{"name": "source.docx", "format": "docx", "status": "created"}],
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(end_to_end, "preflight_execution_unit", lambda _profile: None)
-    monkeypatch.setattr(end_to_end.eval_profiles, "get_profile_version", lambda *_args: profile)
     end_to_end._prepare(context)
     bound = context.execution_manifest["execution_unit"]
     assert bound["workspace_id"] == context.execution_unit["workspace_id"]
@@ -313,18 +352,15 @@ def test_prepare_binds_workspace_to_immutable_execution_manifest(
     assert bound["effective_configuration"]["parser_engine"] == "native"
 
 
-def test_profile_defaults_and_model_override_are_effective(tmp_path: Path, monkeypatch) -> None:
+def test_server_profile_uses_selected_model_without_hidden_defaults(tmp_path: Path, monkeypatch) -> None:
     import memory_eval_tests.experiments.end_to_end_baseline as end_to_end
 
-    profile = {**_profile("managed_local"), "status": "published"}
-    profile["configuration"]["retrieval_defaults"] = {"top_k": 9, "mode": "hybrid"}
     context = RunContext(
         spec=ExperimentSpec(id="end_to_end_baseline", label="E2E", description="d", runner=lambda _c: {}),
         dataset=tmp_path / "dataset",
         output_dir=tmp_path / "run",
         baseline={"model": "query-override", "top_k": 5, "mode": "mix"},
-        environment={}, variables=[], run_id="e2e-run",
-        extra={"environment_profile_id": "profile-a", "environment_profile_version": "2"},
+        environment={"llm_binding": "ollama", "embedding_binding": "ollama"}, variables=[], run_id="e2e-run",
         runs_root=tmp_path / "runs",
         execution_manifest={
             "parameters": {
@@ -334,17 +370,68 @@ def test_profile_defaults_and_model_override_are_effective(tmp_path: Path, monke
         },
     )
     context.output_dir.mkdir()
+    context.dataset.mkdir()
+    (context.dataset / "manifest.json").write_text(
+        json.dumps(
+            {
+                "formats": ["docx"],
+                "files": [{"name": "source.docx", "format": "docx", "status": "created"}],
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(end_to_end, "preflight_execution_unit", lambda _profile: None)
-    monkeypatch.setattr(end_to_end.eval_profiles, "get_profile_version", lambda *_args: profile)
     end_to_end._prepare(context)
     assert context.environment_profile["configuration"]["query"]["model"] == "query-override"
-    assert context.baseline["top_k"] == 9
-    assert context.baseline["mode"] == "mix"  # user-selected values win over profile defaults
-    assert context.execution_manifest["parameters"]["top_k"]["source"] == "profile"
+    assert context.baseline["top_k"] == 5
+    assert context.baseline["mode"] == "mix"
 
 
-def test_end_to_end_uses_every_created_manifest_format(tmp_path: Path) -> None:
-    from memory_eval_tests.experiments.end_to_end_baseline import _dataset_formats
+def test_end_to_end_indexes_only_source_documents_not_oracle_artifacts(tmp_path: Path) -> None:
+    from memory_eval_tests.experiments.end_to_end_baseline import _source_documents
+
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "manifest.json").write_text(
+        json.dumps(
+            {
+                "formats": ["docx", "pdf"],
+                "files": [
+                    {"name": "a.docx", "format": "docx", "role": "source_document", "status": "created"},
+                    {"name": "b.pdf", "format": "pdf", "role": "source_document", "status": "created"},
+                    {"name": "oracle.json", "format": "json", "role": "evaluation_artifact", "status": "created"},
+                    {"name": "facts.json", "format": "json", "role": "evaluation_artifact", "status": "created"},
+                    {"name": "ignored.docx", "format": "docx", "status": "skipped"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _source_documents(dataset) == ["a.docx", "b.pdf"]
+
+
+def test_end_to_end_legacy_manifest_still_excludes_json_artifacts(tmp_path: Path) -> None:
+    from memory_eval_tests.experiments.end_to_end_baseline import _source_documents
+
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "manifest.json").write_text(
+        json.dumps(
+            {
+                "formats": ["docx"],
+                "files": [
+                    {"name": "source.docx", "format": "docx", "status": "created"},
+                    {"name": "oracle.json", "format": "json", "status": "created"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _source_documents(dataset) == ["source.docx"]
+
+
+def test_end_to_end_legacy_manifest_without_formats_still_indexes_docx(tmp_path: Path) -> None:
+    from memory_eval_tests.experiments.end_to_end_baseline import _source_documents
 
     dataset = tmp_path / "dataset"
     dataset.mkdir()
@@ -352,12 +439,11 @@ def test_end_to_end_uses_every_created_manifest_format(tmp_path: Path) -> None:
         json.dumps(
             {
                 "files": [
-                    {"name": "a.docx", "format": "docx", "status": "created"},
-                    {"name": "b.pdf", "format": "pdf", "status": "created"},
-                    {"name": "ignored.docx", "format": "docx", "status": "skipped"},
-                ]
+                    {"name": "source.docx", "format": "docx", "status": "created"},
+                    {"name": "oracle.json", "format": "json", "status": "created"},
+                ],
             }
         ),
         encoding="utf-8",
     )
-    assert _dataset_formats(dataset) == ["docx", "pdf"]
+    assert _source_documents(dataset) == ["source.docx"]

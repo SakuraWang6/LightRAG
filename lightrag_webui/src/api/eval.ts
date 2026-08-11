@@ -129,7 +129,6 @@ export type EvalJob = {
   dataset?: string | null
   dataset_id?: string | null
   output_dir: string
-  supervise?: boolean
   status: string
   queue_position?: number | null
   active_count?: number | null
@@ -148,17 +147,6 @@ export type DatasetSummary = {
   path: string
   created_at: string
   files: string[]
-}
-
-export type EnvironmentProfile = {
-  id: string
-  name: string
-  versions: Array<{
-    version: number
-    status: 'draft' | 'published' | string
-    created_at?: string
-    published_at?: string
-  }>
 }
 
 const evalApiClient = axios.create({
@@ -236,6 +224,9 @@ export async function listEvalModels(): Promise<{
   embedding_filtered: string[]
   selectable_models?: string[]
   default_model?: string | null
+  provider?: string
+  model_selection?: 'selectable' | 'fixed'
+  configuration_error?: string | null
   parser_engines?: string[]
   default_parser_engine?: string | null
 }> {
@@ -249,11 +240,6 @@ export async function createEvalJob(payload: {
   experiment?: string
   dataset?: string
   params?: Record<string, unknown>
-  supervise?: boolean
-  supervision?: string
-  stale_minutes?: number
-  max_restarts?: number
-  poll_seconds?: number
   dataset_create?: {
     dataset_id: string
     tier?: string
@@ -302,21 +288,6 @@ export async function importEvalDataset(file: File): Promise<DatasetSummary> {
   return response.data
 }
 
-export async function listEnvironmentProfiles(): Promise<EnvironmentProfile[]> {
-  const response = await evalApiClient.get('/eval/environment-profiles')
-  return response.data.profiles
-}
-
-export async function getEnvironmentProfileVersion(
-  profileId: string,
-  version: number
-): Promise<EnvironmentProfile['versions'][number] & { configuration?: Record<string, unknown> }> {
-  const response = await evalApiClient.get(
-    `/eval/environment-profiles/${encodeURIComponent(profileId)}/versions/${version}`
-  )
-  return response.data
-}
-
 export async function deleteDataset(datasetId: string): Promise<unknown> {
   const response = await evalApiClient.delete(
     `/eval/datasets/${encodeURIComponent(datasetId)}`
@@ -354,17 +325,5 @@ export async function refreshEvalIndex(): Promise<{
   run_count: number
 }> {
   const response = await evalApiClient.post('/eval/refresh')
-  return response.data
-}
-
-export async function analyzeEvalRun(
-  runId: string,
-  force = false
-): Promise<{ created_at: string; model: string; text: string }> {
-  const response = await evalApiClient.post(
-    `/eval/runs/${encodeURIComponent(runId)}/analyze`,
-    null,
-    { params: { force: force ? '1' : undefined } }
-  )
   return response.data
 }

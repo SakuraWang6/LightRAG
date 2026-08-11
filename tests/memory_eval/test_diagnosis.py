@@ -20,7 +20,6 @@ def _trace(**overrides):
         "retrieval": {"status": "observed", "recall_at_k": 1.0, "top_k_candidates": [{}]},
         "final_context": {"status": "observed", "contains_all_oracle_evidence": True},
         "answer": {"status": "observed", "exact_match": False},
-        "oracle_upper_bound": {"status": "unavailable"},
     }
     trace.update(overrides)
     return trace
@@ -61,6 +60,22 @@ def test_case_trace_joins_oracle_retrieval_and_answer_without_claiming_prompt_vi
     assert diagnosis["cause_distribution"] == {"unclassified": 1}
     assert diagnosis["diagnosis_coverage"] == 0.0
     assert diagnosis["by_retrieval_mode"]["mix"]["case_count"] == 1
+
+
+def test_case_trace_contains_only_questions_the_run_actually_evaluated() -> None:
+    traces = build_case_traces(
+        oracle={
+            "facts": [],
+            "questions": [
+                {"id": "Q-1", "question": "first", "answer": "a"},
+                {"id": "Q-2", "question": "second", "answer": "b"},
+            ],
+        },
+        retrieval_results=[{"question_id": "Q-1", "recall_at_k": 1.0}],
+        answer_results=[{"question_id": "Q-1", "answer": "a", "exact_match": True}],
+    )
+    assert [trace["question_id"] for trace in traces] == ["Q-1"]
+    assert traces[0]["retrieval"]["expected_fact_ids"] == []
 
 
 def test_controlled_final_context_trace_enables_generation_attribution() -> None:

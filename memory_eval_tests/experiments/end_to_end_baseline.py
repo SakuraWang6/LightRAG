@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
-from lightrag.api import eval_profiles
 from memory_eval_tests.experiments.common import ExperimentSpec, RunContext, normalize_summary
 from memory_eval_tests.experiments.diagnosis import build_case_traces, build_diagnosis
 from memory_eval_tests.experiments.execution_unit import (
@@ -19,7 +17,10 @@ from memory_eval_tests.experiments.execution_unit import (
     start_execution_unit,
 )
 from memory_eval_tests.online.answer_eval import evaluate_answers
-from memory_eval_tests.online.index_runner import upload_dataset_files
+from memory_eval_tests.online.index_runner import (
+    source_document_names,
+    upload_dataset_files,
+)
 from memory_eval_tests.online.retrieval_eval import evaluate_api
 
 
@@ -61,105 +62,33 @@ def _runtime_options(baseline: dict[str, Any]) -> dict[str, Any]:
 
 
 def _profile(context: RunContext) -> dict[str, Any]:
-    profile_id = context.extra.get("environment_profile_id")
-    raw_version = context.extra.get("environment_profile_version")
-    if not profile_id and not raw_version:
-        # A baseline must be runnable out of the box.  This is an internal
-        # execution configuration, not a prerequisite the user has to create
-        # in a separate screen.  Secrets remain in the server process env.
-        llm_provider = context.environment.get("llm_binding") or "ollama"
-        llm_model = context.environment.get("llm_model") or "qwen3:8b"
-        embedding_model = context.environment.get("embedding_model") or "bge-m3:latest"
-        profile = {
-            "id": "server-default",
-            "name": "当前服务器默认配置",
-            "version": 1,
-            "status": "published",
-            "configuration": {
-                "execution_mode": "managed_local",
-                "retention_policy": "retain",
-                "query": {"provider": llm_provider, "model": llm_model},
-                "embedding": {"provider": context.environment.get("embedding_binding") or "ollama", "model": embedding_model},
-                "parser_engine": context.baseline.get("engine") or "native",
+    """Build the one supported product runtime from server configuration.
+
+    The WebUI exposes only controls that are applied to this isolated process.
+    Historical versioned environment profiles and comparison arms were hidden
+    from users but still changed execution, so they are deliberately not part
+    of a normal evaluation any more.
+    """
+    return {
+        "id": "server-default",
+        "name": "当前服务器配置",
+        "version": 1,
+        "configuration": {
+            "execution_mode": "managed_local",
+            "retention_policy": "retain",
+            "query": {
+                "provider": context.environment.get("llm_binding") or "ollama",
+                "model": context.baseline.get("model")
+                or context.environment.get("llm_model")
+                or "qwen3:8b",
             },
-        }
-        return _apply_run_overrides(profile, context)
-    if not profile_id or not raw_version:
-        raise IngestionFailure("environment_profile_id and environment_profile_version must be supplied together")
-    try:
-        version = int(raw_version)
-    except ValueError as exc:
-        raise IngestionFailure("environment_profile_version must be an integer") from exc
-    if context.runs_root is None:
-        raise IngestionFailure("runs_root is required to load environment profiles")
-    profile = eval_profiles.get_profile_version(context.runs_root, profile_id, version)
-    if profile is None:
-        raise IngestionFailure("environment profile version was not found")
-    if profile.get("status") != "published":
-        raise IngestionFailure("end-to-end runs may only use a published environment profile")
-    try:
-        eval_profiles.validate_profile_configuration(profile.get("configuration") or {})
-    except ValueError as exc:
-        raise IngestionFailure(str(exc)) from exc
-    return _apply_run_overrides(profile, context)
-
-
-def _apply_run_overrides(profile: dict[str, Any], context: RunContext) -> dict[str, Any]:
-    """Apply declared experiment controls to the otherwise immutable profile."""
-    effective = copy.deepcopy(profile)
-    configuration = effective.setdefault("configuration", {})
-    overrides = context.extra.get("arm_overrides")
-    if isinstance(overrides, str):
-        try:
-            overrides = json.loads(overrides)
-        except ValueError as exc:
-            raise IngestionFailure("arm_overrides must be JSON") from exc
-    overrides = overrides if isinstance(overrides, dict) else {}
-    model = overrides.get("query_model") or context.baseline.get("model")
-    if isinstance(model, str) and model.strip():
-        primary = configuration.get("query") or configuration.get("extraction")
-        if not isinstance(primary, dict):
-            raise IngestionFailure("profile has no query/extraction role to override")
-        query = dict(configuration.get("query") or primary)
-        query["model"] = model.strip()
-        configuration["query"] = query
-    for role_name, override_key in (("extraction", "extraction_model"), ("embedding", "embedding_model")):
-        model = overrides.get(override_key)
-        if model is None:
-            continue
-        role = configuration.get(role_name)
-        if not isinstance(role, dict):
-            raise IngestionFailure(f"{override_key} requires {role_name} in the environment profile")
-        role = dict(role)
-        role["model"] = str(model)
-        configuration[role_name] = role
-    for profile_key, arm_key in (("parser_engine", "parser_engine"),):
-        if arm_key in overrides:
-            configuration[profile_key] = str(overrides[arm_key])
-    if "reranker" in overrides:
-        role = configuration.get("reranker")
-        if not isinstance(role, dict):
-            raise IngestionFailure("reranker comparison requires reranker in the environment profile")
-        role = dict(role)
-        role["model"] = str(overrides["reranker"])
-        configuration["reranker"] = role
-    try:
-        eval_profiles.validate_profile_configuration(configuration)
-    except ValueError as exc:
-        raise IngestionFailure(str(exc)) from exc
-    return effective
-
-
-def _apply_profile_retrieval_defaults(context: RunContext, profile: dict[str, Any]) -> None:
-    defaults = (profile.get("configuration") or {}).get("retrieval_defaults") or {}
-    parameters = context.execution_manifest.get("parameters") or {}
-    for key, value in defaults.items():
-        declaration = parameters.get(key)
-        if isinstance(declaration, dict) and declaration.get("source") not in {"default", "profile"}:
-            continue
-        context.baseline[key] = value
-        if isinstance(declaration, dict):
-            declaration.update({"value": value, "source": "profile"})
+            "embedding": {
+                "provider": context.environment.get("embedding_binding") or "ollama",
+                "model": context.environment.get("embedding_model") or "bge-m3:latest",
+            },
+            "parser_engine": context.baseline.get("engine") or "native",
+        },
+    }
 
 
 def _receipt(upload: dict[str, Any], unit: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -233,18 +162,35 @@ def _allow_partial(context: RunContext) -> tuple[bool, float]:
     return allow, threshold
 
 
-def _dataset_formats(dataset: Path) -> list[str]:
-    """Use every created manifest document, never a runner-global default."""
+def _source_documents(dataset: Path) -> list[str]:
+    """Return the dataset's source documents, never its scoring artefacts."""
     try:
         manifest = json.loads((dataset / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return ["docx"]
-    formats = {
-        str(item.get("format")).lower()
-        for item in manifest.get("files") or []
-        if isinstance(item, dict) and item.get("status") == "created" and item.get("format")
+        raise IngestionFailure("dataset manifest is unreadable; cannot identify source documents")
+    names = source_document_names(manifest)
+    if not names:
+        raise IngestionFailure("dataset manifest declares no source documents to ingest")
+    return names
+
+
+def _rerank_enabled(profile: dict[str, Any]) -> bool:
+    """Use reranking only when this server profile actually configures it."""
+    reranker = (profile.get("configuration") or {}).get("reranker")
+    return isinstance(reranker, dict) and str(reranker.get("provider") or "").lower() not in {
+        "",
+        "null",
+        "none",
     }
-    return sorted(formats) or ["docx"]
+
+
+def _product_retrieval_results(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep actionable evidence, not repeated raw candidate payloads, in run.json."""
+    return [
+        {key: value for key, value in row.items() if key != "top_k_candidates"}
+        for row in rows
+        if isinstance(row, dict)
+    ]
 
 
 def _format_rate(value: Any) -> str:
@@ -266,10 +212,10 @@ def _diagnosis_markdown(diagnosis: dict[str, Any]) -> str:
         lines.extend(["本次没有需要归因的失败题。", ""])
         return "\n".join(lines)
     labels = {
-        "retrieval_failure": "检索未命中",
-        "selection_failure": "上下文选择不足",
-        "answer_failure": "回答与标准答案不符",
-        "grounding_failure": "回答缺少证据支撑",
+        "abstention_failure": "拒答结果不正确",
+        "retrieval_miss": "检索未命中",
+        "selection_or_truncation_miss": "上下文选择或截断不足",
+        "generation_or_prompt_failure": "回答与标准答案不符",
     }
     lines.append(f"- 可归因覆盖率：{_format_rate(diagnosis.get('diagnosis_coverage'))}")
     for cause, count in actionable.items():
@@ -312,8 +258,10 @@ def _report_markdown(answer: dict[str, Any], diagnosis: dict[str, Any]) -> str:
 
 def _prepare(context: RunContext) -> None:
     """Allocate once before the initial envelope makes the manifest immutable."""
+    # Fail before any model call if the manifest contains only evaluation
+    # artefacts or is otherwise unable to identify a source document.
+    _source_documents(context.dataset)
     profile = context.environment_profile or _profile(context)
-    _apply_profile_retrieval_defaults(context, profile)
     preflight_execution_unit(profile)
     unit = context.execution_unit or load_execution_unit(context.output_dir)
     if unit is None:
@@ -342,7 +290,30 @@ def _runner(context: RunContext) -> dict[str, Any]:
     assert profile is not None and unit is not None
     outcome = "interrupted"
     try:
-        context.progress("running", 0, 7, "runtime", "starting isolated evaluation service")
+        source_documents = _source_documents(context.dataset)
+        oracle = json.loads((context.dataset / "oracle.json").read_text(encoding="utf-8"))
+        max_cases = int(context.baseline.get("max_cases") or 0) or None
+        all_questions = list(oracle.get("questions") or [])
+        if max_cases is not None:
+            from memory_eval_tests.common.sampling import sample_evenly
+
+            all_questions = sample_evenly(all_questions, max_cases)
+        retrieval_question_count = sum(
+            question.get("expected_behavior") != "abstain"
+            for question in all_questions
+            if isinstance(question, dict)
+        )
+        answer_question_count = len(all_questions)
+        total_steps = max(
+            3 + len(source_documents) + retrieval_question_count + answer_question_count,
+            1,
+        )
+        runtime_ready_step = 1
+        ingestion_start_step = runtime_ready_step
+        retrieval_start_step = ingestion_start_step + len(source_documents)
+        answer_start_step = retrieval_start_step + retrieval_question_count
+
+        context.progress("running", 0, total_steps, "runtime", "starting isolated evaluation service")
         unit = start_execution_unit(
             output_dir=context.output_dir,
             profile=profile,
@@ -355,17 +326,28 @@ def _runner(context: RunContext) -> dict[str, Any]:
         context.environment["rag_api_url"] = unit["runtime_endpoint"]
         context.runtime_snapshot = unit["runtime_snapshot"]
         baseline = context.baseline
-        context.progress("running", 1, 7, "runtime", "isolated evaluation service is ready")
-        context.progress("running", 2, 7, "ingestion", "uploading dataset documents")
+        context.progress(
+            "running", runtime_ready_step, total_steps, "runtime", "isolated evaluation service is ready"
+        )
+        context.progress(
+            "running", ingestion_start_step, total_steps, "ingestion", "uploading source documents"
+        )
         upload = upload_dataset_files(
             dataset_source=str(context.dataset),
             rag_api_url=unit["runtime_endpoint"],
-            formats=_dataset_formats(context.dataset),
             wait=True,
             timeout_seconds=int(baseline.get("ingestion_timeout_seconds") or 5400),
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
             confirmed_hashes=_confirmed_hashes(context.output_dir),
+            file_names=source_documents,
+            progress_callback=lambda completed, total: context.progress(
+                "running",
+                ingestion_start_step + completed,
+                total_steps,
+                "ingestion",
+                f"processed {completed}/{total} source documents",
+            ),
         )
         ingestion, index = _receipt(upload, unit)
         allow_partial, threshold = _allow_partial(context)
@@ -390,12 +372,15 @@ def _runner(context: RunContext) -> dict[str, Any]:
         ):
             raise IngestionFailure("required dataset documents did not meet the ingestion success threshold")
         context.progress(
-            "running", 3, 7, "ingestion", f"processed {ingestion['successful_documents']}/{total_documents} documents"
+            "running",
+            retrieval_start_step,
+            total_steps,
+            "retrieval",
+            f"evaluating retrieval 0/{retrieval_question_count}",
         )
-        context.progress("running", 4, 7, "retrieval", "evaluating retrieval")
         top_k = int(baseline.get("top_k") or 5)
         chunk_top_k = int(baseline.get("chunk_top_k") or 5)
-        max_cases = int(baseline.get("max_cases") or 0) or None
+        enable_rerank = _rerank_enabled(profile)
         retrieval = evaluate_api(
             dataset_source=str(context.dataset),
             rag_api_url=unit["runtime_endpoint"],
@@ -405,9 +390,18 @@ def _runner(context: RunContext) -> dict[str, Any]:
             max_cases=max_cases,
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
+            enable_rerank=enable_rerank,
+            progress_callback=lambda completed, total: context.progress(
+                "running",
+                retrieval_start_step + completed,
+                total_steps,
+                "retrieval",
+                f"evaluating retrieval {completed}/{total}",
+            ),
         )
-        context.progress("running", 5, 7, "retrieval", "retrieval scoring complete")
-        context.progress("running", 6, 7, "answer", "evaluating answers")
+        context.progress(
+            "running", answer_start_step, total_steps, "answer", f"evaluating answers 0/{answer_question_count}"
+        )
         answer = evaluate_answers(
             dataset_source=str(context.dataset),
             rag_api_url=unit["runtime_endpoint"],
@@ -419,8 +413,15 @@ def _runner(context: RunContext) -> dict[str, Any]:
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
             evaluation_trace=True,
+            enable_rerank=enable_rerank,
+            progress_callback=lambda completed, total: context.progress(
+                "running",
+                answer_start_step + completed,
+                total_steps,
+                "answer",
+                f"evaluating answers {completed}/{total}",
+            ),
         )
-        oracle = json.loads((context.dataset / "oracle.json").read_text(encoding="utf-8"))
         case_traces = build_case_traces(
             oracle=oracle,
             retrieval_results=retrieval.get("results") or [],
@@ -440,7 +441,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
         (context.output_dir / "diagnosis.json").write_text(
             json.dumps(diagnosis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
-        context.progress("running", 7, 7, "report", "scoring and report generation complete")
+        context.progress("running", total_steps, total_steps, "report", "scoring and report generation complete")
         methods = [
             {
                 "method": "retrieval",
@@ -451,7 +452,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
                     "chunk_top_k": chunk_top_k,
                 },
                 "summary": normalize_summary(retrieval, "retrieval"),
-                "results": retrieval.get("results", []),
+                "results": _product_retrieval_results(retrieval.get("results", [])),
             },
             {
                 "method": "answer",
@@ -498,8 +499,6 @@ spec = ExperimentSpec(
         "num_predict": 4096,
     },
     extra_schema={
-        "environment_profile_id": "str",
-        "environment_profile_version": "int",
         "allow_partial_ingestion": "bool",
         "ingestion_success_threshold": "float",
     },

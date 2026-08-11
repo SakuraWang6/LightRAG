@@ -5,7 +5,7 @@ import json
 import math
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from memory_data_service.schemas import OraclePayload
 from memory_eval_tests.common.dataset_client import DatasetClient
@@ -28,6 +28,8 @@ def evaluate_api(
     max_cases: int | None = None,
     api_key: str | None = None,
     access_token: str | None = None,
+    enable_rerank: bool = False,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     oracle = DatasetClient(dataset_source).oracle()
     questions = sample_evenly(list(oracle.get("questions", [])), max_cases)
@@ -37,7 +39,8 @@ def evaluate_api(
         if question.get("expected_behavior") != "abstain"
     ]
     results: list[dict[str, Any]] = []
-    for question in questions:
+    total_questions = len(questions)
+    for position, question in enumerate(questions, start=1):
         payload = {
             "query": question["question"],
             "mode": mode,
@@ -47,6 +50,10 @@ def evaluate_api(
             # MRR/Recall are computed from those ranks, not from the whole
             # serialized response.
             "include_chunk_content": True,
+            # Product evaluations do not expose a reranker selection.  Leaving
+            # this unset makes the query API enable reranking by default and
+            # emit a warning when the server has no reranker configured.
+            "enable_rerank": enable_rerank,
         }
         response = _post_json(
             f"{rag_api_url.rstrip('/')}/query/data",
@@ -95,6 +102,7 @@ def evaluate_api(
                 "question_type": question.get("question_type", ""),
                 "recall_at_k": recall,
                 "reciprocal_rank": 1 / first_rank if first_rank else 0.0,
+                "first_evidence_rank": first_rank or None,
                 "context_precision": (
                     hit_chunk_count / len(ranked_chunks) if ranked_chunks else 0.0
                 ),
@@ -138,6 +146,8 @@ def evaluate_api(
                 ],
             }
         )
+        if progress_callback:
+            progress_callback(position, total_questions)
     report = _summarize_dict_results(results, mode=mode, top_k=top_k, backend="api")
     report["max_cases"] = max_cases
     return report

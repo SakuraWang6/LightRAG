@@ -229,14 +229,9 @@ def test_routes_require_api_key(runs_tree: Path, monkeypatch) -> None:
     assert len(response.json()["runs"]) == 2
 
 
-def test_webui_only_advertises_and_launches_isolated_end_to_end(runs_tree: Path, monkeypatch) -> None:
+def test_product_router_rejects_research_experiments(runs_tree: Path, monkeypatch) -> None:
     monkeypatch.setattr(_utils_api, "auth_configured", False)
     client = _client(runs_tree)
-    experiments = client.get("/eval/experiments")
-    assert experiments.status_code == 200
-    items = {item["id"]: item for item in experiments.json()["experiments"]}
-    assert items["end_to_end_baseline"]["webui_launchable"] is True
-    assert items["context_size"]["webui_launchable"] is False
     blocked = client.post(
         "/eval/jobs",
         json={
@@ -247,6 +242,7 @@ def test_webui_only_advertises_and_launches_isolated_end_to_end(runs_tree: Path,
     )
     assert blocked.status_code == 400
     assert "not available in the WebUI" in blocked.json()["detail"]
+    assert client.get("/eval/experiments").status_code == 404
 
 
 def test_create_evaluation_passes_custom_name_and_runtime_parameters(
@@ -262,6 +258,15 @@ def test_create_evaluation_passes_custom_name_and_runtime_parameters(
         return {"id": "run-job", "kind": "run", "status": "pending"}
 
     monkeypatch.setattr(_eval_routes.eval_jobs, "start_run_job", fake_start_run_job)
+    monkeypatch.setattr(
+        _eval_routes,
+        "_evaluation_model_capability",
+        lambda: {
+            "default_model": "qwen3:8b",
+            "selectable_models": ["qwen3:8b"],
+            "configuration_error": None,
+        },
+    )
     client = _client(tmp_path / "runs", datasets_root=datasets)
     response = client.post(
         "/eval/jobs",
@@ -285,6 +290,7 @@ def test_create_evaluation_passes_custom_name_and_runtime_parameters(
     assert response.status_code == 200, response.text
     params = captured["params"]
     assert params.label == "合同文档测评"
+    assert params.model == "qwen3:8b"
     assert params.max_total_tokens == 4096
     assert params.top_k == 8
     assert params.engine == "native"
@@ -667,6 +673,36 @@ def test_end_to_end_run_indexes_answer_sheet_with_retrieval_diagnostics(
     assert "不调用 LLM" in report["report_md"]
 
 
+def test_end_to_end_index_uses_root_label_and_execution_manifest_dataset(
+    runs_tree: Path,
+) -> None:
+    """A user name and dataset survive listing/reproduce without legacy fields."""
+    from lightrag.api.eval_index import clear_scan_cache, load_run
+
+    payload = _experiment_envelope("named-e2e")
+    payload.update(
+        {
+            "label": "合同文档基线",
+            "dataset": None,
+            "baseline": {"model": "qwen3:8b"},
+            "execution_manifest": {
+                "dataset": {"dataset_id": "rich-smoke-v1", "manifest_sha256": "abc"}
+            },
+        }
+    )
+    payload["experiment"] = {
+        "id": "end_to_end_baseline",
+        "label": "端到端测评",
+        "description": "",
+    }
+    _write(runs_tree / "named-e2e" / "run.json", payload)
+    clear_scan_cache(runs_tree)
+    detail = load_run(runs_tree, "named-e2e")
+    assert detail is not None
+    assert detail["label"] == "合同文档基线"
+    assert detail["dataset"] == "rich-smoke-v1"
+
+
 def test_end_to_end_legacy_trace_backfills_abstain_without_fake_retrieval_gap(
     runs_tree: Path,
 ) -> None:
@@ -793,87 +829,6 @@ def test_run_detail_surfaces_structured_failure_and_events(runs_tree: Path) -> N
     assert detail["events"][0]["message"] == "token=configured"
 
 
-def test_environment_profiles_are_versioned_published_and_execution_ready(
-    runs_tree: Path, monkeypatch
-) -> None:
-    monkeypatch.setattr(_utils_api, "auth_configured", False)
-    client = _client(runs_tree, api_key="secret-key")
-    headers = {"X-API-Key": "secret-key"}
-    configuration = {
-        "embedding": {
-            "provider": "openai",
-            "model": "text-embedding-3-large",
-        },
-        "query": {"provider": "openai", "model": "gpt-4.1"},
-        "parser_engine": "native",
-        "storage_backends": {"vector": "QdrantVectorDBStorage"},
-        "retrieval_defaults": {"top_k": 5},
-        "concurrency": {"max_async_llm": 2},
-    }
-    first = client.post(
-        "/eval/environment-profiles",
-        headers=headers,
-        json={"name": "OpenAI isolated", "configuration": configuration},
-    )
-    assert first.status_code == 200
-    draft = first.json()
-    assert draft["status"] == "draft"
-    assert draft["version"] == 1
-    profile_id = draft["id"]
-
-    published = client.post(
-        f"/eval/environment-profiles/{profile_id}/versions/1/publish", headers=headers
-    )
-    assert published.status_code == 200
-    assert published.json()["status"] == "published"
-    detail = client.get(
-        f"/eval/environment-profiles/{profile_id}/versions/1", headers=headers
-    )
-    assert detail.status_code == 200
-    assert detail.json()["configuration"]["embedding"]["model"] == "text-embedding-3-large"
-
-    second = client.post(
-        "/eval/environment-profiles",
-        headers=headers,
-        json={"name": "OpenAI isolated", "profile_id": profile_id, "configuration": configuration},
-    )
-    assert second.status_code == 200
-    assert second.json()["version"] == 2
-    assert second.json()["status"] == "draft"
-    listed = client.get("/eval/environment-profiles", headers=headers)
-    assert listed.status_code == 200
-    assert [item["version"] for item in listed.json()["profiles"][0]["versions"]] == [1, 2]
-
-    insecure = client.post(
-        "/eval/environment-profiles",
-        headers=headers,
-        json={
-            "name": "insecure",
-            "configuration": {
-                **configuration,
-                "embedding": {"provider": "openai", "model": "embed", "api_key": "plain-secret"},
-            },
-        },
-    )
-    assert insecure.status_code == 422
-
-    unsafe_endpoint = client.post(
-        "/eval/environment-profiles",
-        headers=headers,
-        json={
-            "name": "unsafe endpoint",
-            "configuration": {
-                **configuration,
-                "embedding": {
-                    "provider": "openai",
-                    "model": "embed",
-                    "endpoint": "https://untrusted.example.test/v1",
-                },
-            },
-        },
-    )
-    assert unsafe_endpoint.status_code == 400
-
 
 def test_run_log_endpoint_returns_tail(runs_tree: Path, monkeypatch) -> None:
     monkeypatch.setattr(_utils_api, "auth_configured", False)
@@ -975,33 +930,3 @@ def test_run_diagnosis_csv_export_is_safe_and_structured(runs_tree: Path, monkey
     assert response.status_code == 200
     assert "question_id,question_type" in response.text
     assert "Q-1" in response.text
-
-
-def test_oracle_upper_bound_endpoint_only_lists_explicitly_linked_runs(
-    runs_tree: Path, monkeypatch
-) -> None:
-    monkeypatch.setattr(_utils_api, "auth_configured", False)
-    payload = _experiment_envelope("oracle-upper")
-    payload["experiment"]["id"] = "oracle_upper_bound"
-    payload["diagnoses_run_id"] = "context-selection-v1"
-    _write(runs_tree / "oracle-upper" / "run.json", payload)
-    client = _client(runs_tree, api_key="secret-key")
-    response = client.get(
-        "/eval/runs/context-selection-v1/oracle-upper-bounds",
-        headers={"X-API-Key": "secret-key"},
-    )
-    assert response.status_code == 200
-    assert [item["id"] for item in response.json()["oracle_upper_bounds"]] == ["oracle-upper"]
-
-
-def test_frozen_context_endpoint_requires_traced_end_to_end_run(runs_tree: Path, monkeypatch) -> None:
-    monkeypatch.setattr(_utils_api, "auth_configured", False)
-    run_dir = runs_tree / "context-selection-v1"
-    payload = _experiment_envelope()
-    payload["experiment"]["id"] = "end_to_end_baseline"
-    _write(run_dir / "run.json", payload)
-    _write(run_dir / "case_trace.json", {"cases": [{"question_id": "Q1", "oracle": {"question": "q", "answer": "a"}, "final_context": {"status": "observed", "content": "ctx", "system_prompt": "sys ctx", "user_query": "q"}}]})
-    client = _client(runs_tree, api_key="secret-key")
-    response = client.post("/eval/frozen-contexts", headers={"X-API-Key": "secret-key"}, json={"parent_run_id": "context-selection-v1"})
-    assert response.status_code == 200
-    assert response.json()["case_count"] == 1

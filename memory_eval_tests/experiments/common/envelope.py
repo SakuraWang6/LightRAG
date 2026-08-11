@@ -29,7 +29,9 @@ BASELINE_DEFAULTS: dict[str, Any] = {
     "model": "qwen3:8b",
     "vlm_model": "gemma3:4b",
     "num_ctx": 16384,
-    "num_predict": 128,
+    # The product path must never silently fall back to the old 128-token
+    # budget, which truncates normal answers and structured extraction.
+    "num_predict": 4096,
     "max_total_tokens": 8192,
     "temperature": 0,
     "kg": True,
@@ -197,6 +199,29 @@ def _manifest_value(payload: dict[str, Any], *keys: str) -> Any:
     return _unknown(f"dataset manifest has none of: {', '.join(keys)}")
 
 
+def _source_document_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Select source documents without ever fingerprinting answer artefacts."""
+    files = [item for item in manifest.get("files") or [] if isinstance(item, dict)]
+    has_roles = any(
+        item.get("role") in {"source_document", "evaluation_artifact"}
+        for item in files
+    )
+    return [
+        item
+        for item in files
+        if item.get("status") == "created"
+        and str(item.get("format") or "").lower() in {"docx", "pdf"}
+        and (
+            item.get("role") == "source_document"
+            if has_roles
+            # Older imported manifests may not have a top-level ``formats``
+            # list. A created DOCX/PDF is still an unambiguous source file;
+            # JSON/PNG artefacts remain excluded by the format guard above.
+            else True
+        )
+    ]
+
+
 def build_execution_manifest(
     *,
     dataset: Path | None,
@@ -231,12 +256,8 @@ def build_execution_manifest(
     }
     document_files: list[dict[str, Any]] = []
     if manifest and dataset_path is not None:
-        for item in manifest.get("files") or []:
-            if not isinstance(item, dict) or item.get("status") != "created":
-                continue
+        for item in _source_document_entries(manifest):
             file_format = str(item.get("format") or "").lower()
-            if file_format not in {"docx", "pdf", "txt", "md", "html"}:
-                continue
             name = str(item.get("name") or "")
             path = dataset_path / name
             document_files.append(
@@ -308,6 +329,12 @@ def _existing_runtime_snapshot(output_dir: Path) -> dict[str, Any] | None:
     except (OSError, ValueError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def _dataset_id_from_manifest(execution_manifest: dict[str, Any]) -> str | None:
+    """Extract the stable dataset id from the immutable execution manifest."""
+    value = ((execution_manifest.get("dataset") or {}).get("dataset_id"))
+    return value if isinstance(value, str) and value.strip() else None
 
 
 def _endpoint_identifier(value: Any) -> str | dict[str, str]:
@@ -675,6 +702,7 @@ def write_envelope(
         baseline=context.baseline,
         runtime_snapshot=runtime_snapshot,
     )
+    run_label = (context.label or "").strip() or context.spec.label
     envelope: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "kind": context.spec.kind,
@@ -683,9 +711,13 @@ def write_envelope(
         "started_at": context.started_at,
         "restarts": context.restarts,
         "status": status,
+        # A user-created single evaluation has its own name.  The experiment
+        # descriptor is immutable implementation metadata, not a second name.
+        "label": run_label,
+        "dataset": _dataset_id_from_manifest(execution_manifest),
         "experiment": {
             "id": context.spec.id,
-            "label": (context.label or "").strip() or context.spec.label,
+            "label": context.spec.label,
             "description": context.spec.description,
         },
         "environment": _redact_environment(context.environment),
@@ -788,6 +820,8 @@ def write_simple_envelope(
         "created_at": now,
         "status": status,
         "restarts": restarts,
+        "label": str(experiment.get("label") or run_id),
+        "dataset": _dataset_id_from_manifest(execution_manifest),
         "experiment": experiment,
         "environment": _redact_environment(environment),
         "baseline": baseline,

@@ -23,7 +23,6 @@ import {
 } from '@/components/ui/Select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs'
 import EmptyCard from '@/components/ui/EmptyCard'
-import AiAnalysis from '@/features/eval/AiAnalysis'
 import CasesView from '@/features/eval/CasesView'
 import ConditionChips from '@/features/eval/ConditionChips'
 import EvaluationSummary from '@/features/eval/EvaluationSummary'
@@ -316,7 +315,6 @@ function StandardRunView({ run, active }: { run: EvalRunDetail; active: boolean 
         </TabsContent>
 
         <TabsContent value="reports" forceMount={false} className="mt-3 space-y-3">
-          <AiAnalysis runId={run.id} />
           {reportArtifacts.length === 0 ? (
             <EmptyCard title={t('eval.noReports')} description={t('eval.noReportsHint')} />
           ) : (
@@ -378,15 +376,9 @@ export default function EvalRunDetail({
     if (!activeJob) return
     if (!window.confirm(t('eval.cancelRunConfirm'))) return
     try {
-      const result = await cancelEvalJob(activeJob.id)
+      await cancelEvalJob(activeJob.id)
       setActiveJob(null)
-      toast.success(
-        result.status === 'cancelled'
-          ? activeJob.supervise
-            ? t('eval.canceledNoRestart')
-            : t('eval.jobCanceled')
-          : t('eval.jobCanceled')
-      )
+      toast.success(t('eval.jobCanceled'))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
     }
@@ -417,8 +409,7 @@ export default function EvalRunDetail({
       <div className="flex h-full flex-col overflow-hidden">
         <RunHeader {...headerProps} />
         <div className="min-h-0 flex-1 overflow-auto p-4">
-          <AiAnalysis runId={run.id} />
-          <div className="mt-3">
+          <div>
             {report ? <ReportDocument artifact={report} /> : <EmptyCard title="—" description="—" />}
           </div>
         </div>
