@@ -1,38 +1,72 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { RefreshCwIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { getEvalRunLog, type EvalRunEvent } from '@/api/eval'
-import Button from '@/components/ui/Button'
 import EmptyCard from '@/components/ui/EmptyCard'
 
 interface RunLogProps {
   runId: string
   events?: EvalRunEvent[]
+  active?: boolean
 }
 
-export default function RunLog({ runId, events = [] }: RunLogProps) {
+const LIVE_LOG_POLL_INTERVAL_MS = 1500
+const FOLLOW_TAIL_THRESHOLD_PX = 24
+
+function sameLines(previous: string[] | null, next: string[]): boolean {
+  return previous?.length === next.length && previous.every((line, index) => line === next[index])
+}
+
+export default function RunLog({ runId, events = [], active = false }: RunLogProps) {
   const { t } = useTranslation()
   const [lines, setLines] = useState<string[] | null>(null)
   const [loading, setLoading] = useState(false)
+  const [followTail, setFollowTail] = useState(true)
+  const logViewportRef = useRef<HTMLPreElement | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     setLoading(true)
     try {
       const result = await getEvalRunLog(runId)
-      setLines(result.lines)
+      setLines((previous) => (sameLines(previous, result.lines) ? previous : result.lines))
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error))
+      if (!silent) {
+        toast.error(error instanceof Error ? error.message : String(error))
+      }
     } finally {
       setLoading(false)
     }
   }, [runId])
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0)
+    const timer = window.setTimeout(() => {
+      setLines(null)
+      setFollowTail(true)
+      void load()
+    }, 0)
     return () => window.clearTimeout(timer)
   }, [load])
+
+  useEffect(() => {
+    if (!active) return
+    const timer = window.setInterval(() => void load(true), LIVE_LOG_POLL_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [active, load])
+
+  useEffect(() => {
+    const viewport = logViewportRef.current
+    if (followTail && viewport) {
+      viewport.scrollTop = viewport.scrollHeight
+    }
+  }, [followTail, lines])
+
+  const handleLogScroll = () => {
+    const viewport = logViewportRef.current
+    if (!viewport) return
+    const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+    setFollowTail(distanceFromBottom <= FOLLOW_TAIL_THRESHOLD_PX)
+  }
 
   if (lines === null) {
     return <p className="text-muted-foreground text-sm">{t('eval.loading')}</p>
@@ -61,15 +95,23 @@ export default function RunLog({ runId, events = [] }: RunLogProps) {
           </ol>
         </div>
       ) : null}
-      <Button size="sm" variant="outline" onClick={() => void load()} disabled={loading}>
-        <RefreshCwIcon className={`mr-1 size-4 ${loading ? 'animate-spin' : ''}`} />
-        刷新日志
-      </Button>
       {lines.length > 0 ? (
-        <details className="rounded-md border bg-muted/20">
-          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">原始运行日志</summary>
-          <pre className="bg-muted/40 max-h-[480px] overflow-auto border-t p-3 text-xs leading-relaxed">{lines.join('\n')}</pre>
-        </details>
+        <section className="overflow-hidden rounded-md border bg-muted/20">
+          <div className="flex items-center justify-between border-b px-3 py-2">
+            <p className="text-sm font-medium">实时运行日志</p>
+            <span className="text-muted-foreground flex items-center gap-1.5 text-xs">
+              {active ? <span className="bg-emerald-500 size-1.5 animate-pulse rounded-full" /> : null}
+              {active ? '自动更新中' : loading ? t('eval.loading') : '日志已停止更新'}
+            </span>
+          </div>
+          <pre
+            ref={logViewportRef}
+            onScroll={handleLogScroll}
+            className="bg-muted/40 max-h-[480px] overflow-auto p-3 text-xs leading-relaxed"
+          >
+            {lines.join('\n')}
+          </pre>
+        </section>
       ) : null}
     </div>
   )

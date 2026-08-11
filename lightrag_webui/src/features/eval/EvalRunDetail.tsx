@@ -227,7 +227,7 @@ function ArtifactMetricsCard({ artifact }: { artifact: EvalArtifact }) {
   )
 }
 
-function StandardRunView({ run }: { run: EvalRunDetail }) {
+function StandardRunView({ run, active }: { run: EvalRunDetail; active: boolean }) {
   const { t } = useTranslation()
   const [tab, setTab] = useState('metrics')
   const caseArtifact = useMemo(
@@ -333,7 +333,7 @@ function StandardRunView({ run }: { run: EvalRunDetail }) {
         </TabsContent>
 
         <TabsContent value="log" forceMount={false} className="mt-3">
-          <RunLog runId={run.id} events={run.events} />
+          <RunLog runId={run.id} events={run.events} active={active} />
         </TabsContent>
       </Tabs>
     </div>
@@ -421,7 +421,14 @@ export default function EvalRunDetail({
     <div className="flex h-full flex-col overflow-hidden">
       <RunHeader {...headerProps} />
       <div className="min-h-0 flex-1 overflow-auto">
-        <StandardRunView run={run} />
+        <StandardRunView
+          run={run}
+          active={
+            Boolean(activeJob) ||
+            ['running', 'queued', 'pending'].includes(run.progress?.status ?? '') ||
+            ['running', 'queued', 'pending'].includes(run.status ?? '')
+          }
+        />
       </div>
     </div>
   )
