@@ -63,6 +63,28 @@ class APITimeoutError(APIConnectionError):
         super().__init__(message="Request timed out.", request=request)
 
 
+class EmptyTruncatedResponseError(RuntimeError):
+    """A token-limit-truncated LLM response that carried nothing usable.
+
+    Two raise surfaces share it (issue #3601 gap 4):
+
+    - the provider bindings (OpenAI/Gemini), when the response is empty and
+      the finish reason is the output token limit;
+    - ``use_llm_func_with_cache``, for the case no binding can see: a thinking
+      model exhausts its budget inside the reasoning trace and returns
+      ``<think>...</think>`` with no answer after it — NON-empty at the
+      binding's own check, visibly empty only after ``remove_think_tags``.
+
+    Deliberately absent from every binding's retry predicate, unlike the
+    retryable response-validity errors: hitting the token limit is a property
+    of the prompt and the configured output budget, so re-running the same
+    call re-buys the same full-budget generation just to fail identically.
+    Nothing was generated and generation was cut off — there is nothing to
+    salvage. Failing (once) is what stops an empty knowledge graph from being
+    indexed and reported as success.
+    """
+
+
 class StorageNotInitializedError(RuntimeError):
     """Raised when storage operations are attempted before initialization."""
 
@@ -427,13 +449,18 @@ class ChunkTokenLimitExceededError(ValueError):
 
 
 class ChunkBlockMatchError(ValueError):
-    """Raised when a chunk cannot be located in the document's blocks.jsonl.
+    """Raised when a chunk's provenance cannot be located in the source document.
 
     Sidecar backfill (``lightrag.sidecar.backfill``) maps F/R/V chunks back to
     their source block(s) by matching chunk content against the parse-time
     ``*.blocks.jsonl`` merged text. When a sidecar-less chunk cannot be located,
     this is raised so the pipeline marks the document FAILED rather than
     persisting chunks with missing/incorrect provenance.
+
+    Also raised earlier, by ``lightrag.utils.enforce_chunk_token_limit_before_embedding``,
+    when a hard-split child chunk's parent content has diverged from the
+    document text beyond whitespace — the same class of failure sidecar
+    backfill would otherwise surface downstream, just with less context.
     """
 
     def __init__(

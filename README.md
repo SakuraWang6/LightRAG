@@ -220,7 +220,7 @@ For full description of every target see [docs/InteractiveSetup.md](./docs/Inter
 The native docx parser's opt-in `smart_heading` engine parameter uses spaCy for sentence/NER heuristics. The spaCy runtime is already included in the `api` extra — only the two pinned language models (`zh_core_web_sm` / `en_core_web_sm` 3.8.0, GitHub release wheels not published on PyPI) need one extra step:
 
 ```bash
-lightrag-download-cache --spacy --spacy-install
+lightrag-download-cache --spacy-install
 ```
 
 Enable smart_heading per file/rule (e.g. `LIGHTRAG_PARSER=docx:native(smart_heading=true)`), or globally in `.env`:
@@ -232,6 +232,27 @@ DOCX_SMART_HEADING=true
 ```
 
 When the global switch is on (or a `LIGHTRAG_PARSER` rule carries `native(smart_heading=true)`), the server verifies the models at startup and fails fast with install guidance if they are missing. Deployments that never enable smart_heading need no models. The main Docker image ships the models pre-installed (the lite image does not); for air-gapped hosts see the [Offline Deployment Guide](./docs/OfflineDeployment.md).
+
+### Optional: libcairo for SVG Rasterization (native md/textpack)
+
+The native markdown/textpack parser rasterizes embedded SVG images to PNG via `cairosvg`. `cairosvg` is a cffi binding: `pip install cairosvg` (pulled in by the `api` extra) always succeeds, but rendering only works if the native `libcairo` shared library is *also* present on the host — `pip`/`uv` cannot install system libraries. Without it, rasterization fails at runtime and the affected SVG is skipped (the rest of the document is unaffected); the server logs a warning at startup so the gap is visible before it shows up as a per-document warning later.
+
+Install the system package for your platform:
+
+```bash
+# Debian / Ubuntu (the official Docker image already includes this)
+sudo apt-get install -y libcairo2
+
+# RHEL / Fedora
+sudo dnf install -y cairo
+
+# macOS (Homebrew)
+brew install cairo
+
+# Windows: install the GTK3 runtime, which bundles libcairo-2.dll
+```
+
+Deployments that never process markdown/textpack documents with embedded SVGs can ignore the startup warning.
 
 ## About LightRAG
 
@@ -520,7 +541,7 @@ Audits the whole graph for contributions missing from the `full_entities` / `ful
 
 Lists documents that claim the same canonical source key, and demotes the candidates the operator did not choose to duplicates. It never picks a winner on its own and never deletes content.
 
-**`download_cache.py`** — `lightrag-download-cache [--spacy --spacy-install]` — [OfflineDeployment.md](./docs/OfflineDeployment.md)
+**`download_cache.py`** — `lightrag-download-cache [--spacy-install]` — [OfflineDeployment.md](./docs/OfflineDeployment.md)
 
 Pre-downloads the tiktoken encodings and the pinned spaCy models required for offline deployment and the docx `smart_heading` engine parameter.
 
