@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CheckIcon, DownloadIcon, XIcon, MinusIcon } from 'lucide-react'
 
@@ -10,14 +10,6 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/Select'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow
-} from '@/components/ui/Table'
 import { buildCasesCsv, caseFieldLabel } from '@/features/eval/utils'
 
 type NormalizedCase = {
@@ -26,11 +18,7 @@ type NormalizedCase = {
   answer: string
   expected: string
   passed: boolean | null
-  group: string
   type: string
-  scenario: string
-  failureCategory: string
-  method: string
   raw: Record<string, unknown>
 }
 
@@ -119,21 +107,13 @@ function normalize(row: Record<string, unknown>): NormalizedCase {
   } else if (typeof row.grounded === 'boolean' && row.exact_match === undefined) {
     passed = null // retrieval-style rows only carry recall, not pass/fail
   }
-  const diagnosis =
-    typeof row.diagnosis === 'object' && row.diagnosis !== null && !Array.isArray(row.diagnosis)
-      ? row.diagnosis as Record<string, unknown>
-      : {}
   return {
     id: String(row.question_id ?? question ?? ''),
     question,
     answer,
     expected,
     passed,
-    group: String(row.question_group ?? ''),
     type: String(row.question_type ?? ''),
-    scenario: Array.isArray(row.scenario_labels) ? row.scenario_labels.map(String).join(' · ') : String(row.scenario ?? ''),
-    failureCategory: String(row.failure_category ?? row.primary_cause ?? diagnosis.primary_cause ?? ''),
-    method: String(row.method ?? row.arm ?? ''),
     raw: row
   }
 }
@@ -145,32 +125,19 @@ interface CasesViewProps {
 export default function CasesView({ rows }: CasesViewProps) {
   const { t } = useTranslation()
   const [filter, setFilter] = useState('all')
-  const [groupFilter, setGroupFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState('all')
-  const [scenarioFilter, setScenarioFilter] = useState('all')
-  const [failureFilter, setFailureFilter] = useState('all')
-  const [expanded, setExpanded] = useState<string | null>(null)
 
   const cases = useMemo(() => rows.map(normalize), [rows])
-  const groups = useMemo(
-    () => Array.from(new Set(cases.map((c) => c.group).filter(Boolean))).sort(),
-    [cases]
-  )
   const types = useMemo(() => Array.from(new Set(cases.map((c) => c.type).filter(Boolean))).sort(), [cases])
-  const scenarios = useMemo(() => Array.from(new Set(cases.flatMap((c) => c.scenario.split(' · ').filter(Boolean)))).sort(), [cases])
-  const failures = useMemo(() => Array.from(new Set(cases.map((c) => c.failureCategory).filter(Boolean))).sort(), [cases])
   const filtered = useMemo(
     () =>
       cases.filter((c) => {
         if (filter === 'pass' && c.passed !== true) return false
         if (filter === 'fail' && c.passed !== false) return false
-        if (groupFilter !== 'all' && c.group !== groupFilter) return false
         if (typeFilter !== 'all' && c.type !== typeFilter) return false
-        if (scenarioFilter !== 'all' && !c.scenario.split(' · ').includes(scenarioFilter)) return false
-        if (failureFilter !== 'all' && c.failureCategory !== failureFilter) return false
         return true
       }),
-    [cases, filter, groupFilter, typeFilter, scenarioFilter, failureFilter]
+    [cases, filter, typeFilter]
   )
 
   const exportCsv = () => {
@@ -186,7 +153,7 @@ export default function CasesView({ rows }: CasesViewProps) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="w-44">
           <Select value={filter} onValueChange={setFilter}>
             <SelectTrigger className="h-8">
@@ -205,33 +172,6 @@ export default function CasesView({ rows }: CasesViewProps) {
             <SelectContent><SelectItem value="all">全部题型</SelectItem>{types.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectContent>
           </Select>
         </div>
-        <div className="w-44">
-          <Select value={scenarioFilter} onValueChange={setScenarioFilter}>
-            <SelectTrigger className="h-8"><SelectValue placeholder="场景" /></SelectTrigger>
-            <SelectContent><SelectItem value="all">全部场景</SelectItem>{scenarios.map((scenario) => <SelectItem key={scenario} value={scenario}>{scenario}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
-        <div className="w-44">
-          <Select value={failureFilter} onValueChange={setFailureFilter}>
-            <SelectTrigger className="h-8"><SelectValue placeholder="失败分类" /></SelectTrigger>
-            <SelectContent><SelectItem value="all">全部失败分类</SelectItem>{failures.map((failure) => <SelectItem key={failure} value={failure}>{failure}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
-        <div className="w-44">
-          <Select value={groupFilter} onValueChange={setGroupFilter}>
-            <SelectTrigger className="h-8">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t('eval.caseAllGroups')}</SelectItem>
-              {groups.map((group) => (
-                <SelectItem key={group} value={group}>
-                  {group}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
         <span className="text-muted-foreground self-center text-xs">
           {filtered.length}/{cases.length}
         </span>
@@ -241,84 +181,49 @@ export default function CasesView({ rows }: CasesViewProps) {
         </Button>
       </div>
 
-      <div className="overflow-auto rounded-md border">
-        <Table className="min-w-full text-left text-sm">
-          <TableHeader className="sticky top-0 bg-background">
-            <TableRow>
-              <TableHead className="px-3 py-2">{t('eval.caseQuestion')}</TableHead>
-              <TableHead className="px-3 py-2">{t('eval.caseAnswer')}</TableHead>
-              <TableHead className="px-3 py-2">{t('eval.caseExpected')}</TableHead>
-              <TableHead className="px-3 py-2">{t('eval.caseResult')}</TableHead>
-              <TableHead className="px-3 py-2">{t('eval.caseType')}</TableHead>
-              <TableHead className="px-3 py-2">场景 / 失败分类</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((c, index) => {
-              const isExpanded = expanded === c.id
-              return (
-                <Fragment key={`${c.id}-${index}`}>
-                  <TableRow
-                    className="cursor-pointer"
-                    onClick={() => setExpanded(isExpanded ? null : c.id)}
-                  >
-                    <TableCell className="max-w-[240px] px-3 py-2">
-                      <span className="line-clamp-2 whitespace-pre-wrap break-words">
-                        {c.question || c.id || '—'}
-                      </span>
-                    </TableCell>
-                    <TableCell className="max-w-[260px] px-3 py-2">
-                      <span className={isExpanded ? 'whitespace-pre-wrap break-words' : 'line-clamp-2 whitespace-pre-wrap break-words'}>
-                        {c.answer || '—'}
-                      </span>
-                    </TableCell>
-                    <TableCell className="max-w-[200px] px-3 py-2">
-                      <span className={isExpanded ? 'whitespace-pre-wrap break-words' : 'line-clamp-2 whitespace-pre-wrap break-words'}>
-                        {c.expected || '—'}
-                      </span>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap px-3 py-2">
-                      {c.passed === true ? (
-                        <span className="text-emerald-600 dark:text-emerald-400 inline-flex items-center gap-1">
-                          <CheckIcon className="size-4" /> {t('eval.casePass')}
-                        </span>
-                      ) : c.passed === false ? (
-                        <span className="text-red-600 dark:text-red-400 inline-flex items-center gap-1">
-                          <XIcon className="size-4" /> {t('eval.caseFail')}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground inline-flex items-center gap-1">
-                          <MinusIcon className="size-4" /> —
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap px-3 py-2">
-                      {[c.group, c.type, c.method].filter(Boolean).join(' · ') || '—'}
-                    </TableCell>
-                    <TableCell className="max-w-[180px] px-3 py-2 text-xs">
-                      {[c.scenario, c.failureCategory].filter(Boolean).join(' · ') || '—'}
-                    </TableCell>
-                  </TableRow>
-                  {isExpanded ? (
-                    <TableRow className="bg-muted/40">
-                      <TableCell colSpan={6} className="px-3 py-2">
-                        <CaseDetail c={c} />
-                      </TableCell>
-                    </TableRow>
-                  ) : null}
-                </Fragment>
-              )
-            })}
-            {filtered.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="text-muted-foreground h-24 text-center">
-                  {t('eval.noCases')}
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
-      </div>
+      {filtered.length === 0 ? (
+        <div className="text-muted-foreground rounded-lg border border-dashed py-12 text-center text-sm">
+          {t('eval.noCases')}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {filtered.map((c, index) => (
+            <article key={`${c.id}-${index}`} className="relative overflow-hidden rounded-lg border bg-card shadow-sm">
+              <div className={`absolute inset-y-0 left-0 w-1 ${c.passed === true ? 'bg-emerald-500' : c.passed === false ? 'bg-red-500' : 'bg-muted-foreground/40'}`} />
+              <header className="flex flex-wrap items-center gap-2 border-b bg-muted/25 px-5 py-3 pl-6">
+                <span className="font-serif text-lg font-semibold">第 {index + 1} 题</span>
+                {c.type ? <span className="rounded-full border bg-background px-2 py-0.5 text-xs text-muted-foreground">{c.type}</span> : null}
+                <span className={`ml-auto inline-flex items-center gap-1 text-sm font-medium ${c.passed === true ? 'text-emerald-600 dark:text-emerald-400' : c.passed === false ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}`}>
+                  {c.passed === true ? <CheckIcon className="size-4" /> : c.passed === false ? <XIcon className="size-4" /> : <MinusIcon className="size-4" />}
+                  {c.passed === true ? t('eval.casePass') : c.passed === false ? t('eval.caseFail') : '未判定'}
+                </span>
+              </header>
+              <div className="space-y-5 px-5 py-5 pl-6">
+                <section>
+                  <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">题目</p>
+                  <p className="font-serif whitespace-pre-wrap break-words text-base leading-7">{c.question || c.id || '—'}</p>
+                </section>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <section className="rounded-md border bg-muted/25 p-4">
+                    <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">模型回答</p>
+                    <p className="whitespace-pre-wrap break-words text-sm leading-6">{c.answer || '—'}</p>
+                  </section>
+                  <section className="rounded-md border border-primary/20 bg-primary/[0.03] p-4">
+                    <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">标准答案</p>
+                    <p className="whitespace-pre-wrap break-words text-sm leading-6">{c.expected || '—'}</p>
+                  </section>
+                </div>
+                <details className="rounded-md border bg-muted/15 px-3 py-2 text-sm">
+                  <summary className="cursor-pointer select-none font-medium">评分明细与证据</summary>
+                  <div className="mt-3 border-t pt-3">
+                    <CaseDetail c={c} />
+                  </div>
+                </details>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

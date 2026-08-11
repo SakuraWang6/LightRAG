@@ -26,8 +26,7 @@ import {
   formatDelta,
   formatMetricCell,
   metricStats,
-  metricRank,
-  runKindClass
+  metricRank
 } from '@/features/eval/utils'
 
 interface EvalCompareProps {
@@ -44,24 +43,6 @@ function collectMetrics(run: EvalRunDetail): Map<string, MetricItem> {
     for (const metric of artifact.metrics) {
       if (!map.has(metric.key)) {
         map.set(metric.key, metric)
-      }
-    }
-    // Experiments carry their comparisons in the method table; expose each
-    // method's scalar metrics as comparable rows ("method · metric").
-    for (const row of artifact.table?.rows ?? []) {
-      const methodName = String(row.label ?? row.method ?? row.arm ?? '')
-      if (!methodName) continue
-      for (const column of artifact.table?.columns ?? []) {
-        const value = row[column.key]
-        if (typeof value !== 'number' && typeof value !== 'boolean') continue
-        const key = `${methodName}|${column.key}`
-        if (map.has(key)) continue
-        map.set(key, {
-          key,
-          label: `${methodName} · ${column.label}`,
-          value,
-          type: typeof value === 'boolean' ? 'bool' : 'number'
-        })
       }
     }
   }
@@ -216,11 +197,11 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
                           <span className="max-w-[160px] truncate font-semibold" title={run.label}>
                             {run.label}
                           </span>
-                          <Badge variant="outline" className={`w-fit text-[10px] ${runKindClass(run.kind)}`}>
-                            {runs.indexOf(run) === baselineIndex
-                              ? `${run.kind} · ${t('eval.baselineSuffix')}`
-                              : run.kind}
-                          </Badge>
+                          {runs.indexOf(run) === baselineIndex ? (
+                            <Badge variant="outline" className="w-fit text-[10px]">
+                              {t('eval.baselineSuffix')}
+                            </Badge>
+                          ) : null}
                         </span>
                       </TableHead>
                     ))}

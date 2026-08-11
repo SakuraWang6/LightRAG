@@ -1,7 +1,6 @@
 import { CheckIcon, XIcon } from 'lucide-react'
 
 import type { MetricItem } from '@/api/eval'
-import { Card } from '@/components/ui/Card'
 import { formatMetricValue } from '@/features/eval/utils'
 
 interface MetricCardsProps {
@@ -14,14 +13,14 @@ export default function MetricCards({ metrics }: MetricCardsProps) {
     return <p className="text-muted-foreground text-sm">—</p>
   }
   return (
-    <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-4">
+    <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
       {visible.map((metric) => (
-        <Card key={metric.key} className="p-3">
-          <p className="text-muted-foreground truncate text-xs" title={metric.label}>
+        <div key={metric.key} className="flex min-w-0 items-center justify-between gap-4 rounded-md border bg-card px-3 py-2.5">
+          <dt className="text-muted-foreground truncate text-sm" title={metric.label}>
             {metric.label}
-          </p>
-          <p
-            className={`mt-1 flex items-center gap-1 text-base font-semibold ${
+          </dt>
+          <dd
+            className={`flex shrink-0 items-center gap-1 text-base font-semibold ${
               metric.value === false
                 ? 'text-red-600 dark:text-red-400'
                 : metric.value === true
@@ -37,9 +36,9 @@ export default function MetricCards({ metrics }: MetricCardsProps) {
             ) : (
               formatMetricValue(metric.value)
             )}
-          </p>
-        </Card>
+          </dd>
+        </div>
       ))}
-    </div>
+    </dl>
   )
 }

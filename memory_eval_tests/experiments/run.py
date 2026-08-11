@@ -27,6 +27,7 @@ from memory_eval_tests.experiments.common import (
     capture_environment,
     redact_launch_extra,
     redact_sensitive_text,
+    read_progress,
     write_envelope,
     write_progress,
 )
@@ -40,6 +41,7 @@ _LAUNCH_KEYS = (
     "max_cases",
     "num_ctx",
     "num_predict",
+    "max_total_tokens",
     "temperature",
     "engine",
     "kg",
@@ -73,6 +75,7 @@ def _parameter_sources(args: argparse.Namespace, baseline: dict[str, Any]) -> di
         ("chunk_top_k", args.chunk_top_k),
         ("num_ctx", args.num_ctx),
         ("num_predict", args.num_predict),
+        ("max_total_tokens", args.max_total_tokens),
         ("temperature", args.temperature),
         ("engine", args.engine),
     ):
@@ -186,12 +189,16 @@ def main() -> None:
     parser.add_argument(
         "--run-id", default=None, help="Optional run id (default: output-dir name)"
     )
+    parser.add_argument(
+        "--label", default=None, help="User-facing evaluation name stored in the envelope."
+    )
     parser.add_argument("--model", default=None)
     parser.add_argument("--mode", default=None)
     parser.add_argument("--top-k", type=int, default=None)
     parser.add_argument("--chunk-top-k", type=int, default=None)
     parser.add_argument("--num-ctx", type=int, default=None)
     parser.add_argument("--num-predict", type=int, default=None)
+    parser.add_argument("--max-total-tokens", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=None)
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--rag-api-url", default="http://127.0.0.1:9621")
@@ -260,6 +267,7 @@ def main() -> None:
         ("chunk_top_k", args.chunk_top_k),
         ("num_ctx", args.num_ctx),
         ("num_predict", args.num_predict),
+        ("max_total_tokens", args.max_total_tokens),
         ("temperature", args.temperature),
         ("engine", args.engine),
     ):
@@ -303,6 +311,7 @@ def main() -> None:
         environment=environment,
         variables=spec.variables,
         run_id=run_id,
+        label=args.label,
         extra=extra,
         restarts=args.restart_count,
         last_restart_resume=(
@@ -420,16 +429,20 @@ def main() -> None:
                     "launch_params": launch_params,
                 },
                 runs_root=runs_root,
+                write_progress_file=False,
             )
             _log(
                 args.output_dir,
                 f"finished status={status} cases={sum(len(m.get('results') or []) for m in methods)}",
             )
-            append_run_event(
-                args.output_dir,
-                phase="complete",
-                severity="info",
-                message=f"run finished with status {status}",
+            saved_progress = read_progress(args.output_dir)
+            total = int(saved_progress.get("total") or 1)
+            context.progress(
+                status,
+                total,
+                total,
+                "complete",
+                f"run finished with status {status}",
             )
         except Exception as exc:  # keep the failure visible for the console monitor
             _log(args.output_dir, f"failed {type(exc).__name__}: {exc}")
@@ -458,6 +471,7 @@ def main() -> None:
                 methods=[],
                 extra={"launch_params": launch_params, "failure": failure},
                 runs_root=runs_root,
+                write_progress_file=False,
             )
             write_progress(
                 args.output_dir,

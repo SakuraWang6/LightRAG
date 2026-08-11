@@ -37,42 +37,40 @@ export default function RunLog({ runId, events = [] }: RunLogProps) {
   if (lines === null) {
     return <p className="text-muted-foreground text-sm">{t('eval.loading')}</p>
   }
-  if (lines.length === 0) {
+  if (lines.length === 0 && events.length === 0) {
     return <EmptyCard title={t('eval.runLog')} description={t('eval.runLogEmpty')} />
   }
   return (
     <div className="space-y-2">
       {events.length > 0 ? (
-        <div className="overflow-auto rounded-md border">
-          <table className="min-w-full text-left text-xs">
-            <thead className="bg-muted/50">
-              <tr>
-                <th className="px-3 py-2 font-medium">Time</th>
-                <th className="px-3 py-2 font-medium">Phase</th>
-                <th className="px-3 py-2 font-medium">Level</th>
-                <th className="px-3 py-2 font-medium">Message</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.map((event, index) => (
-                <tr key={`${event.timestamp}-${index}`} className="border-t">
-                  <td className="text-muted-foreground whitespace-nowrap px-3 py-1.5">{event.timestamp}</td>
-                  <td className="px-3 py-1.5">{event.phase}</td>
-                  <td className="px-3 py-1.5">{event.severity}</td>
-                  <td className="px-3 py-1.5">{event.message}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-2 rounded-md border p-3">
+          <p className="text-muted-foreground text-xs font-medium">运行阶段</p>
+          <ol className="space-y-3">
+            {events.map((event, index) => (
+              <li key={`${event.timestamp}-${index}`} className="flex gap-3 text-sm">
+                <span className={`mt-1.5 size-2 shrink-0 rounded-full ${event.severity === 'error' ? 'bg-destructive' : 'bg-primary'}`} />
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="font-medium">{event.phase || '运行'}</span>
+                    <time className="text-muted-foreground text-xs">{event.timestamp}</time>
+                  </div>
+                  <p className="text-muted-foreground break-words text-sm">{event.message}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
         </div>
       ) : null}
       <Button size="sm" variant="outline" onClick={() => void load()} disabled={loading}>
         <RefreshCwIcon className={`mr-1 size-4 ${loading ? 'animate-spin' : ''}`} />
-        {t('eval.refresh')}
+        刷新日志
       </Button>
-      <pre className="bg-muted/40 max-h-[480px] overflow-auto rounded-md p-3 text-xs leading-relaxed">
-        {lines.join('\n')}
-      </pre>
+      {lines.length > 0 ? (
+        <details className="rounded-md border bg-muted/20">
+          <summary className="cursor-pointer px-3 py-2 text-sm font-medium">原始运行日志</summary>
+          <pre className="bg-muted/40 max-h-[480px] overflow-auto border-t p-3 text-xs leading-relaxed">{lines.join('\n')}</pre>
+        </details>
+      ) : null}
     </div>
   )
 }

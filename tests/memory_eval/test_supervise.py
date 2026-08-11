@@ -23,12 +23,14 @@ def _args(**overrides) -> argparse.Namespace:
         dataset=Path("memory_data_service/generated/rich-smoke-v1"),
         output_dir=Path("memory_eval_tests/runs/x"),
         run_id=None,
+        label=None,
         model=None,
         mode=None,
         top_k=None,
         chunk_top_k=None,
         num_ctx=None,
         num_predict=None,
+        max_total_tokens=None,
         temperature=None,
         ollama_url="http://127.0.0.1:11434",
         rag_api_url="http://127.0.0.1:9621",
@@ -60,6 +62,8 @@ def test_build_run_command_forwards_params() -> None:
         access_token="t",
         runs_root=Path("/tmp/runs"),
         max_cases=7,
+        label="Named evaluation",
+        max_total_tokens=4096,
     )
     params.heartbeat = True
     params.restart_count = 2
@@ -73,6 +77,8 @@ def test_build_run_command_forwards_params() -> None:
     assert cmd[cmd.index("--restart-count") + 1] == "2"
     assert "--original-started-at" in cmd
     assert cmd[cmd.index("--max-cases") + 1] == "7"
+    assert cmd[cmd.index("--label") + 1] == "Named evaluation"
+    assert cmd[cmd.index("--max-total-tokens") + 1] == "4096"
 
     plain = supervise.build_run_command(
         supervise.RunParams(

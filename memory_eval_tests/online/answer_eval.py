@@ -84,6 +84,10 @@ def evaluate_answers(
         results.append(
             {
                 "question_id": question["id"],
+                # Persist the rendered question with its result so the WebUI
+                # can present a self-contained review sheet without joining
+                # back to the source dataset at display time.
+                "question": question_text,
                 **scores,
                 "answer": answer_text,
                 "expected": expected,
@@ -104,6 +108,7 @@ def evaluate_answers(
         "chunk_top_k": chunk_top_k,
         "max_total_tokens": max_total_tokens,
         "cases": total,
+        "correct_cases": sum(bool(r["exact_match"]) for r in results),
         "max_cases": max_cases,
         "question_variant": question_variant,
         "answer_accuracy": sum(bool(r["exact_match"]) for r in decisive) / len(decisive)

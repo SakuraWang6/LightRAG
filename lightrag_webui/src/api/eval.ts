@@ -121,25 +121,11 @@ export type EvalRunDetail = EvalRun & {
   events?: EvalRunEvent[]
 }
 
-export type EvalExperiment = {
-  id: string
-  label: string
-  description: string
-  supervision: string
-  supports_resume: boolean
-  default_baseline: Record<string, unknown>
-  variables: EvalVariable[]
-  extra_schema: Record<string, string>
-  env_required: string[]
-  env_ready: boolean
-  webui_launchable: boolean
-  webui_block_reason: string
-}
-
 export type EvalJob = {
   id: string
   kind: 'run' | 'dataset'
   experiment?: string | null
+  label?: string | null
   dataset?: string | null
   dataset_id?: string | null
   output_dir: string
@@ -173,24 +159,6 @@ export type EnvironmentProfile = {
     created_at?: string
     published_at?: string
   }>
-}
-
-export type EvalTemplate = {
-  name: string
-  experiment: string
-  dataset: string
-  params: Record<string, unknown>
-  extraText?: string
-  supervise: boolean
-}
-
-export type ComparisonTemplate = {
-  type: string
-  label: string
-  allowed_variables: string[]
-  required_inputs: string[]
-  index_requirement: string
-  dependencies: string[]
 }
 
 const evalApiClient = axios.create({
@@ -251,13 +219,9 @@ export async function getEvalRunLog(
   return response.data
 }
 
-export async function listEvalExperiments(): Promise<EvalExperiment[]> {
-  const response = await evalApiClient.get('/eval/experiments')
-  return response.data.experiments
-}
-
 export async function createEvalJob(payload: {
   kind: 'run' | 'dataset'
+  name?: string
   experiment?: string
   dataset?: string
   params?: Record<string, unknown>
@@ -343,33 +307,6 @@ export async function deleteEvalRun(runId: string): Promise<{ deleted: string }>
   return response.data
 }
 
-export async function listEvalModels(): Promise<{
-  models: string[]
-  embedding_filtered: string[]
-}> {
-  const response = await evalApiClient.get('/eval/models')
-  return response.data
-}
-
-export async function listEvalTemplates(): Promise<EvalTemplate[]> {
-  const response = await evalApiClient.get('/eval/templates')
-  return response.data.templates
-}
-
-export async function listComparisonTemplates(): Promise<ComparisonTemplate[]> {
-  const response = await evalApiClient.get('/eval/comparison-templates')
-  return response.data.templates
-}
-
-export async function validateComparisonPlan(payload: {
-  comparison_type: string
-  variables: Record<string, unknown[]>
-  inputs: Record<string, unknown>
-}): Promise<{ arm_count: number; index_requirement: string; execution_dependencies: string[] }> {
-  const response = await evalApiClient.post('/eval/comparison-plans/validate', payload)
-  return response.data
-}
-
 export type RunComparisonContract = {
   comparable: boolean
   ranking_permitted: boolean
@@ -379,20 +316,6 @@ export type RunComparisonContract = {
 
 export async function validateRunComparison(runIds: string[]): Promise<RunComparisonContract> {
   const response = await evalApiClient.post('/eval/comparisons/validate', { run_ids: runIds })
-  return response.data
-}
-
-export async function saveEvalTemplate(
-  template: EvalTemplate
-): Promise<{ saved: string }> {
-  const response = await evalApiClient.post('/eval/templates', template)
-  return response.data
-}
-
-export async function deleteEvalTemplate(name: string): Promise<{ deleted: string }> {
-  const response = await evalApiClient.delete('/eval/templates', {
-    params: { name }
-  })
   return response.data
 }
 

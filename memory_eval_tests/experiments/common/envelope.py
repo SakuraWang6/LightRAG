@@ -30,6 +30,7 @@ BASELINE_DEFAULTS: dict[str, Any] = {
     "vlm_model": "gemma3:4b",
     "num_ctx": 16384,
     "num_predict": 128,
+    "max_total_tokens": 8192,
     "temperature": 0,
     "kg": True,
     "vlm": False,
@@ -63,6 +64,7 @@ _CONDITION_LABELS = {
     "chunk_top_k": "Chunk Top-K",
     "num_ctx": "上下文窗口",
     "num_predict": "最大输出",
+    "max_total_tokens": "最大上下文 Token",
     "temperature": "温度",
     "kg": "KG",
     "vlm": "VLM 抽取",
@@ -105,6 +107,7 @@ class RunContext:
     environment: dict[str, Any]
     variables: list[dict[str, Any]]
     run_id: str
+    label: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     restarts: int = 0
     last_restart_resume: bool | None = None
@@ -127,6 +130,12 @@ class RunContext:
             total=total,
             phase=phase,
             message=message,
+        )
+        append_run_event(
+            self.output_dir,
+            phase=phase or status,
+            severity="error" if status in {"failed", "error"} else "info",
+            message=message or f"progress {done}/{total}",
         )
 
 
@@ -597,6 +606,7 @@ def build_conditions(
         "chunk_top_k",
         "num_ctx",
         "num_predict",
+        "max_total_tokens",
         "temperature",
         "kg",
         "vlm_model",
@@ -675,7 +685,7 @@ def write_envelope(
         "status": status,
         "experiment": {
             "id": context.spec.id,
-            "label": context.spec.label,
+            "label": (context.label or "").strip() or context.spec.label,
             "description": context.spec.description,
         },
         "environment": _redact_environment(context.environment),

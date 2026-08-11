@@ -658,6 +658,7 @@ def start_run_job(
         "id": _job_id("run"),
         "kind": "run",
         "experiment": params.experiment,
+        "label": params.label,
         "dataset": str(params.dataset),
         "output_dir": str(params.output_dir),
         "supervise": bool(supervise),

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import {
   CheckSquareIcon,
   Columns3Icon,
+  FolderOpenIcon,
   ListChecksIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -16,8 +17,7 @@ import {
   refreshEvalIndex,
   validateRunComparison,
   type EvalRun,
-  type EvalRunDetail,
-  type EvalRunKind
+  type EvalRunDetail
 } from '@/api/eval'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -34,33 +34,27 @@ import EvalRunDetailView from '@/features/eval/EvalRunDetail'
 import EvalCompare from '@/features/eval/EvalCompare'
 import ConditionChips from '@/features/eval/ConditionChips'
 import DatasetsView from '@/features/eval/DatasetsView'
-import NewRunWizard from '@/features/eval/NewRunWizard'
 import SimpleEvalWizard from '@/features/eval/SimpleEvalWizard'
 import JobsView from '@/features/eval/JobsView'
-import type { EvalTemplate } from '@/api/eval'
 import {
   buildReproduceDraft,
   compareCompatible,
   formatDate,
-  runKindClass,
   statusBadgeClass,
   statusLabel
 } from '@/features/eval/utils'
 
-const KIND_OPTIONS: { value: EvalRunKind | 'all'; labelKey: string }[] = [
-  { value: 'all', labelKey: 'eval.kindAll' },
-  { value: 'offline', labelKey: 'eval.kindOffline' },
-  { value: 'online', labelKey: 'eval.kindOnline' },
-  { value: 'experiment', labelKey: 'eval.kindExperiment' },
-  { value: 'report', labelKey: 'eval.kindReport' }
-]
+type SimpleEvalDraft = {
+  name?: string
+  dataset: string
+  params?: Record<string, unknown>
+}
 
 export default function EvalConsole() {
   const { t } = useTranslation()
   const [runs, setRuns] = useState<EvalRun[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [kindFilter, setKindFilter] = useState<EvalRunKind | 'all'>('all')
   const [datasetFilter, setDatasetFilter] = useState('all')
   const [search, setSearch] = useState('')
 
@@ -74,18 +68,14 @@ export default function EvalConsole() {
   const [compareRuns, setCompareRuns] = useState<EvalRunDetail[]>([])
   const [compareLoading, setCompareLoading] = useState(false)
   const [view, setView] = useState<'runs' | 'new' | 'datasets' | 'jobs'>('runs')
-  const [wizardMode, setWizardMode] = useState<'simple' | 'advanced'>('simple')
-  const [wizardDraft, setWizardDraft] = useState<EvalTemplate | null>(null)
+  const [simpleDraft, setSimpleDraft] = useState<SimpleEvalDraft | null>(null)
 
   const handleReproduce = useCallback((run: EvalRun) => {
     const draft = buildReproduceDraft(run)
-    setWizardDraft({
-      name: '',
-      experiment: draft.experiment,
+    setSimpleDraft({
+      name: `${run.label}（复跑）`,
       dataset: draft.dataset,
-      params: draft.params,
-      extraText: draft.extraText,
-      supervise: false
+      params: draft.params
     })
     setView('new')
   }, [])
@@ -141,7 +131,7 @@ export default function EvalConsole() {
     setRefreshing(true)
     try {
       const result = await refreshEvalIndex()
-      toast.success(`${result.run_count} runs indexed`)
+      toast.success(`已刷新 ${result.run_count} 个测评`)
       detailCache.current.clear()
       await loadRuns()
       if (selectedId) await loadDetail(selectedId, true)
@@ -156,7 +146,6 @@ export default function EvalConsole() {
     if (!runs) return []
     const needle = search.trim().toLowerCase()
     return runs.filter((run) => {
-      if (kindFilter !== 'all' && run.kind !== kindFilter) return false
       if (datasetFilter !== 'all' && run.dataset !== datasetFilter) return false
       if (needle) {
         const haystack = `${run.label} ${run.dataset ?? ''} ${run.artifact_titles.join(' ')}`.toLowerCase()
@@ -164,7 +153,7 @@ export default function EvalConsole() {
       }
       return true
     })
-  }, [runs, kindFilter, datasetFilter, search])
+  }, [runs, datasetFilter, search])
 
   const datasetOptions = useMemo(() => {
     const values = new Set<string>()
@@ -246,14 +235,6 @@ export default function EvalConsole() {
     setCompareRuns([])
   }, [])
 
-  const runCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const run of runs ?? []) {
-      counts[run.kind] = (counts[run.kind] ?? 0) + 1
-    }
-    return counts
-  }, [runs])
-
   if (comparing) {
     return (
       <div className="h-full">
@@ -270,33 +251,21 @@ export default function EvalConsole() {
     return (
       <div className="flex h-full flex-col">
         <div className="min-h-0 flex-1 overflow-hidden">
-          {wizardMode === 'simple' ? (
-            <SimpleEvalWizard
-              onBack={() => setView('runs')}
-              onManageDatasets={() => setView('datasets')}
-              onAdvanced={() => setWizardMode('advanced')}
-              onStarted={() => {
-                setView('jobs')
-                void loadRuns()
-              }}
-            />
-          ) : (
-            <NewRunWizard
-              initial={wizardDraft}
-              onBack={() => setView('runs')}
-              onStarted={() => {
-                setView('jobs')
-                void loadRuns()
-              }}
-            />
-          )}
+          <SimpleEvalWizard
+            initial={simpleDraft}
+            onBack={() => setView('runs')}
+            onStarted={() => {
+              setView('jobs')
+              void loadRuns()
+            }}
+          />
         </div>
       </div>
     )
   }
 
   if (view === 'datasets') {
-    return <DatasetsView onBack={() => setView('new')} />
+    return <DatasetsView onBack={() => setView('runs')} />
   }
 
   if (view === 'jobs') {
@@ -307,15 +276,14 @@ export default function EvalConsole() {
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
         <h1 className="mr-2 text-base font-semibold">LightRAG 测评</h1>
-        {KIND_OPTIONS.slice(1).map((option) => (
-          <Badge key={option.value} variant="outline" className="text-muted-foreground text-xs">
-            {t(option.labelKey)} {runCounts[option.value] ?? 0}
-          </Badge>
-        ))}
         <div className="ml-auto flex items-center gap-2">
-          <Button size="sm" onClick={() => { setWizardDraft(null); setWizardMode('simple'); setView('new') }}>
+          <Button size="sm" onClick={() => { setSimpleDraft(null); setView('new') }}>
             <PlusIcon className="mr-1 size-4" />
             新建测评
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setView('datasets')}>
+            <FolderOpenIcon className="mr-1 size-4" />
+            数据集
           </Button>
           <Button size="sm" variant="outline" onClick={() => setView('jobs')}>
             <ListChecksIcon className="mr-1 size-4" />
@@ -333,7 +301,7 @@ export default function EvalConsole() {
           )}
           <Button size="sm" variant="outline" onClick={handleRefresh} disabled={refreshing}>
             <RefreshCwIcon className={`mr-1 size-4 ${refreshing ? 'animate-spin' : ''}`} />
-            {t('eval.refresh')}
+            刷新列表
           </Button>
         </div>
       </div>
@@ -350,21 +318,9 @@ export default function EvalConsole() {
                 onChange={(event) => setSearch(event.target.value)}
               />
             </div>
-            <div className="flex gap-2">
-              <Select value={kindFilter} onValueChange={(value) => setKindFilter(value as EvalRunKind | 'all')}>
-                <SelectTrigger className="h-8 flex-1">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {KIND_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {t(option.labelKey)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div>
               <Select value={datasetFilter} onValueChange={setDatasetFilter}>
-                <SelectTrigger className="h-8 flex-1">
+                <SelectTrigger className="h-8 w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -418,9 +374,6 @@ export default function EvalConsole() {
                           <span className="truncate text-sm font-medium" title={run.id}>
                             {run.label}
                           </span>
-                          <Badge variant="outline" className={`text-[10px] ${runKindClass(run.kind)}`}>
-                            {run.kind}
-                          </Badge>
                           {run.legacy ? (
                             <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
                               {t('eval.legacyRun')}

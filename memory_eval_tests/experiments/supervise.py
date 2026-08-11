@@ -181,12 +181,14 @@ class RunParams:
     dataset: Path
     output_dir: Path
     run_id: str | None = None
+    label: str | None = None
     model: str | None = None
     mode: str | None = None
     top_k: int | None = None
     chunk_top_k: int | None = None
     num_ctx: int | None = None
     num_predict: int | None = None
+    max_total_tokens: int | None = None
     temperature: float | None = None
     ollama_url: str = "http://127.0.0.1:11434"
     rag_api_url: str = "http://127.0.0.1:9621"
@@ -210,12 +212,14 @@ def params_from_args(args: argparse.Namespace) -> RunParams:
         dataset=args.dataset,
         output_dir=args.output_dir,
         run_id=args.run_id,
+        label=args.label,
         model=args.model,
         mode=args.mode,
         top_k=args.top_k,
         chunk_top_k=args.chunk_top_k,
         num_ctx=args.num_ctx,
         num_predict=args.num_predict,
+        max_total_tokens=args.max_total_tokens,
         temperature=args.temperature,
         ollama_url=args.ollama_url,
         rag_api_url=args.rag_api_url,
@@ -250,6 +254,7 @@ def build_run_command(params: RunParams) -> list[str]:
         "chunk_top_k",
         "num_ctx",
         "num_predict",
+        "max_total_tokens",
         "temperature",
         "ollama_url",
         "rag_api_url",
@@ -269,6 +274,7 @@ def build_run_command(params: RunParams) -> list[str]:
             str(params.runs_root) if params.runs_root is not None else None,
         ),
         ("--run-id", params.run_id),
+        ("--label", params.label),
     ):
         if value is not None:
             cmd.append(flag)
@@ -326,6 +332,7 @@ def build_supervise_command(
         "chunk_top_k",
         "num_ctx",
         "num_predict",
+        "max_total_tokens",
         "temperature",
         "ollama_url",
         "rag_api_url",
@@ -345,6 +352,7 @@ def build_supervise_command(
             str(params.runs_root) if params.runs_root is not None else None,
         ),
         ("--run-id", params.run_id),
+        ("--label", params.label),
     ):
         if value is not None:
             cmd.append(flag)
@@ -444,12 +452,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--run-id", default=None)
+    parser.add_argument("--label", default=None)
     parser.add_argument("--model", default=None)
     parser.add_argument("--mode", default=None)
     parser.add_argument("--top-k", type=int, default=None)
     parser.add_argument("--chunk-top-k", type=int, default=None)
     parser.add_argument("--num-ctx", type=int, default=None)
     parser.add_argument("--num-predict", type=int, default=None)
+    parser.add_argument("--max-total-tokens", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=None)
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--rag-api-url", default="http://127.0.0.1:9621")

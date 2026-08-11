@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, FileTextIcon, ListIcon, BarChart3Icon, BeakerIcon } from 'lucide-react'
+import { AlertTriangle, FileTextIcon, ListIcon, BarChart3Icon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
@@ -27,13 +27,11 @@ import EmptyCard from '@/components/ui/EmptyCard'
 import AiAnalysis from '@/features/eval/AiAnalysis'
 import CasesView from '@/features/eval/CasesView'
 import ConditionChips from '@/features/eval/ConditionChips'
-import MarkdownReport from '@/features/eval/MarkdownReport'
 import MetricCards from '@/features/eval/MetricCards'
-import MethodCompare from '@/features/eval/MethodCompare'
 import ProgressBar from '@/features/eval/ProgressBar'
 import ReportDocument from '@/features/eval/ReportDocument'
 import RunLog from '@/features/eval/RunLog'
-import { formatDate, runKindClass, statusBadgeClass, statusLabel } from '@/features/eval/utils'
+import { formatDate, statusBadgeClass, statusLabel } from '@/features/eval/utils'
 
 const HEADLINE_ORDER = [
   'passed',
@@ -46,14 +44,18 @@ const HEADLINE_ORDER = [
   'retrieval_recall'
 ]
 
-function headlineMetrics(run: EvalRunDetail): MetricItem[] {
+function headlineMetrics(run: EvalRunDetail, questionScore?: MetricItem): MetricItem[] {
   const entries = Object.values(run.headline ?? {})
   if (entries.length === 0) return []
   const ordered = HEADLINE_ORDER
     .map((key) => entries.find((m) => m.key === key))
     .filter((m): m is MetricItem => Boolean(m))
   const rest = entries.filter((m) => !HEADLINE_ORDER.includes(m.key))
-  return [...ordered, ...rest].slice(0, 6)
+  const metrics = [...ordered, ...rest]
+  const withoutSeparateCounts = questionScore
+    ? metrics.filter((metric) => !['correct_cases', 'cases'].includes(metric.key))
+    : metrics
+  return questionScore ? [questionScore, ...withoutSeparateCounts].slice(0, 6) : withoutSeparateCounts.slice(0, 6)
 }
 
 interface EvalRunDetailProps {
@@ -115,7 +117,6 @@ function RunHeader({
     <div className="border-b px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-lg font-semibold">{run.label}</h2>
-        <Badge variant="outline" className={runKindClass(run.kind)}>{run.kind}</Badge>
         {run.legacy ? (
           <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
             {t('eval.legacyRun')}
@@ -203,38 +204,6 @@ function RunHeader({
   )
 }
 
-function MetricsTable({ metrics }: { metrics: MetricItem[] }) {
-  const { t } = useTranslation()
-  return (
-    <div className="overflow-auto rounded-md border">
-      <table className="min-w-full text-left text-sm">
-        <thead className="bg-muted/50">
-          <tr>
-            <th className="px-3 py-2 font-medium">{t('eval.metric')}</th>
-            <th className="px-3 py-2 font-medium">{t('eval.value')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {metrics.map((metric) => (
-            <tr key={metric.key} className="border-t">
-              <td className="text-muted-foreground px-3 py-1.5">{metric.label}</td>
-              <td className="px-3 py-1.5">
-                {metric.value === true ? '✓' : metric.value === false ? '✗' : formatNumber(metric.value)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function formatNumber(value: unknown): string {
-  if (value == null) return '—'
-  if (typeof value === 'number') return Number(value).toFixed(4).replace(/\.?0+$/, '')
-  return String(value)
-}
-
 function ArtifactMetricsCard({ artifact }: { artifact: EvalArtifact }) {
   return (
     <Card>
@@ -251,7 +220,7 @@ function ArtifactMetricsCard({ artifact }: { artifact: EvalArtifact }) {
         {artifact.error ? (
           <p className="text-destructive text-sm">{artifact.error}</p>
         ) : (
-          <MetricsTable metrics={artifact.metrics} />
+          <MetricCards metrics={artifact.metrics} />
         )}
       </CardContent>
     </Card>
@@ -261,23 +230,40 @@ function ArtifactMetricsCard({ artifact }: { artifact: EvalArtifact }) {
 function StandardRunView({ run }: { run: EvalRunDetail }) {
   const { t } = useTranslation()
   const [tab, setTab] = useState('metrics')
-  const caseArtifacts = useMemo(
-    () => run.artifacts.filter((artifact) => artifact.table.rows.length > 0),
+  const caseArtifact = useMemo(
+    () => run.artifacts.find((artifact) => artifact.kind === 'cases'),
+    [run.artifacts]
+  )
+  const metricArtifacts = useMemo(
+    () => run.artifacts.filter((artifact) => artifact.metrics.length > 0 || artifact.error),
     [run.artifacts]
   )
   const reportArtifacts = useMemo(
     () => run.artifacts.filter((artifact) => artifact.report_md),
     [run.artifacts]
   )
-  const [selectedCasePath, setSelectedCasePath] = useState<string | null>(null)
   const [selectedReportPath, setSelectedReportPath] = useState<string | null>(null)
-  const selectedCase = caseArtifacts.find((a) => a.rel_path === selectedCasePath) ?? caseArtifacts[0]
   const selectedReport = reportArtifacts.find((a) => a.rel_path === selectedReportPath) ?? reportArtifacts[0]
+  const questionScore = useMemo<MetricItem | undefined>(() => {
+    const rows = caseArtifact?.table.rows ?? []
+    const scored = rows.filter((row) => typeof row.exact_match === 'boolean')
+    if (scored.length === 0) return undefined
+    const correct = scored.filter((row) => row.exact_match === true).length
+    return {
+      key: 'question_score',
+      label: '正确题数 / 总题数',
+      value: `${correct} / ${scored.length}`,
+      type: 'text'
+    }
+  }, [caseArtifact])
 
   return (
     <div className="p-4">
       <div className="mb-4">
-        <MetricCards metrics={headlineMetrics(run)} />
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">结果摘要</CardTitle></CardHeader>
+          <CardContent><MetricCards metrics={headlineMetrics(run, questionScore)} /></CardContent>
+        </Card>
       </div>
 
       {run.artifacts.some((a) => a.error) ? (
@@ -295,7 +281,7 @@ function StandardRunView({ run }: { run: EvalRunDetail }) {
           </TabsTrigger>
           <TabsTrigger value="cases">
             <ListIcon className="mr-1 size-4" />
-            逐题与失败诊断
+            逐题详情
           </TabsTrigger>
           <TabsTrigger value="reports">
             <FileTextIcon className="mr-1 size-4" />
@@ -308,32 +294,16 @@ function StandardRunView({ run }: { run: EvalRunDetail }) {
         </TabsList>
 
         <TabsContent value="metrics" forceMount={false} className="mt-3 space-y-3">
-          {run.artifacts.map((artifact) => (
+          {metricArtifacts.map((artifact) => (
             <ArtifactMetricsCard key={artifact.rel_path} artifact={artifact} />
           ))}
         </TabsContent>
 
         <TabsContent value="cases" forceMount={false} className="mt-3">
-          {caseArtifacts.length === 0 ? (
+          {!caseArtifact ? (
             <EmptyCard title={t('eval.noCases')} description={t('eval.noCasesHint')} />
           ) : (
-            <div className="space-y-3">
-              <div className="w-72">
-                <Select value={selectedCase?.rel_path} onValueChange={setSelectedCasePath}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={t('eval.selectArtifact')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {caseArtifacts.map((artifact) => (
-                      <SelectItem key={artifact.rel_path} value={artifact.rel_path}>
-                        {artifact.title} ({artifact.table.rows.length})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {selectedCase ? <CasesView rows={selectedCase.table.rows} /> : null}
-            </div>
+            <CasesView rows={caseArtifact.table.rows} />
           )}
         </TabsContent>
 
@@ -357,102 +327,7 @@ function StandardRunView({ run }: { run: EvalRunDetail }) {
                   </SelectContent>
                 </Select>
               </div>
-              {selectedReport?.report_md ? (
-                <Card>
-                  <CardContent className="p-4">
-                    <MarkdownReport content={selectedReport.report_md} />
-                  </CardContent>
-                </Card>
-              ) : null}
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="log" forceMount={false} className="mt-3">
-          <RunLog runId={run.id} events={run.events} />
-        </TabsContent>
-      </Tabs>
-    </div>
-  )
-}
-
-function ExperimentView({ run }: { run: EvalRunDetail }) {
-  const { t } = useTranslation()
-  const [tab, setTab] = useState('methods')
-  const experimentArtifacts = run.artifacts.filter((artifact) => artifact.kind === 'experiment')
-  const methodArtifact = experimentArtifacts.find((a) => a.table.rows.length > 0) ?? experimentArtifacts[0]
-  const caseRows = (methodArtifact?.meta?.cases as { rows?: Record<string, unknown>[] } | undefined)?.rows ?? []
-  const reportArtifacts = useMemo(
-    () => run.artifacts.filter((artifact) => artifact.report_md),
-    [run.artifacts]
-  )
-  const [selectedReportPath, setSelectedReportPath] = useState<string | null>(null)
-  const selectedReport = reportArtifacts.find((a) => a.rel_path === selectedReportPath) ?? reportArtifacts[0]
-
-  return (
-    <div className="p-4">
-      <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList>
-          <TabsTrigger value="methods">
-            <BeakerIcon className="mr-1 size-4" />
-            {t('eval.methodCompare')}
-          </TabsTrigger>
-          <TabsTrigger value="cases">
-            <ListIcon className="mr-1 size-4" />
-            {t('eval.cases')}
-          </TabsTrigger>
-          <TabsTrigger value="reports">
-            <FileTextIcon className="mr-1 size-4" />
-            {t('eval.reports')}
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="methods" forceMount={false} className="mt-3">
-          {methodArtifact ? (
-            <MethodCompare table={methodArtifact.table} />
-          ) : (
-            <EmptyCard title={t('eval.noMethods')} description={t('eval.noMethodsHint')} />
-          )}
-        </TabsContent>
-
-        <TabsContent value="cases" forceMount={false} className="mt-3">
-          {caseRows.length === 0 ? (
-            <EmptyCard
-              title={t('eval.noCases')}
-              description={run.legacy ? t('eval.legacyNoCases') : t('eval.noCasesHint')}
-            />
-          ) : (
-            <CasesView rows={caseRows} />
-          )}
-        </TabsContent>
-
-        <TabsContent value="reports" forceMount={false} className="mt-3 space-y-3">
-          <AiAnalysis runId={run.id} />
-          {reportArtifacts.length === 0 ? (
-            <EmptyCard title={t('eval.noReports')} description={t('eval.noReportsHint')} />
-          ) : (
-            <div className="space-y-3">
-              <div className="w-72">
-                <Select value={selectedReport?.rel_path} onValueChange={setSelectedReportPath}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={t('eval.selectReport')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {reportArtifacts.map((artifact) => (
-                      <SelectItem key={artifact.rel_path} value={artifact.rel_path}>
-                        {artifact.title}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {selectedReport?.report_md ? (
-                <Card>
-                  <CardContent className="p-4">
-                    <MarkdownReport content={selectedReport.report_md} />
-                  </CardContent>
-                </Card>
-              ) : null}
+              {selectedReport ? <ReportDocument artifact={selectedReport} /> : null}
             </div>
           )}
         </TabsContent>
@@ -538,16 +413,6 @@ export default function EvalRunDetail({
           <div className="mt-3">
             {report ? <ReportDocument artifact={report} /> : <EmptyCard title="—" description="—" />}
           </div>
-        </div>
-      </div>
-    )
-  }
-  if (run.kind === 'experiment') {
-    return (
-      <div className="flex h-full flex-col overflow-hidden">
-        <RunHeader {...headerProps} />
-        <div className="min-h-0 flex-1 overflow-auto">
-          <ExperimentView run={run} />
         </div>
       </div>
     )

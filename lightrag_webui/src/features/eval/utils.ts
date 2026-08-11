@@ -188,6 +188,7 @@ export function buildReproduceDraft(run: {
     'max_cases',
     'num_ctx',
     'num_predict',
+    'max_total_tokens',
     'temperature',
     'engine',
     'kg'

@@ -341,6 +341,29 @@ def test_failed_envelope_preserves_structured_failure_and_append_only_events(
     assert final["failure"] == first["failure"]
 
 
+def test_run_context_progress_records_a_timeline_event(tmp_path: Path) -> None:
+    from memory_eval_tests.experiments.common import ExperimentSpec, RunContext
+
+    context = RunContext(
+        spec=ExperimentSpec(id="x", label="X", description="d", runner=lambda _c: {}),
+        dataset=tmp_path / "dataset",
+        output_dir=tmp_path / "run",
+        baseline={},
+        environment={},
+        variables=[],
+        run_id="run-1",
+    )
+    context.progress("running", 2, 7, "retrieval", "evaluating retrieval")
+
+    progress = json.loads((context.output_dir / "progress.json").read_text())
+    events = [json.loads(line) for line in (context.output_dir / "events.jsonl").read_text().splitlines()]
+    assert progress["done"] == 2
+    assert len(events) == 1
+    assert events[0]["phase"] == "retrieval"
+    assert events[0]["severity"] == "info"
+    assert events[0]["message"] == "evaluating retrieval"
+
+
 def test_harness_exception_writes_failure_envelope_and_event(
     tmp_path: Path, monkeypatch
 ) -> None:

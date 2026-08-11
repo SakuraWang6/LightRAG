@@ -249,6 +249,46 @@ def test_webui_only_advertises_and_launches_isolated_end_to_end(runs_tree: Path,
     assert "not available in the WebUI" in blocked.json()["detail"]
 
 
+def test_create_evaluation_passes_custom_name_and_runtime_parameters(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    datasets = tmp_path / "datasets"
+    _write(datasets / "sample" / "manifest.json", {"dataset_id": "sample"})
+    captured: dict = {}
+
+    def fake_start_run_job(**kwargs):
+        captured.update(kwargs)
+        return {"id": "run-job", "kind": "run", "status": "pending"}
+
+    monkeypatch.setattr(_eval_routes.eval_jobs, "start_run_job", fake_start_run_job)
+    client = _client(tmp_path / "runs", datasets_root=datasets)
+    response = client.post(
+        "/eval/jobs",
+        json={
+            "kind": "run",
+            "name": "合同文档测评",
+            "experiment": "end_to_end_baseline",
+            "dataset": "sample",
+            "params": {
+                "top_k": 8,
+                "chunk_top_k": 6,
+                "num_ctx": 32768,
+                "max_total_tokens": 4096,
+                "num_predict": 256,
+                "max_cases": 3,
+                "kg": False,
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    params = captured["params"]
+    assert params.label == "合同文档测评"
+    assert params.max_total_tokens == 4096
+    assert params.top_k == 8
+    assert params.skip_kg is True
+
+
 def test_routes_open_when_no_auth(runs_tree: Path, monkeypatch) -> None:
     monkeypatch.setattr(_utils_api, "auth_configured", False)
     client = _client(runs_tree, api_key=None)
@@ -496,6 +536,86 @@ def test_flatten_cases_keeps_full_retrieval_evidence() -> None:
     assert len(row["hit_fact_ids"].split(", ")) == 5
 
 
+def test_end_to_end_run_indexes_answer_sheet_not_pipeline_methods(
+    runs_tree: Path,
+) -> None:
+    """A regular document evaluation is one run with one review row per question."""
+    from lightrag.api.eval_index import clear_scan_cache, load_run
+
+    payload = _experiment_envelope("end-to-end-v1")
+    payload["experiment"] = {
+        "id": "end_to_end_baseline",
+        "label": "端到端测评",
+        "description": "单次端到端测评",
+    }
+    payload["methods"] = [
+        {
+            "method": "retrieval",
+            "label": "检索结果",
+            "summary": {"average_recall": 1.0},
+            "results": [
+                {
+                    "question_id": "Q1",
+                    "question": "文档标题是什么？",
+                    "recall_at_k": 1.0,
+                }
+            ],
+        },
+        {
+            "method": "answer",
+            "label": "回答结果",
+            "summary": {"answer_accuracy": 1.0},
+            "results": [
+                {
+                    "question_id": "Q1",
+                    "answer": "LightRAG",
+                    "expected": "LightRAG",
+                    "exact_match": True,
+                    "question_type": "事实题",
+                }
+            ],
+        },
+    ]
+    _write(runs_tree / "end-to-end-v1" / "run.json", payload)
+    _write(
+        runs_tree / "end-to-end-v1" / "case_trace.json",
+        {"cases": [{"question_id": "Q1", "oracle": {"question": "文档标题是什么？"}}]},
+    )
+    _write(
+        runs_tree / "end-to-end-v1" / "report.md",
+        "# 隔离端到端基线\n\n旧格式报告",
+    )
+    _write(
+        runs_tree / "end-to-end-v1" / "diagnosis.json",
+        {"cause_distribution": {"not_applicable": 1}, "diagnosis_coverage": 1.0},
+    )
+
+    clear_scan_cache(runs_tree)
+    detail = load_run(runs_tree, "end-to-end-v1")
+
+    assert detail is not None
+    assert detail["kind"] == "online"
+    assert "methods" not in {condition["key"] for condition in detail["conditions"]}
+    assert detail["headline"]["answer_accuracy"]["value"] == 1.0
+    assert detail["headline"]["correct_cases"]["value"] == 1
+    cases = next(artifact for artifact in detail["artifacts"] if artifact["kind"] == "cases")
+    assert cases["table"]["rows"] == [
+        {
+            "question_id": "Q1",
+            "question": "文档标题是什么？",
+            "answer": "LightRAG",
+            "expected": "LightRAG",
+            "exact_match": True,
+            "question_type": "事实题",
+            "method": "answer",
+        }
+    ]
+    report = next(artifact for artifact in detail["artifacts"] if artifact["kind"] == "markdown_report")
+    assert report["title"] == "测评报告"
+    assert report["meta"]["uses_llm"] is False
+    assert "不调用 LLM" in report["report_md"]
+
+
 def test_summary_metrics_prefers_canonical_over_legacy_key() -> None:
     from lightrag.api.eval_index import _summary_metrics
 
@@ -695,6 +815,18 @@ def test_run_log_endpoint_returns_tail(runs_tree: Path, monkeypatch) -> None:
     payload = response.json()
     assert payload["exists"] is True
     assert payload["lines"] == ["line-4", "line-5"]
+    (runs_tree / "context-selection-v1" / "execution_unit.log").write_text(
+        "unit-line-1\nunit-line-2\n", encoding="utf-8"
+    )
+    combined = client.get(
+        "/eval/runs/context-selection-v1/log?lines=4", headers=headers
+    )
+    assert combined.json()["lines"] == [
+        "line-5",
+        "--- execution_unit.log ---",
+        "unit-line-1",
+        "unit-line-2",
+    ]
     missing = client.get("/eval/runs/rich-smoke-v1/log", headers=headers)
     # The offline fixture has no run.log; endpoint returns exists=False.
     assert missing.json()["exists"] is False

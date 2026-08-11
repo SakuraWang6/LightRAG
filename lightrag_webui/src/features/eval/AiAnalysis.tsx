@@ -37,7 +37,7 @@ export default function AiAnalysis({ runId }: AiAnalysisProps) {
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
           <SparklesIcon className="size-4" />
-          {t('eval.aiAnalysis')}
+          AI 解读（可选）
           {text ? (
             <Button
               variant="ghost"
@@ -59,7 +59,7 @@ export default function AiAnalysis({ runId }: AiAnalysisProps) {
           <p className="whitespace-pre-wrap text-sm leading-relaxed">{text}</p>
         ) : (
           <div className="flex flex-col items-start gap-2">
-            <p className="text-muted-foreground text-sm">{t('eval.analyzeHint')}</p>
+            <p className="text-muted-foreground text-sm">此操作会调用当前服务器配置的 LLM，对已生成的测评结果做补充解读。</p>
             <Button size="sm" onClick={() => void generate(false)}>
               <SparklesIcon className="mr-1 size-4" />
               {t('eval.generateAnalysis')}

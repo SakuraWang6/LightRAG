@@ -31,6 +31,7 @@ METRIC_LABELS: dict[str, str] = {
     "full_role_coverage_rate": "完整角色覆盖率",
     "changed_cases": "变更题数",
     "cases": "题数",
+    "correct_cases": "正确题数",
     "mean_context_chars": "平均上下文字符数",
     "mean_selected_context_chars": "平均选择后字符数",
     "mean_candidate_context_chars": "平均候选字符数",
@@ -73,6 +74,7 @@ METRIC_ALIASES: dict[str, str] = {
 # run of the same kind exposes identical columns.
 CANONICAL_SUMMARY_KEYS: dict[str, list[str]] = {
     "answer": [
+        "correct_cases",
         "answer_accuracy",
         "groundedness",
         "ungrounded_rate",

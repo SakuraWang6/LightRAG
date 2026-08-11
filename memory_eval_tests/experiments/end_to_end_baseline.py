@@ -215,27 +215,66 @@ def _dataset_formats(dataset: Path) -> list[str]:
     return sorted(formats) or ["docx"]
 
 
+def _format_rate(value: Any) -> str:
+    return f"{float(value):.1%}" if isinstance(value, (int, float)) else "—"
+
+
 def _diagnosis_markdown(diagnosis: dict[str, Any]) -> str:
+    distribution = diagnosis.get("cause_distribution") or {}
+    actionable = {
+        str(cause): count
+        for cause, count in distribution.items()
+        if cause not in {"not_applicable", "unclassified"} and count
+    }
     lines = [
         "## 失败归因",
         "",
-        f"- 可归因覆盖率：{float(diagnosis.get('diagnosis_coverage') or 0):.1%}",
-        f"- 需复核/上下文不可观测：{(diagnosis.get('trace_availability') or {}).get('context_unavailable', 0)}",
-        "",
-        "| 主因 | Case 数 |",
-        "|---|---:|",
     ]
-    for cause, count in (diagnosis.get("cause_distribution") or {}).items():
-        lines.append(f"| {cause} | {count} |")
+    if not actionable:
+        lines.extend(["本次没有需要归因的失败题。", ""])
+        return "\n".join(lines)
+    labels = {
+        "retrieval_failure": "检索未命中",
+        "selection_failure": "上下文选择不足",
+        "answer_failure": "回答与标准答案不符",
+        "grounding_failure": "回答缺少证据支撑",
+    }
+    lines.append(f"- 可归因覆盖率：{_format_rate(diagnosis.get('diagnosis_coverage'))}")
+    for cause, count in actionable.items():
+        lines.append(f"- {labels.get(cause, cause)}：{count} 题")
+    unavailable = (diagnosis.get("trace_availability") or {}).get("context_unavailable", 0)
+    if unavailable:
+        lines.append(f"- {unavailable} 题缺少最终上下文记录，需人工复核")
     lines.extend(
         [
             "",
-            "说明：若服务端未公开最终 prompt 上下文，相关 case 会保守标记为 `unclassified`，"
-            "不会据 response references 推断为模型失败。完整 trace 见 `case_trace.json`，"
-            "归因明细见 `diagnosis.json`。",
+            "归因只在最终上下文可观测时给出；逐题证据与归因记录可在“逐题详情”中查看。",
             "",
         ]
     )
+    return "\n".join(lines)
+
+
+def _report_markdown(answer: dict[str, Any], diagnosis: dict[str, Any]) -> str:
+    total = int(answer.get("cases") or 0)
+    correct = answer.get("correct_cases")
+    if not isinstance(correct, int):
+        correct = sum(bool(row.get("exact_match")) for row in answer.get("results") or [])
+    uncertain = int(answer.get("uncertain_answers") or 0)
+    lines = [
+        "# 测评报告",
+        "",
+        "本报告由评测程序根据评分结果自动生成，不调用 LLM。",
+        "",
+        "## 结果概览",
+        "",
+        f"- 正确题数 / 总题数：{correct} / {total}",
+        f"- 回答准确率：{_format_rate(answer.get('answer_accuracy'))}",
+        f"- 证据支撑率：{_format_rate(answer.get('groundedness'))}",
+    ]
+    if uncertain:
+        lines.append(f"- 待复核题数：{uncertain}")
+    lines.extend(["", _diagnosis_markdown(diagnosis)])
     return "\n".join(lines)
 
 
@@ -271,6 +310,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
     assert profile is not None and unit is not None
     outcome = "interrupted"
     try:
+        context.progress("running", 0, 7, "runtime", "starting isolated evaluation service")
         unit = start_execution_unit(
             output_dir=context.output_dir,
             profile=profile,
@@ -282,7 +322,8 @@ def _runner(context: RunContext) -> dict[str, Any]:
         context.environment["rag_api_url"] = unit["runtime_endpoint"]
         context.runtime_snapshot = unit["runtime_snapshot"]
         baseline = context.baseline
-        context.progress("running", 1, 7, "upload", "uploading isolated dataset files")
+        context.progress("running", 1, 7, "runtime", "isolated evaluation service is ready")
+        context.progress("running", 2, 7, "ingestion", "uploading dataset documents")
         upload = upload_dataset_files(
             dataset_source=str(context.dataset),
             rag_api_url=unit["runtime_endpoint"],
@@ -315,7 +356,10 @@ def _runner(context: RunContext) -> dict[str, Any]:
             allow_partial and ingestion["meets_success_threshold"]
         ):
             raise IngestionFailure("required dataset documents did not meet the ingestion success threshold")
-        context.progress("running", 3, 7, "retrieval", "evaluating retrieval")
+        context.progress(
+            "running", 3, 7, "ingestion", f"processed {ingestion['successful_documents']}/{total_documents} documents"
+        )
+        context.progress("running", 4, 7, "retrieval", "evaluating retrieval")
         top_k = int(baseline.get("top_k") or 5)
         chunk_top_k = int(baseline.get("chunk_top_k") or 5)
         max_cases = int(baseline.get("max_cases") or 0) or None
@@ -328,7 +372,8 @@ def _runner(context: RunContext) -> dict[str, Any]:
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
         )
-        context.progress("running", 5, 7, "answer", "evaluating answers")
+        context.progress("running", 5, 7, "retrieval", "retrieval scoring complete")
+        context.progress("running", 6, 7, "answer", "evaluating answers")
         answer = evaluate_answers(
             dataset_source=str(context.dataset),
             rag_api_url=unit["runtime_endpoint"],
@@ -361,6 +406,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
         (context.output_dir / "diagnosis.json").write_text(
             json.dumps(diagnosis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
+        context.progress("running", 7, 7, "report", "scoring and report generation complete")
         methods = [
             {
                 "method": "retrieval",
@@ -381,9 +427,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
         return {
             "status": "complete",
             "methods": methods,
-            "report": "# 隔离端到端基线\n\n数据集已在独立执行单元中入库、索引、检索与评分。\n\n"
-            + _answer_stratification_markdown(answer)
-            + _diagnosis_markdown(diagnosis),
+            "report": _report_markdown(answer, diagnosis),
             "extra": {
                 "ingestion_receipt": "ingestion_receipt.json",
                 "index_receipt": "index_receipt.json",
@@ -402,34 +446,10 @@ def _runner(context: RunContext) -> dict[str, Any]:
         finalize_execution_unit(output_dir=context.output_dir, unit=unit, outcome=outcome)
 
 
-def _answer_stratification_markdown(answer: dict[str, Any]) -> str:
-    rows = answer.get("by_scenario") or {}
-    if not rows:
-        return ""
-    lines = [
-        "## 回答评分场景分层",
-        "",
-        "| 场景 | 样本数 | 可判定 | 待复核 | Accuracy | Groundedness |",
-        "|---|---:|---:|---:|---:|---:|",
-    ]
-    for name, summary in sorted(rows.items()):
-        accuracy = summary.get("answer_accuracy")
-        groundedness = summary.get("groundedness")
-        accuracy_value = f"{accuracy:.4f}" if isinstance(accuracy, (int, float)) else "—"
-        groundedness_value = (
-            f"{groundedness:.4f}" if isinstance(groundedness, (int, float)) else "—"
-        )
-        lines.append(
-            f"| {name} | {summary.get('cases', 0)} | {summary.get('decisive_cases', 0)} | "
-            f"{summary.get('uncertain', 0)} | {accuracy_value} | {groundedness_value} |"
-        )
-    return "\n".join(lines) + "\n\n"
-
-
 spec = ExperimentSpec(
     id="end_to_end_baseline",
-    label="隔离端到端基线",
-    description="在已发布环境档案分配的独立 LightRAG 工作空间内完成受控入库、检索和回答评测。",
+    label="端到端测评",
+    description="在独立 LightRAG 工作空间内完成文档入库、索引、检索、回答与评分。",
     default_baseline={"mode": "mix", "top_k": 5, "chunk_top_k": 5, "max_total_tokens": 8192},
     extra_schema={
         "environment_profile_id": "str",
@@ -439,6 +459,10 @@ spec = ExperimentSpec(
     },
     prepare=_prepare,
     runner=_runner,
+    # This is a single evaluation run, not a multi-arm experiment.  Keeping
+    # the distinction in the persisted envelope prevents the console from
+    # presenting a method-comparison screen for ordinary document tests.
+    kind="online",
     webui_launchable=True,
     webui_block_reason="",
 )

@@ -151,9 +151,51 @@ def _flatten_cases(methods: list[dict[str, Any]]) -> dict[str, Any]:
     return {"columns": columns, "rows": rows}
 
 
+def _case_methods_for_run(
+    experiment: dict[str, Any], methods: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return the rows a reviewer expects to see for a single evaluation.
+
+    End-to-end runs generate both retrieval diagnostics and answer scoring
+    internally.  They are complementary pipeline stages, not alternative
+    methods.  The case review should therefore contain one answer sheet per
+    question rather than two mixed rows per question.
+    """
+    if experiment.get("id") != "end_to_end_baseline":
+        return methods
+    answer_methods = [method for method in methods if method.get("method") == "answer"]
+    return answer_methods or methods
+
+
+def _hydrate_case_questions_from_trace(
+    run_dir: Path, cases: dict[str, Any]
+) -> None:
+    """Backfill question text for runs created before answer rows stored it."""
+    try:
+        traces = _read_json(run_dir / "case_trace.json").get("cases") or []
+    except (OSError, ValueError):
+        return
+    question_by_id = {
+        str(trace.get("question_id")): str((trace.get("oracle") or {}).get("question") or "")
+        for trace in traces
+        if isinstance(trace, dict)
+    }
+    hydrated = False
+    for row in cases.get("rows") or []:
+        if not isinstance(row, dict) or row.get("question"):
+            continue
+        question = question_by_id.get(str(row.get("question_id") or ""))
+        if question:
+            row["question"] = question
+            hydrated = True
+    if hydrated and not any(column.get("key") == "question" for column in cases.get("columns") or []):
+        cases["columns"].insert(0, {"key": "question", "label": "Question"})
+
+
 def _summary_metrics(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Union of scalar summary metrics across methods, canonical order first."""
     ordered = [
+        "correct_cases",
         "answer_accuracy",
         "accuracy",
         "groundedness",
@@ -190,6 +232,16 @@ def _summary_metrics(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 # exist, regardless of dict iteration order.
                 if normalized not in values or key == normalized:
                     values[normalized] = value
+    answer_rows = [
+        row
+        for method in methods
+        if method.get("method") == "answer"
+        for row in (method.get("results") or [])
+        if isinstance(row, dict)
+    ]
+    if answer_rows:
+        values.setdefault("correct_cases", sum(bool(row.get("exact_match")) for row in answer_rows))
+        values["cases"] = len(answer_rows)
     metrics = []
     for key in ordered:
         if key in values:
@@ -283,6 +335,9 @@ def _report_artifact(run_dir: Path, envelope: dict[str, Any]) -> dict[str, Any] 
         content = path.read_text(encoding="utf-8")[:2_000_000]
     except OSError:
         return None
+    is_end_to_end = (envelope.get("experiment") or {}).get("id") == "end_to_end_baseline"
+    if is_end_to_end:
+        content = _end_to_end_report_content(run_dir, envelope)
     first = next(
         (
             line.strip().lstrip("# ")
@@ -298,11 +353,76 @@ def _report_artifact(run_dir: Path, envelope: dict[str, Any]) -> dict[str, Any] 
         "updated_at": envelope.get("created_at"),
         "metrics": [],
         "table": {"columns": [], "rows": []},
-        "meta": {},
+        "meta": {
+            "generated_by": "evaluation_program" if is_end_to_end else "stored_report",
+            "uses_llm": False if is_end_to_end else None,
+        },
         "report_md": content,
         "toc": _markdown_toc(content),
         "error": None,
     }
+
+
+def _end_to_end_report_content(run_dir: Path, envelope: dict[str, Any]) -> str:
+    """Present historical single-run reports in the same readable format.
+
+    These reports are deterministic score summaries.  Re-rendering the view
+    from the stored methods also removes the obsolete “isolated baseline”
+    terminology without mutating an existing run directory.
+    """
+    methods = envelope.get("methods") or []
+    answer = next(
+        (method for method in methods if method.get("method") == "answer"),
+        {},
+    )
+    summary = answer.get("summary") or {}
+    rows = [row for row in answer.get("results") or [] if isinstance(row, dict)]
+    total = len(rows) or int(summary.get("cases") or 0)
+    correct = summary.get("correct_cases")
+    if not isinstance(correct, int):
+        correct = sum(bool(row.get("exact_match")) for row in rows)
+    diagnosis: dict[str, Any] = {}
+    try:
+        value = _read_json(run_dir / "diagnosis.json")
+        if isinstance(value, dict):
+            diagnosis = value
+    except (OSError, ValueError):
+        pass
+    def rate(value: Any) -> str:
+        return f"{float(value):.1%}" if isinstance(value, (int, float)) else "—"
+    lines = [
+        "# 测评报告",
+        "",
+        "本报告由评测程序根据评分结果自动生成，不调用 LLM。",
+        "",
+        "## 结果概览",
+        "",
+        f"- 正确题数 / 总题数：{correct} / {total}",
+        f"- 回答准确率：{rate(summary.get('answer_accuracy'))}",
+        f"- 证据支撑率：{rate(summary.get('groundedness'))}",
+        "",
+        "## 失败归因",
+        "",
+    ]
+    distribution = diagnosis.get("cause_distribution") or {}
+    actionable = {
+        str(cause): count
+        for cause, count in distribution.items()
+        if cause not in {"not_applicable", "unclassified"} and count
+    }
+    if not actionable:
+        lines.append("本次没有需要归因的失败题。")
+    else:
+        labels = {
+            "retrieval_failure": "检索未命中",
+            "selection_failure": "上下文选择不足",
+            "answer_failure": "回答与标准答案不符",
+            "grounding_failure": "回答缺少证据支撑",
+        }
+        lines.append(f"- 可归因覆盖率：{rate(diagnosis.get('diagnosis_coverage'))}")
+        for cause, count in actionable.items():
+            lines.append(f"- {labels.get(cause, cause)}：{count} 题")
+    return "\n".join(lines) + "\n"
 
 
 def _diagnosis_artifact(run_dir: Path, envelope: dict[str, Any]) -> dict[str, Any] | None:
@@ -331,8 +451,17 @@ def _run_record(
     *,
     with_artifacts: bool,
 ) -> dict[str, Any]:
-    kind = envelope.get("kind", "experiment")
+    persisted_kind = envelope.get("kind", "experiment")
     experiment = envelope.get("experiment") or {}
+    # Older end-to-end runs were persisted as ``experiment`` even though each
+    # run evaluates one document set with one configuration.  Normalize them
+    # while indexing so historic results receive the same single-run review
+    # screen as newly created evaluations.
+    kind = (
+        "online"
+        if experiment.get("id") == "end_to_end_baseline"
+        else persisted_kind
+    )
     baseline = envelope.get("baseline") or {}
     dataset = baseline.get("dataset") or envelope.get("dataset")
     methods = envelope.get("methods") or []
@@ -341,7 +470,11 @@ def _run_record(
         envelope.get("environment") or {},
         baseline,
         dataset_meta,
-        method_count=len(methods),
+        method_count=(
+            None
+            if experiment.get("id") == "end_to_end_baseline"
+            else len(methods)
+        ),
     )
     progress = _read_progress(run_dir)
     run_id = envelope.get("run_id") or run_dir.name
@@ -446,7 +579,9 @@ def _run_record(
                 "error": None,
             }
         )
-        cases = _flatten_cases(methods)
+        cases = _flatten_cases(_case_methods_for_run(experiment, methods))
+        if experiment.get("id") == "end_to_end_baseline":
+            _hydrate_case_questions_from_trace(run_dir, cases)
         if cases["rows"]:
             artifacts.append(
                 {

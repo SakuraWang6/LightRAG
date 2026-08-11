@@ -187,6 +187,11 @@ def test_evaluate_answers_emits_canonical_summary_keys(monkeypatch, tmp_path):
     assert "hallucination_rate" not in report
     assert "citation_accuracy" not in report
     assert "evidence_available" in report
+    assert [row["question"] for row in report["results"]] == [
+        "What is X?",
+        "Y?",
+        "Z?",
+    ]
 
 
 def test_evaluate_answers_requests_and_records_controlled_final_context_trace(monkeypatch, tmp_path):

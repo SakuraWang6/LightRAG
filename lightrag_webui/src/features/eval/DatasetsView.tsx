@@ -126,18 +126,18 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
     [refresh, t]
   )
 
-  const importScenario = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const importDataset = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
     if (!file.name.toLowerCase().endsWith('.zip')) {
-      toast.error('请选择包含 manifest.json、oracle.json 和文档的 .zip 场景包')
+      toast.error('请选择包含 manifest.json、oracle.json 和文档的 .zip 数据集包')
       return
     }
     setImporting(true)
     try {
       const dataset = await importEvalDataset(file)
-      toast.success(`已导入测试场景：${dataset.dataset_id}`)
+      toast.success(`已导入数据集：${dataset.dataset_id}`)
       void refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
@@ -160,9 +160,9 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <CardTitle className="text-sm">生成或导入测试场景</CardTitle>
+                  <CardTitle className="text-sm">新建或导入数据集</CardTitle>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    场景包包含文档、oracle 与问题；评测时会上传到独立 LightRAG 工作区，不会污染当前知识库。
+                    数据集包包含文档、标准答案与题目；测评时会在独立 LightRAG 工作区中处理，不会污染当前知识库。
                   </p>
                 </div>
                 <input
@@ -170,7 +170,7 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
                   type="file"
                   accept=".zip,application/zip"
                   className="hidden"
-                  onChange={(event) => void importScenario(event)}
+                  onChange={(event) => void importDataset(event)}
                 />
                 <Button
                   size="sm"
@@ -179,7 +179,7 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
                   onClick={() => importInputRef.current?.click()}
                 >
                   <UploadIcon className="mr-1 size-4" />
-                  {importing ? '导入中…' : '导入场景包'}
+                  {importing ? '导入中…' : '导入数据集包'}
                 </Button>
               </div>
             </CardHeader>

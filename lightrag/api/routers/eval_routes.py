@@ -71,6 +71,7 @@ class CreateJobRequest(BaseModel):
     kind: Literal["run", "dataset"] = "run"
     experiment: str | None = None
     dataset: str | None = None
+    name: str | None = Field(default=None, max_length=128)
     params: dict[str, Any] = Field(default_factory=dict)
     supervise: bool = False
     supervision: Literal["auto", "none", "heartbeat"] = "auto"
@@ -154,6 +155,7 @@ _GENERIC_PARAM_KEYS = {
     "chunk_top_k",
     "num_ctx",
     "num_predict",
+    "max_total_tokens",
     "temperature",
     "max_cases",
     "kg",
@@ -309,10 +311,38 @@ def _extra_pairs(extra: list[Any]) -> list[str]:
     return pairs
 
 
+def _positive_int_param(params: dict[str, Any], key: str) -> int | None:
+    """Read an optional positive integer without silently accepting booleans."""
+    value = params.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{key} must be an integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key} must be an integer") from exc
+    if parsed < 1:
+        raise ValueError(f"{key} must be at least 1")
+    return parsed
+
+
+def _run_label(value: str | None) -> str | None:
+    if value is None:
+        return None
+    label = value.strip()
+    if not label:
+        raise ValueError("evaluation name must not be empty")
+    if any(ord(char) < 32 for char in label):
+        raise ValueError("evaluation name contains unsupported control characters")
+    return label
+
+
 def _build_run_params(
     *,
     experiment: str,
     dataset: str,
+    name: str | None,
     params: dict[str, Any],
     runs_root: Path,
     datasets_root: Path,
@@ -399,16 +429,27 @@ def _build_run_params(
     if not (dataset_dir / "manifest.json").exists():
         raise ValueError(f"dataset not found under generated root: {dataset}")
     env = os.environ
+    max_cases = params.get("max_cases", 0)
+    if isinstance(max_cases, bool):
+        raise ValueError("max_cases must be an integer")
+    try:
+        max_cases = int(max_cases)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("max_cases must be an integer") from exc
+    if max_cases < 0:
+        raise ValueError("max_cases must be 0 or greater")
     return RunParams(
         experiment=experiment,
         dataset=dataset_dir,
         output_dir=Path("."),
+        label=_run_label(name),
         model=params.get("model"),
         mode=params.get("mode"),
-        top_k=params.get("top_k"),
-        chunk_top_k=params.get("chunk_top_k"),
-        num_ctx=params.get("num_ctx"),
-        num_predict=params.get("num_predict"),
+        top_k=_positive_int_param(params, "top_k"),
+        chunk_top_k=_positive_int_param(params, "chunk_top_k"),
+        num_ctx=_positive_int_param(params, "num_ctx"),
+        num_predict=_positive_int_param(params, "num_predict"),
+        max_total_tokens=_positive_int_param(params, "max_total_tokens"),
         temperature=params.get("temperature"),
         ollama_url=env.get("OLLAMA_URL", "http://127.0.0.1:11434"),
         rag_api_url=env.get("RAG_API_URL", "http://127.0.0.1:9621"),
@@ -416,7 +457,7 @@ def _build_run_params(
         access_token=env.get("LIGHTRAG_ACCESS_TOKEN"),
         runs_root=runs_root,
         engine=params.get("engine"),
-        max_cases=int(params.get("max_cases") or 0),
+        max_cases=max_cases,
         skip_kg=not bool(params.get("kg", True)),
         extra=extra,
     )
@@ -552,10 +593,17 @@ def create_eval_routes(
             detail = load_run(root, run_id)
             if detail is None:
                 raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-            log_path = Path(detail["run_dir"]) / "run.log"
-            if not log_path.exists():
+            run_dir = Path(detail["run_dir"])
+            log_paths = [run_dir / "run.log", run_dir / "execution_unit.log"]
+            content: list[str] = []
+            for log_path in log_paths:
+                if not log_path.exists():
+                    continue
+                if content:
+                    content.append(f"--- {log_path.name} ---")
+                content.extend(log_path.read_text(encoding="utf-8").splitlines())
+            if not content:
                 return {"exists": False, "lines": []}
-            content = log_path.read_text(encoding="utf-8").splitlines()
             return {"exists": True, "lines": content[-lines:]}
         except HTTPException:
             raise
@@ -914,6 +962,7 @@ def create_eval_routes(
                     params = _build_run_params(
                         experiment=request.experiment,
                         dataset=request.dataset,
+                        name=request.name,
                         params=request.params,
                         runs_root=root,
                         datasets_root=datasets,
@@ -1314,7 +1363,7 @@ def create_eval_routes(
                 snippet.append({"method": label, **picked})
             report_excerpt = (report or {}).get("report_md", "")[:2000]
             prompt = (
-                f"实验：{detail.get('label')}\n"
+                f"测评：{detail.get('label')}\n"
                 f"说明：{detail.get('description') or ''}\n"
                 f"条件：{conditions}\n"
                 f"结果：{snippet}\n"
@@ -1324,8 +1373,8 @@ def create_eval_routes(
                 host=os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
                 model=os.getenv("OLLAMA_MODEL", "qwen3:8b"),
                 system=(
-                    "你是评测分析助手。用简洁的中文分析这段评测结果：先说结论，再指出方法间差异、"
-                    "可能的失败模式（如检索失败/选择失败/上下文过大/拒答问题）和可执行的改进建议。"
+                    "你是测评分析助手。用简洁的中文分析这段测评结果：先说结论，再指出可能的失败模式"
+                    "（如检索失败/选择失败/上下文过大/拒答问题）和可执行的改进建议。"
                     "不要罗列参数，不要超过 300 字。"
                 ),
                 user=prompt,
