@@ -116,6 +116,7 @@ function ContextObservation({ c }: { c: NormalizedCase }) {
   const observation = c.finalContextEvidence
   const status = observation.status
   if (!status) return null
+  if (status === 'not_applicable') return null
   if (status !== 'observed') {
     return (
       <p className="text-muted-foreground mt-3 text-xs leading-5">

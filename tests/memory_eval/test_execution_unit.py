@@ -247,24 +247,27 @@ def test_end_to_end_runner_uses_server_configuration_and_writes_receipts(
         }
 
     monkeypatch.setattr(end_to_end, "start_execution_unit", fake_start_execution_unit)
-    monkeypatch.setattr(
-        end_to_end,
-        "upload_dataset_files",
-        lambda **_kwargs: {
+
+    def fake_upload_dataset_files(**kwargs):
+        kwargs["progress_callback"](1, 1)
+        return {
             "uploaded": [{"status": "success", "track_status": {"passed": True}}],
             "passed": True,
             "elapsed_seconds": 1.0,
-        },
-    )
-    monkeypatch.setattr(
-        end_to_end,
-        "evaluate_api",
-        lambda **_kwargs: {"cases": 1, "average_recall": 1.0, "results": []},
-    )
+        }
+
+    monkeypatch.setattr(end_to_end, "upload_dataset_files", fake_upload_dataset_files)
+
+    def fake_evaluate_api(**kwargs):
+        kwargs["progress_callback"](1, 1)
+        return {"cases": 1, "average_recall": 1.0, "results": []}
+
+    monkeypatch.setattr(end_to_end, "evaluate_api", fake_evaluate_api)
     answer_call: dict = {}
 
     def fake_evaluate_answers(**kwargs):
         answer_call.update(kwargs)
+        kwargs["progress_callback"](2, 2)
         return {"cases": 1, "answer_accuracy": 1.0, "results": []}
 
     monkeypatch.setattr(end_to_end, "evaluate_answers", fake_evaluate_answers)
@@ -294,9 +297,28 @@ def test_end_to_end_runner_uses_server_configuration_and_writes_receipts(
         encoding="utf-8",
     )
     (context.dataset / "oracle.json").write_text(
-        json.dumps({"facts": [], "questions": []}), encoding="utf-8"
+        json.dumps(
+            {
+                "facts": [],
+                "questions": [
+                    {"id": "Q-1", "expected_behavior": "answer"},
+                    {"id": "Q-2", "expected_behavior": "abstain"},
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
     context.output_dir.mkdir()
+    progress_updates: list[tuple[int, int, str, str]] = []
+    original_progress = context.progress
+
+    def capture_progress(
+        status: str, done: int, total: int, phase: str = "", message: str = ""
+    ) -> None:
+        progress_updates.append((done, total, phase, message))
+        original_progress(status, done, total, phase, message)
+
+    context.progress = capture_progress  # type: ignore[method-assign]
     result = end_to_end._runner(context)
     assert result["status"] == "complete"
     assert context.environment["rag_api_url"] == "http://isolated.test"
@@ -310,6 +332,18 @@ def test_end_to_end_runner_uses_server_configuration_and_writes_receipts(
     assert start_call["runtime_options"]["generation"]["num_predict"] == 2048
     assert start_call["runtime_options"]["extraction_generation"]["num_predict"] == 8192
     assert start_call["runtime_options"]["extraction_safeguards"]["use_json"] is True
+    assert progress_updates == [
+        (0, 1, "runtime", "正在准备独立运行环境"),
+        (1, 1, "runtime", "独立运行环境已就绪"),
+        (0, 1, "ingestion", "正在上传、解析并建立文档索引"),
+        (1, 1, "ingestion", "正在上传、解析并建立文档索引"),
+        (0, 1, "retrieval", "正在评测检索结果"),
+        (1, 1, "retrieval", "正在评测检索结果"),
+        (0, 2, "answer", "正在生成回答并评分"),
+        (2, 2, "answer", "正在生成回答并评分"),
+        (0, 1, "report", "正在汇总评分结果并生成报告"),
+        (1, 1, "report", "评分结果与报告已生成"),
+    ]
 
 
 def test_product_retrieval_results_drop_raw_candidate_payloads() -> None:

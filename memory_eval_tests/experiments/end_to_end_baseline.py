@@ -302,16 +302,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             if isinstance(question, dict)
         )
         answer_question_count = len(all_questions)
-        total_steps = max(
-            3 + len(source_documents) + retrieval_question_count + answer_question_count,
-            1,
-        )
-        runtime_ready_step = 1
-        ingestion_start_step = runtime_ready_step
-        retrieval_start_step = ingestion_start_step + len(source_documents)
-        answer_start_step = retrieval_start_step + retrieval_question_count
-
-        context.progress("running", 0, total_steps, "runtime", "starting isolated evaluation service")
+        context.progress("running", 0, 1, "runtime", "正在准备独立运行环境")
         unit = start_execution_unit(
             output_dir=context.output_dir,
             profile=profile,
@@ -324,11 +315,9 @@ def _runner(context: RunContext) -> dict[str, Any]:
         context.environment["rag_api_url"] = unit["runtime_endpoint"]
         context.runtime_snapshot = unit["runtime_snapshot"]
         baseline = context.baseline
+        context.progress("running", 1, 1, "runtime", "独立运行环境已就绪")
         context.progress(
-            "running", runtime_ready_step, total_steps, "runtime", "isolated evaluation service is ready"
-        )
-        context.progress(
-            "running", ingestion_start_step, total_steps, "ingestion", "uploading source documents"
+            "running", 0, len(source_documents), "ingestion", "正在上传、解析并建立文档索引"
         )
         upload = upload_dataset_files(
             dataset_source=str(context.dataset),
@@ -341,10 +330,10 @@ def _runner(context: RunContext) -> dict[str, Any]:
             file_names=source_documents,
             progress_callback=lambda completed, total: context.progress(
                 "running",
-                ingestion_start_step + completed,
-                total_steps,
+                completed,
+                total,
                 "ingestion",
-                f"processed {completed}/{total} source documents",
+                "正在上传、解析并建立文档索引",
             ),
         )
         ingestion, index = _receipt(upload, unit)
@@ -369,13 +358,10 @@ def _runner(context: RunContext) -> dict[str, Any]:
             allow_partial and ingestion["meets_success_threshold"]
         ):
             raise IngestionFailure("required dataset documents did not meet the ingestion success threshold")
-        context.progress(
-            "running",
-            retrieval_start_step,
-            total_steps,
-            "retrieval",
-            f"evaluating retrieval 0/{retrieval_question_count}",
-        )
+        if retrieval_question_count:
+            context.progress(
+                "running", 0, retrieval_question_count, "retrieval", "正在评测检索结果"
+            )
         top_k = int(baseline.get("top_k") or 5)
         chunk_top_k = int(baseline.get("chunk_top_k") or 5)
         enable_rerank = _rerank_enabled(profile)
@@ -391,15 +377,16 @@ def _runner(context: RunContext) -> dict[str, Any]:
             enable_rerank=enable_rerank,
             progress_callback=lambda completed, total: context.progress(
                 "running",
-                retrieval_start_step + completed,
-                total_steps,
+                completed,
+                total,
                 "retrieval",
-                f"evaluating retrieval {completed}/{total}",
+                "正在评测检索结果",
             ),
         )
-        context.progress(
-            "running", answer_start_step, total_steps, "answer", f"evaluating answers 0/{answer_question_count}"
-        )
+        if answer_question_count:
+            context.progress(
+                "running", 0, answer_question_count, "answer", "正在生成回答并评分"
+            )
         answer = evaluate_answers(
             dataset_source=str(context.dataset),
             rag_api_url=unit["runtime_endpoint"],
@@ -414,12 +401,13 @@ def _runner(context: RunContext) -> dict[str, Any]:
             enable_rerank=enable_rerank,
             progress_callback=lambda completed, total: context.progress(
                 "running",
-                answer_start_step + completed,
-                total_steps,
+                completed,
+                total,
                 "answer",
-                f"evaluating answers {completed}/{total}",
+                "正在生成回答并评分",
             ),
         )
+        context.progress("running", 0, 1, "report", "正在汇总评分结果并生成报告")
         case_traces = build_case_traces(
             oracle=oracle,
             retrieval_results=retrieval.get("results") or [],
@@ -439,7 +427,8 @@ def _runner(context: RunContext) -> dict[str, Any]:
         (context.output_dir / "diagnosis.json").write_text(
             json.dumps(diagnosis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
-        context.progress("running", total_steps, total_steps, "report", "scoring and report generation complete")
+        report = _report_markdown(answer, diagnosis)
+        context.progress("running", 1, 1, "report", "评分结果与报告已生成")
         methods = [
             {
                 "method": "retrieval",
@@ -464,7 +453,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
         return {
             "status": "complete",
             "methods": methods,
-            "report": _report_markdown(answer, diagnosis),
+            "report": report,
             "extra": {
                 "ingestion_receipt": "ingestion_receipt.json",
                 "index_receipt": "index_receipt.json",
