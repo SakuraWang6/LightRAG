@@ -87,6 +87,8 @@ def test_managed_unit_applies_evaluation_runtime_options(tmp_path: Path) -> None
         {
             "skip_kg": True,
             "generation": {"num_ctx": 16384, "num_predict": 2048, "temperature": 0.2},
+            "extraction_generation": {"num_ctx": 16384, "num_predict": 8192, "temperature": 0.2},
+            "extraction_safeguards": {"use_json": True, "max_records": 40, "max_entities": 16, "max_gleaning": 0},
         },
     )
     assert environment["LIGHTRAG_PARSER"] == "*:native-!"
@@ -95,6 +97,11 @@ def test_managed_unit_applies_evaluation_runtime_options(tmp_path: Path) -> None
     assert environment["OPENAI_LLM_MAX_COMPLETION_TOKENS"] == "2048"
     assert environment["QUERY_OPENAI_LLM_MAX_COMPLETION_TOKENS"] == "2048"
     assert environment["EXTRACT_OPENAI_LLM_TEMPERATURE"] == "0.2"
+    assert environment["EXTRACT_OPENAI_LLM_MAX_COMPLETION_TOKENS"] == "8192"
+    assert environment["ENTITY_EXTRACTION_USE_JSON"] == "true"
+    assert environment["MAX_EXTRACTION_RECORDS"] == "40"
+    assert environment["MAX_EXTRACTION_ENTITIES"] == "16"
+    assert environment["MAX_GLEANING"] == "0"
     assert "QUERY_OPENAI_LLM_NUM_CTX" not in environment
 
 
@@ -113,6 +120,24 @@ def test_managed_ollama_unit_applies_context_window(tmp_path: Path) -> None:
     assert environment["OLLAMA_LLM_NUM_CTX"] == "32768"
     assert environment["QUERY_OLLAMA_LLM_NUM_CTX"] == "32768"
     assert environment["QUERY_OLLAMA_LLM_NUM_PREDICT"] == "4096"
+
+
+def test_managed_ollama_unit_separates_extraction_generation_budget(tmp_path: Path) -> None:
+    profile = _profile("managed_local")
+    profile["configuration"]["query"] = {"provider": "ollama", "model": "qwen3:8b"}
+    unit = execution_unit.allocate_execution_unit(
+        run_id="end-to-end", output_dir=tmp_path / "run", profile=profile
+    )
+    environment = execution_unit._profile_environment(
+        profile,
+        unit,
+        {
+            "generation": {"num_ctx": 16384, "num_predict": 4096, "temperature": 0},
+            "extraction_generation": {"num_ctx": 16384, "num_predict": 8192, "temperature": 0},
+        },
+    )
+    assert environment["QUERY_OLLAMA_LLM_NUM_PREDICT"] == "4096"
+    assert environment["EXTRACT_OLLAMA_LLM_NUM_PREDICT"] == "8192"
 
 
 def test_managed_unit_preflight_rejects_missing_ollama(tmp_path: Path, monkeypatch) -> None:
@@ -259,6 +284,8 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
     assert answer_call["evaluation_trace"] is True
     assert start_call["runtime_options"]["skip_kg"] is True
     assert start_call["runtime_options"]["generation"]["num_predict"] == 2048
+    assert start_call["runtime_options"]["extraction_generation"]["num_predict"] == 8192
+    assert start_call["runtime_options"]["extraction_safeguards"]["use_json"] is True
 
 
 def test_prepare_binds_workspace_to_immutable_execution_manifest(

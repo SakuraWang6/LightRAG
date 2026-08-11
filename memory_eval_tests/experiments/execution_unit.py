@@ -140,6 +140,30 @@ def _apply_generation_options(
         env[f"{role_prefix}{prefix}_NUM_CTX"] = str(num_ctx)
 
 
+def _apply_extraction_safeguards(
+    env: dict[str, str], options: dict[str, Any] | None
+) -> None:
+    """Apply extraction-only output integrity controls to a managed child.
+
+    Entity extraction has a much larger, structured response than a normal
+    answer.  Keeping its record cap and format under the evaluation runner's
+    control prevents a user's answer-length choice from silently producing a
+    truncated knowledge graph.
+    """
+    if not options:
+        return
+    if options.get("use_json") is True:
+        env["ENTITY_EXTRACTION_USE_JSON"] = "true"
+    for option_key, env_key in (
+        ("max_records", "MAX_EXTRACTION_RECORDS"),
+        ("max_entities", "MAX_EXTRACTION_ENTITIES"),
+        ("max_gleaning", "MAX_GLEANING"),
+    ):
+        value = options.get(option_key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            env[env_key] = str(value)
+
+
 def _profile_environment(
     profile: dict[str, Any],
     unit: dict[str, Any],
@@ -168,9 +192,9 @@ def _profile_environment(
         skip_kg = bool((runtime_options or {}).get("skip_kg"))
         env["LIGHTRAG_PARSER"] = f"*:{parser_engine}{'-!' if skip_kg else ''}"
 
-    # Base options cover the default LLM role (and therefore extraction when
-    # no explicit extraction role exists).  Role-specific variables then make
-    # the same declared values authoritative for the query/extraction roles.
+    # Base options cover the default LLM role.  Query and extraction are then
+    # set explicitly: extraction has its own, larger response budget because
+    # a structured KG payload is not comparable to a user-facing answer.
     generation = (runtime_options or {}).get("generation")
     generation = generation if isinstance(generation, dict) else None
     _apply_generation_options(
@@ -179,15 +203,29 @@ def _profile_environment(
         role=None,
         options=generation,
     )
-    for role_name, role_prefix in (("query", "QUERY"), ("extraction", "EXTRACT")):
+    extraction_generation = (runtime_options or {}).get("extraction_generation")
+    extraction_generation = (
+        extraction_generation if isinstance(extraction_generation, dict) else generation
+    )
+    for role_name, role_prefix, options in (
+        ("query", "QUERY", generation),
+        ("extraction", "EXTRACT", extraction_generation),
+    ):
         role = config.get(role_name)
-        if isinstance(role, dict):
-            _apply_generation_options(
-                env,
-                provider=role.get("provider"),
-                role=role_prefix,
-                options=generation,
-            )
+        # LightRAG's extraction role inherits the base binding when a profile
+        # declares only a query role.  Its role-specific options still apply.
+        provider_role = role if isinstance(role, dict) else primary
+        _apply_generation_options(
+            env,
+            provider=(provider_role or {}).get("provider"),
+            role=role_prefix,
+            options=options,
+        )
+    extraction_safeguards = (runtime_options or {}).get("extraction_safeguards")
+    _apply_extraction_safeguards(
+        env,
+        extraction_safeguards if isinstance(extraction_safeguards, dict) else None,
+    )
     storage_prefixes = {
         "kv": "LIGHTRAG_KV_STORAGE",
         "vector": "LIGHTRAG_VECTOR_STORAGE",
@@ -334,6 +372,10 @@ def start_execution_unit(
             return unit
 
     unit.update({"lifecycle_status": "starting", "starting_at": _now()})
+    if runtime_options:
+        # This contains only run controls, never provider credentials.  Keep it
+        # beside the child log so an operator can verify what actually ran.
+        unit["runtime_options"] = json.loads(json.dumps(runtime_options))
     _write_unit(output_dir, unit)
     port = _free_local_port()
     endpoint = f"http://127.0.0.1:{port}"

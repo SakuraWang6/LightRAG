@@ -29,13 +29,33 @@ class IngestionFailure(RuntimeError):
 
 
 def _runtime_options(baseline: dict[str, Any]) -> dict[str, Any]:
-    """Return the launch controls that must reach the isolated child server."""
+    """Return answer controls plus extraction-specific integrity safeguards."""
+    answer_num_predict = int(baseline.get("num_predict") or 4096)
+    answer_num_ctx = int(baseline.get("num_ctx") or 16384)
     return {
         "skip_kg": not bool(baseline.get("kg", True)),
         "generation": {
             key: baseline[key]
             for key in ("num_ctx", "num_predict", "temperature")
             if key in baseline and baseline[key] is not None
+        },
+        # A KG extraction response contains many structured rows and must not
+        # inherit a smaller answer-output budget.  JSON removes the fragile
+        # delimiter parser, while the record cap keeps an 8K response bounded.
+        "extraction_generation": {
+            "num_ctx": answer_num_ctx,
+            "num_predict": max(answer_num_predict, 8192),
+            "temperature": float(baseline.get("temperature") or 0),
+        },
+        "extraction_safeguards": {
+            "use_json": True,
+            "max_records": 40,
+            "max_entities": 16,
+            # Do not run a second free-form "glean" pass after a complete
+            # structured extraction. If the bounded first call still reaches
+            # its token limit, the document fails rather than indexing a
+            # partial knowledge graph.
+            "max_gleaning": 0,
         },
     }
 
@@ -473,9 +493,8 @@ spec = ExperimentSpec(
         "top_k": 5,
         "chunk_top_k": 5,
         "max_total_tokens": 8192,
-        # Entity/relationship extraction needs materially more than the
-        # framework-wide 128-token legacy default.  This run-level default is
-        # applied to both extraction and answer generation unless overridden.
+        # This controls answer generation. Extraction gets an independent 8K
+        # integrity budget in ``_runtime_options``.
         "num_predict": 4096,
     },
     extra_schema={
