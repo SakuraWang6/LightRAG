@@ -72,6 +72,49 @@ def test_managed_unit_applies_supported_profile_settings(tmp_path: Path) -> None
     assert environment["MAX_ASYNC_LLM"] == "2"
 
 
+def test_managed_unit_applies_evaluation_runtime_options(tmp_path: Path) -> None:
+    profile = _profile("managed_local")
+    profile["configuration"]["extraction"] = {
+        "provider": "openai",
+        "model": "extract-model",
+    }
+    unit = execution_unit.allocate_execution_unit(
+        run_id="end-to-end", output_dir=tmp_path / "run", profile=profile
+    )
+    environment = execution_unit._profile_environment(
+        profile,
+        unit,
+        {
+            "skip_kg": True,
+            "generation": {"num_ctx": 16384, "num_predict": 2048, "temperature": 0.2},
+        },
+    )
+    assert environment["LIGHTRAG_PARSER"] == "*:native-!"
+    # OpenAI has no num_ctx runtime option, but output/temperature apply to
+    # the base fallback and both explicitly configured roles.
+    assert environment["OPENAI_LLM_MAX_COMPLETION_TOKENS"] == "2048"
+    assert environment["QUERY_OPENAI_LLM_MAX_COMPLETION_TOKENS"] == "2048"
+    assert environment["EXTRACT_OPENAI_LLM_TEMPERATURE"] == "0.2"
+    assert "QUERY_OPENAI_LLM_NUM_CTX" not in environment
+
+
+def test_managed_ollama_unit_applies_context_window(tmp_path: Path) -> None:
+    profile = _profile("managed_local")
+    profile["configuration"]["query"] = {"provider": "ollama", "model": "qwen3:8b"}
+    profile["configuration"]["embedding"] = {"provider": "ollama", "model": "bge-m3"}
+    unit = execution_unit.allocate_execution_unit(
+        run_id="end-to-end", output_dir=tmp_path / "run", profile=profile
+    )
+    environment = execution_unit._profile_environment(
+        profile,
+        unit,
+        {"generation": {"num_ctx": 32768, "num_predict": 4096, "temperature": 0}},
+    )
+    assert environment["OLLAMA_LLM_NUM_CTX"] == "32768"
+    assert environment["QUERY_OLLAMA_LLM_NUM_CTX"] == "32768"
+    assert environment["QUERY_OLLAMA_LLM_NUM_PREDICT"] == "4096"
+
+
 def test_managed_unit_preflight_rejects_missing_ollama(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(execution_unit, "_ollama_reachable", lambda _endpoint: False)
     profile = _profile("managed_local")
@@ -151,7 +194,7 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
         spec=ExperimentSpec(id="end_to_end_baseline", label="E2E", description="d", runner=lambda _c: {}),
         dataset=tmp_path / "dataset",
         output_dir=tmp_path / "run",
-        baseline={"top_k": 5, "chunk_top_k": 5},
+        baseline={"top_k": 5, "chunk_top_k": 3, "kg": False, "num_predict": 2048},
         environment={"rag_api_url": "http://old.test"},
         variables=[],
         run_id="e2e-run",
@@ -164,9 +207,12 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
         "allocate_execution_unit",
         lambda **_kwargs: {"workspace_id": "ws", "storage_id": "store", "runtime_endpoint": None},
     )
+    start_call: dict = {}
+
     def fake_start_execution_unit(
-        *, output_dir, profile, unit, api_key=None, access_token=None
+        *, output_dir, profile, unit, api_key=None, access_token=None, runtime_options=None
     ):
+        start_call["runtime_options"] = runtime_options
         return {
             "workspace_id": "ws",
             "storage_id": "store",
@@ -211,6 +257,8 @@ def test_end_to_end_runner_requires_published_profile_and_writes_receipts(
     assert json.loads((context.output_dir / "diagnosis.json").read_text())["case_count"] == 0
     assert "失败归因" in result["report"]
     assert answer_call["evaluation_trace"] is True
+    assert start_call["runtime_options"]["skip_kg"] is True
+    assert start_call["runtime_options"]["generation"]["num_predict"] == 2048
 
 
 def test_prepare_binds_workspace_to_immutable_execution_manifest(

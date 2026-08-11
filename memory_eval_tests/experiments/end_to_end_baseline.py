@@ -28,6 +28,18 @@ class IngestionFailure(RuntimeError):
     retryable = True
 
 
+def _runtime_options(baseline: dict[str, Any]) -> dict[str, Any]:
+    """Return the launch controls that must reach the isolated child server."""
+    return {
+        "skip_kg": not bool(baseline.get("kg", True)),
+        "generation": {
+            key: baseline[key]
+            for key in ("num_ctx", "num_predict", "temperature")
+            if key in baseline and baseline[key] is not None
+        },
+    }
+
+
 def _profile(context: RunContext) -> dict[str, Any]:
     profile_id = context.extra.get("environment_profile_id")
     raw_version = context.extra.get("environment_profile_version")
@@ -317,6 +329,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             unit=unit,
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
+            runtime_options=_runtime_options(context.baseline),
         )
         context.execution_unit = unit
         context.environment["rag_api_url"] = unit["runtime_endpoint"]
@@ -368,6 +381,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             rag_api_url=unit["runtime_endpoint"],
             mode=str(baseline.get("mode") or "mix"),
             top_k=top_k,
+            chunk_top_k=chunk_top_k,
             max_cases=max_cases,
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
@@ -411,7 +425,11 @@ def _runner(context: RunContext) -> dict[str, Any]:
             {
                 "method": "retrieval",
                 "label": "检索结果",
-                "params": {"mode": baseline.get("mode"), "top_k": top_k},
+                "params": {
+                    "mode": baseline.get("mode"),
+                    "top_k": top_k,
+                    "chunk_top_k": chunk_top_k,
+                },
                 "summary": normalize_summary(retrieval, "retrieval"),
                 "results": retrieval.get("results", []),
             },
@@ -450,7 +468,16 @@ spec = ExperimentSpec(
     id="end_to_end_baseline",
     label="端到端测评",
     description="在独立 LightRAG 工作空间内完成文档入库、索引、检索、回答与评分。",
-    default_baseline={"mode": "mix", "top_k": 5, "chunk_top_k": 5, "max_total_tokens": 8192},
+    default_baseline={
+        "mode": "mix",
+        "top_k": 5,
+        "chunk_top_k": 5,
+        "max_total_tokens": 8192,
+        # Entity/relationship extraction needs materially more than the
+        # framework-wide 128-token legacy default.  This run-level default is
+        # applied to both extraction and answer generation unless overridden.
+        "num_predict": 4096,
+    },
     extra_schema={
         "environment_profile_id": "str",
         "environment_profile_version": "int",

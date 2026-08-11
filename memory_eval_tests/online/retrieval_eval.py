@@ -24,6 +24,7 @@ def evaluate_api(
     rag_api_url: str,
     mode: str = "mix",
     top_k: int = 10,
+    chunk_top_k: int | None = None,
     max_cases: int | None = None,
     api_key: str | None = None,
     access_token: str | None = None,
@@ -41,7 +42,7 @@ def evaluate_api(
             "query": question["question"],
             "mode": mode,
             "top_k": top_k,
-            "chunk_top_k": top_k,
+            "chunk_top_k": chunk_top_k if chunk_top_k is not None else top_k,
             # The references carry ranked chunk content only when requested;
             # MRR/Recall are computed from those ranks, not from the whole
             # serialized response.

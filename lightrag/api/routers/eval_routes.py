@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import csv
 import io
+import math
 import os
 import re
 import shutil
@@ -327,6 +328,22 @@ def _positive_int_param(params: dict[str, Any], key: str) -> int | None:
     return parsed
 
 
+def _temperature_param(params: dict[str, Any]) -> float | None:
+    """Validate a provider-neutral sampling temperature before queuing work."""
+    value = params.get("temperature")
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("temperature must be a number")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("temperature must be a number") from exc
+    if not math.isfinite(parsed) or not 0 <= parsed <= 2:
+        raise ValueError("temperature must be between 0 and 2")
+    return parsed
+
+
 def _run_label(value: str | None) -> str | None:
     if value is None:
         return None
@@ -462,6 +479,15 @@ def _build_run_params(
             raise ValueError(
                 f"engine must be one of the configured parser engines: {available_engines}"
             )
+    kg_enabled = bool(params.get("kg", True))
+    mode = params.get("mode")
+    if not kg_enabled:
+        # With entity/relation extraction skipped, graph-aware modes have no
+        # graph to query.  Keep the resulting run a clear vector-only baseline.
+        if mode is None:
+            mode = "naive"
+        elif mode != "naive":
+            raise ValueError("mode must be naive when KG extraction is disabled")
     env = os.environ
     max_cases = params.get("max_cases", 0)
     if isinstance(max_cases, bool):
@@ -478,13 +504,13 @@ def _build_run_params(
         output_dir=Path("."),
         label=_run_label(name),
         model=params.get("model"),
-        mode=params.get("mode"),
+        mode=mode,
         top_k=_positive_int_param(params, "top_k"),
         chunk_top_k=_positive_int_param(params, "chunk_top_k"),
         num_ctx=_positive_int_param(params, "num_ctx"),
         num_predict=_positive_int_param(params, "num_predict"),
         max_total_tokens=_positive_int_param(params, "max_total_tokens"),
-        temperature=params.get("temperature"),
+        temperature=_temperature_param(params),
         ollama_url=env.get("OLLAMA_URL", "http://127.0.0.1:11434"),
         rag_api_url=env.get("RAG_API_URL", "http://127.0.0.1:9621"),
         api_key=env.get("LIGHTRAG_API_KEY"),
@@ -492,7 +518,7 @@ def _build_run_params(
         runs_root=runs_root,
         engine=engine,
         max_cases=max_cases,
-        skip_kg=not bool(params.get("kg", True)),
+        skip_kg=not kg_enabled,
         extra=extra,
     )
 

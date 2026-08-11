@@ -67,7 +67,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
   const [maxCases, setMaxCases] = useState(() => numberParam(initial?.params, 'max_cases', 0))
   const [numCtx, setNumCtx] = useState(() => numberParam(initial?.params, 'num_ctx', 16384))
   const [maxTotalTokens, setMaxTotalTokens] = useState(() => numberParam(initial?.params, 'max_total_tokens', 8192))
-  const [numPredict, setNumPredict] = useState(() => numberParam(initial?.params, 'num_predict', 128))
+  const [numPredict, setNumPredict] = useState(() => numberParam(initial?.params, 'num_predict', 4096))
   const [temperature, setTemperature] = useState(() => numberParam(initial?.params, 'temperature', 0))
   const [engine, setEngine] = useState(() => stringParam(initial?.params, 'engine', 'native'))
   const [kg, setKg] = useState(() => initial?.params?.kg !== false)
@@ -76,6 +76,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
   const [optionsLoading, setOptionsLoading] = useState(true)
   const [optionsError, setOptionsError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const effectiveMode = kg ? mode : 'naive'
 
   useEffect(() => {
     void listDatasets().then((data) => setDatasets(data.datasets)).catch(() => undefined)
@@ -135,7 +136,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
         dataset,
         params: {
           model: model.trim() || undefined,
-          mode,
+          mode: effectiveMode,
           top_k: positiveInteger(topK, 5),
           chunk_top_k: positiveInteger(chunkTopK, 5),
           max_cases: nonNegativeInteger(maxCases),
@@ -154,7 +155,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
     } finally {
       setSubmitting(false)
     }
-  }, [chunkTopK, dataset, engine, kg, maxCases, maxTotalTokens, mode, model, name, numCtx, numPredict, onStarted, optionsError, optionsLoading, t, temperature, topK])
+  }, [chunkTopK, dataset, effectiveMode, engine, kg, maxCases, maxTotalTokens, model, name, numCtx, numPredict, onStarted, optionsError, optionsLoading, t, temperature, topK])
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -197,7 +198,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
             <CardHeader className="pb-2"><CardTitle className="text-sm">检索与评分范围</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <label className="space-y-1.5"><span className="text-sm font-medium">模型</span><Select value={model} onValueChange={setModel} disabled={optionsLoading || modelOptions.length === 0}><SelectTrigger><SelectValue placeholder="选择服务器已配置的模型" /></SelectTrigger><SelectContent>{modelOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">仅显示当前服务器可用的回答模型。</span></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">检索模式</span><Select value={mode} onValueChange={setMode}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="naive">Naive</SelectItem><SelectItem value="mix">Mix</SelectItem><SelectItem value="local">Local</SelectItem><SelectItem value="global">Global</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">检索模式</span><Select value={effectiveMode} onValueChange={setMode} disabled={!kg}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="naive">Naive</SelectItem><SelectItem value="mix">Mix</SelectItem><SelectItem value="local">Local</SelectItem><SelectItem value="global">Global</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select>{!kg ? <span className="text-muted-foreground block text-xs">关闭 KG 时自动使用 Naive，确保只评测向量检索。</span> : null}</label>
               <label className="space-y-1.5"><span className="text-sm font-medium">检索条数（Top-K）</span><Input type="number" min="1" value={topK} onChange={(event) => setTopK(event.target.value)} /></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">Chunk Top-K</span><Input type="number" min="1" value={chunkTopK} onChange={(event) => setChunkTopK(event.target.value)} /></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">最多运行题数</span><Input type="number" min="0" value={maxCases} onChange={(event) => setMaxCases(event.target.value)} /><span className="text-muted-foreground block text-xs">填 0 表示运行数据集中的全部题目。</span></label>
@@ -210,7 +211,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
             <CardContent className="grid gap-4 md:grid-cols-2">
               <label className="space-y-1.5"><span className="text-sm font-medium">上下文窗口</span><Input type="number" min="1" value={numCtx} onChange={(event) => setNumCtx(event.target.value)} /></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">最大上下文 Token</span><Input type="number" min="1" value={maxTotalTokens} onChange={(event) => setMaxTotalTokens(event.target.value)} /></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">最大输出 Token</span><Input type="number" min="1" value={numPredict} onChange={(event) => setNumPredict(event.target.value)} /></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">LLM 最大输出 Token</span><Input type="number" min="1" value={numPredict} onChange={(event) => setNumPredict(event.target.value)} /><span className="text-muted-foreground block text-xs">同时作用于文档抽取与回答生成；过低会导致抽取结果截断。</span></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">温度</span><Input type="number" min="0" max="2" step="0.1" value={temperature} onChange={(event) => setTemperature(event.target.value)} /></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">解析引擎</span><Select value={engine} onValueChange={setEngine} disabled={optionsLoading || engineOptions.length === 0}><SelectTrigger><SelectValue placeholder="选择已配置的解析引擎" /></SelectTrigger><SelectContent>{engineOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">仅显示当前服务器已安装并配置完成的解析引擎。</span></label>
             </CardContent>

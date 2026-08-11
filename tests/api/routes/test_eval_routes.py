@@ -289,6 +289,47 @@ def test_create_evaluation_passes_custom_name_and_runtime_parameters(
     assert params.top_k == 8
     assert params.engine == "native"
     assert params.skip_kg is True
+    assert params.mode == "naive"
+
+
+def test_create_evaluation_rejects_invalid_temperature(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    datasets = tmp_path / "datasets"
+    _write(datasets / "sample" / "manifest.json", {"dataset_id": "sample"})
+    client = _client(tmp_path / "runs", datasets_root=datasets)
+    response = client.post(
+        "/eval/jobs",
+        json={
+            "kind": "run",
+            "experiment": "end_to_end_baseline",
+            "dataset": "sample",
+            "params": {"engine": "native", "temperature": 3},
+        },
+    )
+    assert response.status_code == 400
+    assert "temperature must be between 0 and 2" in response.json()["detail"]
+
+
+def test_create_evaluation_rejects_graph_query_mode_without_kg(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(_utils_api, "auth_configured", False)
+    datasets = tmp_path / "datasets"
+    _write(datasets / "sample" / "manifest.json", {"dataset_id": "sample"})
+    client = _client(tmp_path / "runs", datasets_root=datasets)
+    response = client.post(
+        "/eval/jobs",
+        json={
+            "kind": "run",
+            "experiment": "end_to_end_baseline",
+            "dataset": "sample",
+            "params": {"engine": "native", "kg": False, "mode": "mix"},
+        },
+    )
+    assert response.status_code == 400
+    assert "mode must be naive when KG extraction is disabled" in response.json()["detail"]
 
 
 def test_routes_open_when_no_auth(runs_tree: Path, monkeypatch) -> None:

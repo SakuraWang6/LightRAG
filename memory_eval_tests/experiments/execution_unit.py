@@ -81,7 +81,70 @@ def load_execution_unit(output_dir: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
-def _profile_environment(profile: dict[str, Any], unit: dict[str, Any]) -> dict[str, str]:
+_GENERATION_OPTION_SPECS: dict[str, tuple[str, str | None, bool]] = {
+    # provider -> (binding option environment prefix, output-token option, supports num_ctx)
+    # ``lollms`` is configured through the Ollama-shaped option container in
+    # lightrag_server, hence the same option prefix.
+    "ollama": ("OLLAMA_LLM", "NUM_PREDICT", True),
+    "lollms": ("OLLAMA_LLM", "NUM_PREDICT", True),
+    "openai": ("OPENAI_LLM", "MAX_COMPLETION_TOKENS", False),
+    "azure_openai": ("OPENAI_LLM", "MAX_COMPLETION_TOKENS", False),
+    "gemini": ("GEMINI_LLM", "MAX_OUTPUT_TOKENS", False),
+    "bedrock": ("BEDROCK_LLM", "MAX_TOKENS", False),
+}
+
+
+def _apply_generation_options(
+    env: dict[str, str],
+    *,
+    provider: Any,
+    role: str | None,
+    options: dict[str, Any] | None,
+) -> None:
+    """Apply declared per-run generation controls to one LLM role.
+
+    LightRAG reads provider options at child-server startup.  The evaluation
+    runner therefore cannot put these values on individual ``/query`` calls:
+    it must translate them to the role-aware environment variables consumed by
+    ``BindingOptions.options_dict_for_role``.  Unsupported controls are not
+    invented for providers that have no matching LightRAG option.
+    """
+    if not options:
+        return
+    spec = _GENERATION_OPTION_SPECS.get(str(provider or "").strip().lower())
+    if spec is None:
+        return
+    prefix, output_option, supports_num_ctx = spec
+    role_prefix = f"{role}_" if role else ""
+
+    temperature = options.get("temperature")
+    if isinstance(temperature, (int, float)) and not isinstance(temperature, bool):
+        env[f"{role_prefix}{prefix}_TEMPERATURE"] = str(temperature)
+
+    num_predict = options.get("num_predict")
+    if (
+        output_option
+        and isinstance(num_predict, int)
+        and not isinstance(num_predict, bool)
+        and num_predict > 0
+    ):
+        env[f"{role_prefix}{prefix}_{output_option}"] = str(num_predict)
+
+    num_ctx = options.get("num_ctx")
+    if (
+        supports_num_ctx
+        and isinstance(num_ctx, int)
+        and not isinstance(num_ctx, bool)
+        and num_ctx > 0
+    ):
+        env[f"{role_prefix}{prefix}_NUM_CTX"] = str(num_ctx)
+
+
+def _profile_environment(
+    profile: dict[str, Any],
+    unit: dict[str, Any],
+    runtime_options: dict[str, Any] | None = None,
+) -> dict[str, str]:
     """Map the supported, non-secret profile settings to child-server env vars."""
     config = profile.get("configuration") or {}
     primary = config.get("query") or config.get("extraction") or {}
@@ -98,7 +161,33 @@ def _profile_environment(profile: dict[str, Any], unit: dict[str, Any]) -> dict[
         _set_role_environment(env, reranker, prefix="RERANK")
     parser_engine = config.get("parser_engine")
     if isinstance(parser_engine, str) and parser_engine:
-        env["LIGHTRAG_PARSER"] = f"*:{parser_engine}"
+        # The parser's ``!`` process option is the supported, per-document
+        # switch that skips entity/relation extraction while retaining chunks
+        # for vector retrieval.  The isolated server owns no unrelated docs,
+        # so a wildcard rule is exactly the run-level KG toggle we need.
+        skip_kg = bool((runtime_options or {}).get("skip_kg"))
+        env["LIGHTRAG_PARSER"] = f"*:{parser_engine}{'-!' if skip_kg else ''}"
+
+    # Base options cover the default LLM role (and therefore extraction when
+    # no explicit extraction role exists).  Role-specific variables then make
+    # the same declared values authoritative for the query/extraction roles.
+    generation = (runtime_options or {}).get("generation")
+    generation = generation if isinstance(generation, dict) else None
+    _apply_generation_options(
+        env,
+        provider=(primary or {}).get("provider"),
+        role=None,
+        options=generation,
+    )
+    for role_name, role_prefix in (("query", "QUERY"), ("extraction", "EXTRACT")):
+        role = config.get(role_name)
+        if isinstance(role, dict):
+            _apply_generation_options(
+                env,
+                provider=role.get("provider"),
+                role=role_prefix,
+                options=generation,
+            )
     storage_prefixes = {
         "kv": "LIGHTRAG_KV_STORAGE",
         "vector": "LIGHTRAG_VECTOR_STORAGE",
@@ -210,6 +299,7 @@ def start_execution_unit(
     unit: dict[str, Any],
     api_key: str | None = None,
     access_token: str | None = None,
+    runtime_options: dict[str, Any] | None = None,
     timeout_seconds: int = 60,
 ) -> dict[str, Any]:
     """Start a local isolated server or verify an assigned one is reachable."""
@@ -267,7 +357,7 @@ def start_execution_unit(
             proc = subprocess.Popen(
                 command,
                 cwd=Path(__file__).resolve().parents[2],
-                env=_profile_environment(profile, unit),
+                env=_profile_environment(profile, unit, runtime_options),
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
                 # Keep the server in the evaluation process group.  Job

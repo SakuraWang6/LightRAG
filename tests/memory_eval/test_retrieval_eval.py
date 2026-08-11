@@ -82,6 +82,7 @@ def test_api_recall_and_mrr_use_reference_rank(monkeypatch, tmp_path) -> None:
         top_k=10,
     )
     assert captured_payloads[0]["mode"] == "mix"
+    assert captured_payloads[0]["chunk_top_k"] == 10
     assert report["backend"] == "api"
     assert report["cases"] == 1
     assert report["average_recall"] == pytest.approx(1.0)
@@ -100,6 +101,39 @@ def test_api_recall_and_mrr_use_reference_rank(monkeypatch, tmp_path) -> None:
     assert "9021 QMU" in evidence[0]["text"]
     assert evidence[1]["rank"] == 3
     assert [ctx["rank"] for ctx in case["top_contexts"]] == [1, 2]
+
+
+def test_api_forwards_chunk_top_k_independently(monkeypatch, tmp_path) -> None:
+    dataset = _write_oracle(
+        tmp_path,
+        questions=[
+            {
+                "id": "Q1",
+                "question": "What is the limit?",
+                "question_type": "direct_numeric",
+                "expected_behavior": "answer",
+                "evidence_fact_ids": [],
+            }
+        ],
+        facts=[],
+    )
+    captured: dict = {}
+
+    def fake_post_json(_url: str, payload: dict, **_kwargs) -> dict:
+        captured.update(payload)
+        return {"data": {"references": []}}
+
+    monkeypatch.setattr(
+        "memory_eval_tests.online.retrieval_eval._post_json", fake_post_json
+    )
+    evaluate_api(
+        dataset_source=dataset,
+        rag_api_url="http://127.0.0.1:9621",
+        top_k=9,
+        chunk_top_k=3,
+    )
+    assert captured["top_k"] == 9
+    assert captured["chunk_top_k"] == 3
 
 
 def test_api_partial_recall_and_context_precision(monkeypatch, tmp_path) -> None:
