@@ -90,11 +90,6 @@ export default function ReportDocument({ artifact }: ReportDocumentProps) {
           <Badge variant="outline" className="text-muted-foreground text-[10px]">
             {t('eval.updatedAt')}: {formatDate(artifact.updated_at)}
           </Badge>
-          {artifact.meta.generated_by === 'evaluation_program' ? (
-            <Badge variant="outline" className="text-muted-foreground text-[10px]">
-              程序自动生成 · 不调用 LLM
-            </Badge>
-          ) : null}
         </div>
         <Card>
           <CardContent className="p-5">

@@ -427,10 +427,7 @@ def _report_artifact(run_dir: Path, envelope: dict[str, Any]) -> dict[str, Any] 
         "updated_at": envelope.get("created_at"),
         "metrics": [],
         "table": {"columns": [], "rows": []},
-        "meta": {
-            "generated_by": "evaluation_program" if is_end_to_end else "stored_report",
-            "uses_llm": False if is_end_to_end else None,
-        },
+        "meta": {},
         "report_md": content,
         "toc": _markdown_toc(content),
         "error": None,
@@ -466,8 +463,6 @@ def _end_to_end_report_content(run_dir: Path, envelope: dict[str, Any]) -> str:
         return f"{float(value):.1%}" if isinstance(value, (int, float)) else "—"
     lines = [
         "# 测评报告",
-        "",
-        "本报告由评测程序根据评分结果自动生成，不调用 LLM。",
         "",
         "## 结果概览",
         "",

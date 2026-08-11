@@ -669,8 +669,8 @@ def test_end_to_end_run_indexes_answer_sheet_with_retrieval_diagnostics(
     assert row["detail"]["final_context_evidence"]["available"] is True
     report = next(artifact for artifact in detail["artifacts"] if artifact["kind"] == "markdown_report")
     assert report["title"] == "测评报告"
-    assert report["meta"]["uses_llm"] is False
-    assert "不调用 LLM" in report["report_md"]
+    assert report["meta"] == {}
+    assert "不调用 LLM" not in report["report_md"]
 
 
 def test_end_to_end_index_uses_root_label_and_execution_manifest_dataset(

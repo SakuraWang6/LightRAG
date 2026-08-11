@@ -242,8 +242,6 @@ def _report_markdown(answer: dict[str, Any], diagnosis: dict[str, Any]) -> str:
     lines = [
         "# 测评报告",
         "",
-        "本报告由评测程序根据评分结果自动生成，不调用 LLM。",
-        "",
         "## 结果概览",
         "",
         f"- 正确题数 / 总题数：{correct} / {total}",

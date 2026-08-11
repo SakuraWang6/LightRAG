@@ -14,13 +14,6 @@ import {
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/Select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs'
 import EmptyCard from '@/components/ui/EmptyCard'
 import CasesView from '@/features/eval/CasesView'
@@ -255,12 +248,10 @@ function StandardRunView({ run, active }: { run: EvalRunDetail; active: boolean 
     () => run.artifacts.filter((artifact) => artifact.metrics.length > 0 || artifact.error),
     [run.artifacts]
   )
-  const reportArtifacts = useMemo(
-    () => run.artifacts.filter((artifact) => artifact.report_md),
+  const reportArtifact = useMemo(
+    () => run.artifacts.find((artifact) => artifact.report_md),
     [run.artifacts]
   )
-  const [selectedReportPath, setSelectedReportPath] = useState<string | null>(null)
-  const selectedReport = reportArtifacts.find((a) => a.rel_path === selectedReportPath) ?? reportArtifacts[0]
 
   return (
     <div className="p-4">
@@ -315,26 +306,10 @@ function StandardRunView({ run, active }: { run: EvalRunDetail; active: boolean 
         </TabsContent>
 
         <TabsContent value="reports" forceMount={false} className="mt-3 space-y-3">
-          {reportArtifacts.length === 0 ? (
+          {!reportArtifact ? (
             <EmptyCard title={t('eval.noReports')} description={t('eval.noReportsHint')} />
           ) : (
-            <div className="space-y-3">
-              <div className="w-72">
-                <Select value={selectedReport?.rel_path} onValueChange={setSelectedReportPath}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={t('eval.selectReport')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {reportArtifacts.map((artifact) => (
-                      <SelectItem key={artifact.rel_path} value={artifact.rel_path}>
-                        {artifact.title}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {selectedReport ? <ReportDocument artifact={selectedReport} /> : null}
-            </div>
+            <ReportDocument artifact={reportArtifact} />
           )}
         </TabsContent>
 
