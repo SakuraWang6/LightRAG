@@ -1,268 +1,254 @@
-# LightRAG Memory Evaluation Tests
+# LightRAG 产品测评框架
 
-This directory consumes datasets produced by `memory_data_service/`. It does not
-generate documents. Implementation is grouped by responsibility; generated
-reports remain in `runs/` and are deliberately outside the Python packages.
+`memory_eval_tests` 是 LightRAG 的单一端到端产品测评框架。它使用带有标准答案和证据真值（oracle）的文档数据集，在每次运行中创建独立的 LightRAG 工作空间，依次完成文档导入、索引构建、检索、问答评分和失败归因。
+
+它回答的是“当前 LightRAG 配置能否正确处理并回答这份受控文档”的产品问题。框架不提供研究型实验、参数臂组合、分支式测评或独立聚合报告脚本。
+
+## 1. 测评目标与边界
+
+| 层面 | 检查内容 | 主要输出 |
+| --- | --- | --- |
+| 文档入库 | 源文档是否成功上传、解析并完成索引 | `ingestion_receipt.json`、`index_receipt.json` |
+| 检索 | oracle 所需证据是否命中、排名是否合理 | `average_recall`、`mrr`、`context_precision` |
+| 问答 | 回答是否正确、有最终上下文支撑、能否正确拒答 | `answer_accuracy`、`groundedness`、`abstention_accuracy` |
+| 可诊断性 | 错误属于检索、上下文选择/截断、生成还是拒答 | `diagnosis.json`、`case_trace.json` |
+
+它不用于通用知识评测、跨数据集排行榜或研究方法比较。每次运行只评估一个固定产品链路，以保证不同运行的结果可追溯、可复现。
+
+## 2. 目录与数据契约
 
 ```text
-memory_eval_tests/
-├── common/       # DatasetClient, deterministic sampling, evidence normalization, auth HTTP helpers
-├── offline/      # parser, integrity, provenance, layout and performance audits
-├── online/       # API preflight, ingestion, retrieval and answer evaluation
-├── experiments/  # product baseline plus research scripts, unified harness (run.py) and supervise watchdog
-├── reporting/    # single-run, comparison, scale, readiness and baseline reports
-├── tools/        # legacy run/report migration
-└── runs/         # generated artifacts; never move or edit by framework cleanup
+memory_data_service/                 # 生成/管理带 oracle 的数据集
+  generated/<dataset_id>/
+    manifest.json                    # 数据集和源文档清单
+    oracle.json                      # 问题、答案和所需证据
+
+memory_eval_tests/                   # 本框架
+  workflow.py                        # 唯一的端到端流程定义
+  cli.py                             # 单次测评入口
+  runner.py                          # 可选进程看护入口
+  execution.py                       # 独立 LightRAG 运行单元
+  ingestion.py                       # 上传与入库确认
+  retrieval.py                       # 检索评分
+  answer.py                          # 回答评分
+  diagnosis.py                       # 逐题失败归因
+  artifacts.py                       # 运行信封、进度与事件
+  runs/<run_id>/                     # 每次运行的全部产物
 ```
 
-Every entry point lives in a responsibility-based package; there are no
-top-level compatibility aliases. Use the grouped module paths below for all
-new automation.
+`--dataset` 指向的数据集至少需要：
 
-| Task | Recommended module |
-| --- | --- |
-| One-shot offline audit | `memory_eval_tests.offline.offline_runner` |
-| API/import/retrieval/answer checks | `memory_eval_tests.online.{api_preflight,index_runner,retrieval_eval,answer_eval}` |
-| Controlled ablations | `memory_eval_tests.experiments.*` |
-| Result summaries | `memory_eval_tests.reporting.{report,comparison_report,scale_report,readiness_report}` |
+- `manifest.json`：数据集 ID 与标记为 `created` 的 DOCX/PDF 源文档；
+- `oracle.json`：问题、期望答案、`expected_behavior` 和 `evidence_fact_ids`；
+- 清单中声明的实际源文档。
 
-## Environment
+框架只上传源文档；oracle、截图、JSON 与旧运行产物不会入库。清单不可读、没有源文档或文件缺失时，会在模型调用前失败。
+
+## 3. 执行流程
+
+```mermaid
+flowchart TD
+  A[数据集: manifest + oracle + 源文档] --> B[预检: 数据集和模型后端]
+  B --> C[创建独立工作空间和临时本地端口]
+  C --> D[启动本次专属 LightRAG 子服务]
+  D --> E[上传文档并等待解析/索引完成]
+  E --> F[按 oracle 问题执行检索]
+  F --> G[生成回答并记录最终上下文追踪]
+  G --> H[确定性评分与逐题失败归因]
+  H --> I[写入报告、运行信封、日志和可追溯产物]
+```
+
+1. **预检**：读取源文档，并检查默认 Ollama 后端可达，或远程模型凭据已配置；不会为预检调用付费模型。
+2. **隔离执行单元**：在 `<run>/isolated/` 创建新的存储、输入目录、工作空间和回环端口，然后启动专属 LightRAG 子进程。它不会复用主服务或其他运行的索引。
+3. **导入与索引**：上传清单中的源文档并等待处理完成。默认要求所有文档成功。
+4. **检索评分**：对非拒答题调用 `/query/data`，将 oracle 证据与有序 chunk 对齐，计算证据召回、MRR 和上下文精确率。
+5. **回答评分**：对全部题目调用 `/query`，记录最终上下文追踪，检查答案、数值/单位、公式、表格单元、引用和拒答。
+6. **归因与收尾**：合并逐题结果，输出失败原因和报告，并停止本次专属子服务。默认保留隔离存储以便复核。
+
+## 4. 前置条件
+
+在仓库根目录执行：
 
 ```bash
+cd /Users/sakura/RAG/LightRAG
 conda env create -f memory_eval_env.yml
-conda run -n lightrag-memory-eval python -m memory_data_service.cli generate --profile rich --tier smoke --formats docx
 ```
 
-Useful environment variables:
+默认配置使用本机 Ollama。请确保回答模型与 embedding 模型已经安装、服务可访问：
 
-| Variable | Purpose |
+```bash
+ollama serve
+ollama pull qwen3:8b
+ollama pull bge-m3:latest
+```
+
+也支持已经配置凭据的 OpenAI、Azure OpenAI、Gemini 或 Bedrock。框架会读取常规 LightRAG 配置中的 `LLM_BINDING`、`LLM_MODEL`、`EMBEDDING_BINDING`、`EMBEDDING_MODEL` 及对应凭据。
+
+| 变量 | 用途 |
 | --- | --- |
-| `MEMORY_EVAL_DATASETS_ROOT` | Dataset generation/read root; **required for wheel installs** (site-packages is usually read-only) |
-| `MEMORY_EVAL_RUNS_ROOT` | Runs root shared by envelope invalidation and the console scan |
-| `LIGHTRAG_API_KEY` / `LIGHTRAG_ACCESS_TOKEN` | `X-API-Key` / Bearer auth for online evaluation; persisted envelopes redact these to `configured` |
-| `OLLAMA_URL` / `OLLAMA_MODEL` | Server-side Ollama endpoint/default answer model; the WebUI only lists locally installed, non-embedding models |
+| `MEMORY_EVAL_DATASETS_ROOT` | 数据集根目录；wheel 安装时尤其需要 |
+| `MEMORY_EVAL_RUNS_ROOT` | 运行产物根目录；WebUI 与 CLI 必须保持一致 |
+| `OLLAMA_URL` | Ollama 服务地址，默认 `http://127.0.0.1:11434` |
+| `LLM_BINDING` / `LLM_MODEL` | 回答与抽取模型提供方、模型名 |
+| `EMBEDDING_BINDING` / `EMBEDDING_MODEL` | 向量模型提供方、模型名 |
+| `LIGHTRAG_API_KEY` / `LIGHTRAG_ACCESS_TOKEN` | 部署要求认证时使用；不会明文写入产物 |
 
-## Offline Suite
+## 5. 快速开始（CLI）
 
-Run the complete offline suite for one generated dataset:
-
-```bash
-DATASET=memory_data_service/generated/<dataset_id>
-conda run -n lightrag-memory-eval python -m memory_eval_tests.offline.offline_runner --dataset "$DATASET" --engine native --top-k 5
-```
-
-This writes JSON reports plus a Markdown summary to:
-
-```text
-memory_eval_tests/runs/offline/<dataset_id>/
-```
-
-For very large datasets, use deterministic sampling for evidence and retrieval
-checks:
+### 5.1 生成数据集
 
 ```bash
-conda run -n lightrag-memory-eval python -m memory_eval_tests.offline.offline_runner --dataset "$DATASET" --engine native --top-k 5 --max-cases 500 --max-facts 1000
+conda run -n lightrag-memory-eval python -m memory_data_service.cli generate \
+  --profile rich \
+  --tier smoke \
+  --formats docx \
+  --dataset-id rich-smoke-v1
 ```
 
-Render a scale summary across several generated datasets:
+数据集默认写入 `memory_data_service/generated/rich-smoke-v1/`。已有完整数据集可跳过此步。
+
+### 5.2 运行完整测评
 
 ```bash
-conda run -n lightrag-memory-eval python -m memory_eval_tests.reporting.scale_report \
-  memory_data_service/generated/rich-smoke-v1 \
-  memory_data_service/generated/rich-medium-200p-v1 \
-  memory_data_service/generated/rich-large-1000p-v1 \
-  --output memory_eval_tests/runs/scale_report.md
+DATASET=memory_data_service/generated/rich-smoke-v1
+RUN=memory_eval_tests/runs/evaluation-$(date +%Y%m%d-%H%M%S)
+
+conda run -n lightrag-memory-eval python -m memory_eval_tests.cli \
+  --dataset "$DATASET" \
+  --output-dir "$RUN" \
+  --label "rich smoke 基线" \
+  --mode mix \
+  --top-k 5 \
+  --chunk-top-k 5
 ```
 
-Render a readable Document Memory readiness conclusion:
+运行中可观察：
 
 ```bash
-conda run -n lightrag-memory-eval python -m memory_eval_tests.reporting.readiness_report \
-  memory_data_service/generated/rich-smoke-v1 \
-  memory_data_service/generated/rich-medium-200p-v1 \
-  memory_data_service/generated/rich-large-1000p-v1 \
-  --output memory_eval_tests/runs/readiness_report.md
+cat "$RUN/progress.json"
+tail -f "$RUN/run.log"
 ```
 
-Render a comparison table from parser/retrieval/answer JSON reports:
+运行结束后优先查看：
 
 ```bash
-conda run -n lightrag-memory-eval python -m memory_eval_tests.reporting.comparison_report \
-  memory_eval_tests/runs/offline/rich-smoke-v1/retrieval_sidecar.json \
-  memory_eval_tests/runs/offline/rich-medium-200p-v1/retrieval_sidecar.json \
-  --output memory_eval_tests/runs/comparison_report.md
+cat "$RUN/report.md"
+cat "$RUN/diagnosis.json"
 ```
 
-## Sidecar Audit
+### 5.3 参数说明
 
-Validate the generated oracle and file manifest first:
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--model` | `qwen3:8b` | 本次运行的回答模型 |
+| `--mode` | `mix` | LightRAG 查询模式 |
+| `--top-k` | `5` | 检索候选数量 |
+| `--chunk-top-k` | `5` | 返回的 chunk 数量 |
+| `--num-ctx` | `16384` | 回答模型上下文窗口 |
+| `--num-predict` | `4096` | 回答最大输出；KG 抽取使用独立保护预算 |
+| `--max-total-tokens` | `8192` | 回答查询允许的最大上下文 token |
+| `--temperature` | `0` | 回答温度；基线建议保持 0 |
+| `--engine` | `native` | 文档解析引擎 |
+| `--max-cases` | `0` | 最大测题数；`0` 表示全部，正数时做确定性均匀抽样 |
+| `--skip-kg` | 关闭 | 跳过 KG 抽取并使用 `naive` 向量检索；若同时指定 `--mode`，只能为 `naive` |
+| `--storage-dir` | `<run>/rag_storage` | 本次隔离存储位置，通常无需指定 |
+| `--runs-root` | `memory_eval_tests/runs` | WebUI 扫描与索引失效所使用的运行根目录 |
+
+导入成功门槛默认是 **100%**。只有在明确接受部分文档失败时才设置：
 
 ```bash
-DATASET=memory_data_service/generated/<dataset_id>
-conda run -n lightrag-memory-eval python -m memory_eval_tests.offline.integrity "$DATASET" --json
+--extra allow_partial_ingestion=true \
+--extra ingestion_success_threshold=0.95
 ```
 
-Then run the LightRAG parser sidecar audit:
+该决定与阈值会写入 `run.json`，不应作为常规基线配置。
+
+### 5.4 长时间运行（可选）
+
+`memory_eval_tests.runner` 是进程级看护入口。它在子进程崩溃时重启一个新的隔离运行单元；默认 WebUI 不启用自动重启。
 
 ```bash
-DATASET=memory_data_service/generated/<dataset_id>
-DOCX=$(ls "$DATASET"/*.docx | head -1)
-conda run -n lightrag-memory-eval python -m memory_eval_tests.offline.sidecar_audit "$DOCX" --engine native --json
+conda run -n lightrag-memory-eval python -m memory_eval_tests.runner \
+  --dataset "$DATASET" \
+  --output-dir "$RUN" \
+  --max-restarts 1 \
+  --supervision heartbeat
 ```
 
-Compare oracle objects with parser sidecars:
+只有需要终止长期无活动的挂起进程时才使用 `heartbeat`，短暂模型停顿不应被误判为故障。
 
-```bash
-PARSED_DIR=memory_eval_tests/runs/sidecar/<dataset_id>.docx.parsed
-conda run -n lightrag-memory-eval python -m memory_eval_tests.offline.object_traceability --dataset "$DATASET" --parsed-dir "$PARSED_DIR" --json
-```
+## 6. WebUI 使用方式
 
-Audit chunk provenance and run the offline retrieval/performance baselines:
+启动 LightRAG API 后，在 WebUI 打开“测评”页面：
 
-```bash
-conda run -n lightrag-memory-eval python -m memory_eval_tests.offline.chunk_traceability --dataset "$DATASET" --parsed-dir "$PARSED_DIR" --json
-conda run -n lightrag-memory-eval python -m memory_eval_tests.offline.layout_audit --dataset "$DATASET" --parsed-dir "$PARSED_DIR" --json
-conda run -n lightrag-memory-eval python -m memory_eval_tests.offline.cross_reference_audit --dataset "$DATASET" --parsed-dir "$PARSED_DIR" --json
-conda run -n lightrag-memory-eval python -m memory_eval_tests.online.retrieval_eval --backend sidecar --dataset "$DATASET" --parsed-dir "$PARSED_DIR" --mode sidecar --top-k 5
-conda run -n lightrag-memory-eval python -m memory_eval_tests.offline.performance_audit --dataset "$DATASET" --parsed-dir "$PARSED_DIR" --json
-```
+1. 在“数据集”中选择已有数据集，或创建数据集任务；
+2. 在“运行测评”中填写名称、模型、检索模式、Top-K、上下文与 KG 选项；
+3. 提交后，在作业列表观察排队或运行状态；
+4. 完成后查看结果摘要、逐题详情、报告、日志、导入回执和失败归因；
+5. 仅在不再需要复核时删除运行；删除会同时清除该运行的隔离索引和记录。
 
-`layout_audit` verifies position coverage and object-to-positioned-block
-traceability. Native DOCX sidecars currently expose `paraid` placeholders rather
-than page/bbox coordinates, so page-level layout accuracy is reported as not
-evaluable for that parser. The strict rich smoke audit also checks complex
-layout text preservation; with the current native DOCX parser, VML floating
-textbox text is expected to fail this check and is reported as a parser
-limitation.
+WebUI 和 CLI 使用相同的 `memory_eval_tests.cli` 入口及运行信封，因此两者结果可以并列查看。
 
-## Optional Online Evaluation
+## 7. 运行产物
 
-Check whether the local LightRAG API and model backends are ready:
+每次运行位于 `memory_eval_tests/runs/<run_id>/`：
 
-```bash
-conda run -n lightrag-memory-eval python -m memory_eval_tests.online.api_preflight \
-  --output memory_eval_tests/runs/api_preflight.json
-```
-
-Start your LightRAG API server separately, upload a generated dataset, then run:
-
-```bash
-conda run -n lightrag-memory-eval python -m memory_eval_tests.online.index_runner --dataset "$DATASET" --formats docx --wait
-conda run -n lightrag-memory-eval python -m memory_eval_tests.online.retrieval_eval --dataset "$DATASET" --mode mix
-conda run -n lightrag-memory-eval python -m memory_eval_tests.online.answer_eval --dataset "$DATASET" --mode mix
-```
-
-PDF parser paths (`docling` / `mineru`) require their normal LightRAG parser
-service environment variables.
-
-When the LightRAG API enforces auth, pass `--api-key` / `--access-token` to
-`api_preflight`, `index_runner`, `retrieval_eval` and `answer_eval` (both default
-to the `LIGHTRAG_API_KEY` / `LIGHTRAG_ACCESS_TOKEN` environment variables).
-
-## 指标定义
-
-指标名与确定性实现严格对应；历史运行（`metric_semantics: legacy`）的旧字段
-`hallucination_rate` / `citation_accuracy` 在控制台读取时自动映射为
-`ungrounded_rate` / `evidence_available`，数字不变。
-
-| 指标 | 精确语义 |
+| 文件/目录 | 内容与用途 |
 | --- | --- |
-| `answer_accuracy` | 答案与 oracle 期望值精确匹配（含数值/单位、公式、表格单元规则）的题数占比。 |
-| `groundedness` | 答案正确 **且** oracle 证据出现在 API references 中的题数占比；abstain 题正确拒答即视为 grounded（无需证据）。 |
-| `ungrounded_rate` | 未满足 grounded 的题数占比（答案错误或证据未进入上下文）；abstain 题按 `abstention_correct` 单独判定。历史名为 `hallucination_rate`，它测的是“答错/未支撑率”，不是真实幻觉内容判定。 |
-| `evidence_available` | oracle 证据是否全部出现在 API references 中（与回答是否引用无关）；abstain 题无 oracle 证据，该字段为 null 且不计入分母。历史 `citation_accuracy` 与该指标数值重复，已合并。 |
-| `citation_presence` | 回答中出现显式稳定 ID（`FACT-*` / `OBJ-*`）的题数占比。 |
-| `citation_correctness` | 仅在有稳定 ID 引用的题上定义：回答中出现的 ID 是否覆盖全部 oracle 证据 ID。 |
-| `abstention_accuracy` | abstain 题正确拒答的占比；abstain 不参与引用类指标。 |
-| `average_recall` | 检索类：命中的 oracle 证据数 / 期望证据数，在 top-K 排名内计算。 |
-| `mrr` | 检索类：首个命中证据位置的倒数均值（1/rank）。API 与 sidecar 后端同口径。 |
-| `context_precision` | 检索类：含至少一条证据的上下文数 / 返回上下文数。API 与 sidecar 都按单个返回上下文（API chunk / sidecar block）计算，粒度一致。 |
-| `object_hit_rate` | 对象级命中率，仅 sidecar 后端可计算；API references 不暴露对象类型，输出 null。跨后端对比仅限 recall / MRR / context_precision。 |
+| `run.json` | 主信封：状态、参数、环境快照、数据集指纹、指标、失败信息和产物索引 |
+| `progress.json` | 当前阶段、完成数和提示信息，适合轮询 |
+| `events.jsonl` | 结构化生命周期事件与错误偏移量 |
+| `run.log` | CLI 标准输出与异常日志 |
+| `report.md` | 正确题数、回答准确率、证据支撑率和失败归因摘要 |
+| `ingestion_receipt.json` | 每个源文档的上传、处理状态、内容哈希和失败原因 |
+| `index_receipt.json` | 工作空间、存储 ID 和索引完成信息 |
+| `case_trace.json` | 每道题的 oracle、检索结果、回答和最终上下文追踪 |
+| `diagnosis.json` | 可归因覆盖率、原因分布和逐题诊断 |
+| `execution_unit.json` | 子服务端口、工作空间、配置指纹、生命周期和保留策略 |
+| `execution_unit.log` | 本次专属 LightRAG 子服务日志 |
+| `isolated/` | 本次运行的独立输入与索引存储 |
 
-检索与回答评估使用同一套确定性等距抽样（`common/sampling.py::sample_evenly`）；
-两边都先对全量题列表抽样，再在采样结果上过滤：检索侧排除 abstain（其
-`evidence_fact_ids` 为空，召回无意义），回答侧保留 abstain 以计算拒答指标。
-因此无论是否设置 `max_cases`，两边的非 abstain 子集都完全一致。
+`run.json`、`progress.json`、作业文件和 WebUI 扫描索引均采用“先写临时文件、再原子替换”的方式发布，因此读取端不会看到截断 JSON。参数、数据集哈希、代码版本和实际运行环境会被记录；token、API key 与形似凭据的 `--extra` 值会被脱敏。
 
-## 看护运行（supervise）
+## 8. 指标解读
 
-长实验可用 `experiments/supervise.py` 看护：子进程崩溃（exit code ≠ 0）自动重启，
-超过 `--max-restarts` 后放弃；重启时自动继承已有 `run.json` 的 `started_at` 与
-`restarts`，跨 supervisor 重启（含 launchctl 拉起）不丢连续性。
+### 检索
+
+- **证据召回@K（`average_recall`）**：oracle 所需事实被检索到的比例；低值通常意味着解析、索引或检索问题。
+- **MRR（`mrr`）**：首个所需证据的排名倒数；越接近 1，关键证据越靠前。
+- **上下文精确率（`context_precision`）**：命中证据的 chunk 占候选 chunk 的比例；低值提示上下文噪声较大。
+
+### 回答
+
+- **回答准确率（`answer_accuracy`）**：排除待复核题后，答案符合 oracle 的比例。
+- **证据支撑率（`groundedness`）**：最终送入模型的上下文中是否包含所需 oracle 证据；它不等于候选 references 中是否出现过证据。
+- **拒答准确率（`abstention_accuracy`）**：没有可靠证据时能否正确拒答。
+- **数值/单位、公式、表格单元准确率**：结构化答案的专门检查。
+- **最终上下文可观测率**：最终上下文追踪能否取得。不可观测时，系统不会把候选检索结果错误当作模型可见证据。
+
+解读指标时必须同时查看数据集、模型、Top-K、解析引擎和 KG 设置；这些条件记录在 `run.json` 的 `execution_manifest` 与 `runtime_snapshot` 中。
+
+## 9. 常见问题与排障
+
+| 现象 | 优先检查 |
+| --- | --- |
+| 预检提示 Ollama 不可达 | `ollama serve` 是否运行；`OLLAMA_URL`/`LLM_BINDING_HOST` 是否正确；模型是否安装 |
+| 导入阶段失败 | `ingestion_receipt.json` 中每个文档状态；`execution_unit.log`；文件是否仍与清单一致 |
+| 子服务无法健康检查 | `execution_unit.log`、模型/embedding 配置、端口占用和本机资源 |
+| 检索召回低 | `case_trace.json` 中的 `expected_fact_ids`、`hit_fact_ids`、`top_contexts`；再检查解析和 Top-K |
+| 回答低而检索正常 | 查看逐题最终上下文、回答与 `diagnosis.json`；常见原因是上下文选择/截断或生成失败 |
+| 状态长期不变 | 检查 `progress.json` 的 phase、`run.log` 与 `execution_unit.log`；必要时在 WebUI 取消作业 |
+| WebUI 看不到 CLI 运行 | CLI 的 `--runs-root` 或 `MEMORY_EVAL_RUNS_ROOT` 必须与 API 服务使用的根目录相同 |
+
+## 10. 开发验证
+
+最小产品回归测试：
 
 ```bash
-conda run -n lightrag-memory-eval python -m memory_eval_tests.experiments.supervise \
-  --experiment context_size \
-  --dataset memory_data_service/generated/rich-smoke-v1 \
-  --output-dir memory_eval_tests/runs/context-size-v2 \
-  --supervision heartbeat --stale-minutes 60
+/Users/sakura/miniconda3/envs/lightrag-memory-eval/bin/python3.11 -m pytest -q \
+  tests/memory_eval/test_product_evaluation.py \
+  tests/api/routes/test_eval_jobs.py \
+  tests/api/routes/test_eval_routes.py
 ```
 
-### 心跳与挂死检测的职责边界
-
-- **崩溃重启是默认能力**：子进程退出非零即重启；`supports_resume` 的实验
-  （`context_size` / `kg_ablation`）会自动读 `partial.json` 续跑，其余从头重试。
-- **挂死检测默认关闭**（`supervision="none"`）。LLM 单次调用挂死已由
-  `chat_ollama` 的硬超时兜底，supervisor 的 stale-kill 价值有限，因此作为显式
-  高级选项：`--supervision heartbeat` 启用后，监测子进程 `run.py` 每 30s touch 的
-  `.heartbeat` 文件（证明“解释器活着”，能兜 GIL 阻塞类挂死），`run.log` 增长仅作
-  辅助信号；`--stale-minutes` 默认 60。
-- **阈值估算**：`--stale-minutes` 应大于最坏单阶段耗时。参考
-  `--num-ctx` × 每 token 耗时（慢机器 16K 上下文单次生成可达数十分钟）；chat 层
-  超时（`--timeout 1800` 等）已单独兜底，不要在 heartbeat 阈值上过度激进。
-
-### 行为说明
-
-- 子进程以独立进程组运行（`start_new_session=True`），收到 SIGINT/SIGTERM 时对
-  整棵进程树（含 online_baseline 的 retrieval/answer 子进程）先 SIGTERM、30s 后
-  SIGKILL，避免孙进程变孤儿继续写 output 目录。
-- supervisor 事件与子进程输出统一写入 `run.log`；每次重启会把
-  `progress.json.message` 置为“第 N 次重启（续跑/重试）”作为瞬时提示，
-  envelope 的 `restarts` / `last_restart_resume` 字段与 run.log 事件是权威记录
-  （console 徽标显示重启次数与最后一次是续跑还是从头重试）。
-- `output_dir/.supervise.lock` 保证同一 output-dir 只允许一个看护进程；重复启动
-  直接报错退出。
-- 默认会剥离 `http(s)_proxy` 等代理环境变量（避免本地 Ollama 被代理干扰）；
-  包装走外部 API 的实验（如 `frozen_prompt_llm_eval`）且网络需要代理时，加
-  `--keep-proxy` 保留代理变量（本地地址仍走 `NO_PROXY`）。
-- `run.py` 单独直跑（不经 supervise）收到 SIGTERM 时只做优雅收尾（写
-  progress、中断 runner 走 finally），**不会**清理它 spawn 的子进程；需要整棵
-  进程树清理时请通过 supervise 接收信号（`start_new_session` + `killpg`）。
-- launchctl 示例：`KeepAlive` 配合 `SuccessfulExit: false`，进程退出即由系统拉起，
-  supervisor 启动时会继承旧 `run.json` 的 `started_at`/`restarts`。
-
-## WebUI 评测工作台
-
-评测控制台包含三个子视图：
-
-- **运行**：runs 列表、详情（指标/逐题/报告/日志）、对比与导出、取消活跃运行、
-  一键复现。
-- **新建运行**：为单次基础测评命名，选择服务器可用的模型、解析引擎、检索与生成
-  参数后启动。一次运行只处理该数据集声明的源文档（DOCX/PDF），不会把 oracle、
-  答案或标注文件入库。
-- **数据集**：列表（tier/页数/模态/文件数/生成时间）、表单化生成（含资源预估与
-  pages 上限提示）、删除（生成中的数据集拒绝删除，返回 409）。
-
-后端接口：`GET /eval/models`、`POST/GET /eval/jobs`、`POST
-/eval/jobs/{id}/cancel`、`GET/DELETE /eval/datasets`（生成走
-`POST /eval/jobs` 的 `kind=dataset`）。研究实验、模板、环境 Profile 和 LLM
-后二次解读均不属于产品测评路径。
-作业状态以 `runs/.jobs/<job_id>/job.json`
-（pid + 进程启动时间）为准，API 重启后可恢复取消；job.json 不存凭据。
-“一键复现”读取 envelope 的 `launch_params`（仅实验类 run 由 harness 写入，
-敏感 extra 键已脱敏）；offline / 直连 retrieval/answer / report 等
-`write_simple_envelope` 路径无此字段，前端回退用 conditions 重建。
-数据集生成走同一 job 通道（`kind=dataset`），默认 pages 上限 1000，
-`allow_oversized_generation` 可放开；`/eval` 依赖随 wheel 打包的
-`memory_eval_tests` / `memory_data_service` 包，包缺失时返回 503。
-
-并发与队列：作业按 FIFO 排队，`MEMORY_EVAL_MAX_ACTIVE_JOBS`（默认 1）控制
-同时运行数。前端“作业”子视图展示全部 job（排队位/状态/日志 tail/取消），有
-活跃 job 时每 5s 轮询；运行详情可删除运行（含取消确认），向导通过
-`/eval/models` 显示实际可运行的模型。
-
-### 数据集根目录
-
-数据集的生成与读取统一走 `MEMORY_EVAL_DATASETS_ROOT` 环境变量（未设置时回落包内
-`memory_data_service/generated`）。**打包安装（wheel）后该目录位于 site-packages，
-通常只读，必须显式设置 `MEMORY_EVAL_DATASETS_ROOT`**；本地开发可不设置。
+这些测试覆盖单一运行信封、原子 JSON 发布、产品 CLI 命令构造，以及 API 对已移除字段和基础设施参数的拒绝。

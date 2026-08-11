@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from memory_eval_tests.experiments.supervise import (
+from memory_eval_tests.runner import (
     RunParams,
     build_run_command,
     build_supervise_command,
@@ -366,10 +366,10 @@ def _renew_job_lease(
             _write_job(jobs, job)
 
 
-def _unique_run_dir(runs_root: Path, experiment: str) -> Path:
+def _unique_run_dir(runs_root: Path) -> Path:
     while True:
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        candidate = runs_root / f"{experiment}-{ts}-{uuid.uuid4().hex[:4]}"
+        candidate = runs_root / f"evaluation-{ts}-{uuid.uuid4().hex[:4]}"
         if not candidate.exists():
             return candidate
 
@@ -651,13 +651,13 @@ def start_run_job(
     params.output_dir = (
         Path(output_dir)
         if output_dir
-        else _unique_run_dir(runs_root, params.experiment)
+        else _unique_run_dir(runs_root)
     )
     params.output_dir.mkdir(parents=True, exist_ok=True)
     job = {
         "id": _job_id("run"),
         "kind": "run",
-        "experiment": params.experiment,
+        "evaluation": "end_to_end",
         "label": params.label,
         "dataset": str(params.dataset),
         "output_dir": str(params.output_dir),

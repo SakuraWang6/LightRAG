@@ -64,7 +64,8 @@ prompts/entity_type/
 # Evaluation results
 lightrag/evaluation/results/
 memory_data_service/generated/
-memory_eval_tests/runs/
+memory_eval_tests/runs/*
+!memory_eval_tests/runs/.gitkeep
 
 # Miscellaneous
 .DS_Store

@@ -153,7 +153,6 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
       await createEvalJob({
         kind: 'run',
         name: name.trim(),
-        experiment: 'end_to_end_baseline',
         dataset,
         params: {
           model: model.trim() || undefined,

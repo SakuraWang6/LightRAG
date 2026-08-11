@@ -143,7 +143,7 @@ export default function JobsView({ onBack }: JobsViewProps) {
                     <TableCell className="px-3 py-2 font-medium">{job.id}</TableCell>
                     <TableCell className="px-3 py-2">{job.kind}</TableCell>
                     <TableCell className="max-w-[220px] truncate px-3 py-2">
-                      {job.experiment ?? job.dataset_id ?? job.dataset ?? '—'}
+                      {job.evaluation ?? job.dataset_id ?? job.dataset ?? '—'}
                     </TableCell>
                     <TableCell className="px-3 py-2">
                       <Badge variant="outline" className={`text-[10px] ${statusClass(job.status)}`}>

@@ -143,11 +143,6 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
             <CardTitle className="text-sm">{t('eval.compareMetrics')}</CardTitle>
           </CardHeader>
           <CardContent>
-            {runs.some((run) => run.legacy || run.compatibility_level === 'legacy') ? (
-              <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
-                Legacy runs use an earlier measurement contract. Their metrics are shown for reference and should not be ranked against current runs.
-              </p>
-            ) : null}
             {conditionKeys.length > 0 ? (
               <div className="mb-4">
                 <p className="text-muted-foreground mb-2 text-xs font-medium">{t('eval.conditions')}</p>

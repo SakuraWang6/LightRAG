@@ -1,7 +1,7 @@
 """Read-only evaluation-console index over standard ``run.json`` envelopes.
 
 Every evaluation run writes a ``run.json`` envelope (see
-``memory_eval_tests/experiments/common/envelope.py``). This module scans
+``memory_eval_tests/artifacts.py``). This module scans
 ``memory_eval_tests/runs`` for envelopes and normalizes them for the WebUI.
 There is no SQLite cache: envelopes are small, and reading them directly keeps
 the console always fresh, including in-flight progress files.
@@ -16,22 +16,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from memory_eval_tests.experiments.common.envelope import (
+from memory_eval_tests.artifacts import (
     build_conditions,
     redact_sensitive_text,
 )
-from memory_eval_tests.experiments.common.metrics import normalize_metric_key
-
-_OFFLINE_LABELS = {
-    "integrity": "完整性校验",
-    "sidecar": "Sidecar 解析",
-    "layout": "版式审计",
-    "cross_reference": "交叉引用",
-    "object_traceability": "对象可追溯性",
-    "chunk_traceability": "Chunk 可追溯性",
-    "performance": "性能基线",
-    "retrieval_sidecar": "词法检索",
-}
+from memory_eval_tests.metrics import normalize_metric_key
 
 _SCAN_SKIP_DIRS = {
     "rag_storage",
@@ -156,7 +145,7 @@ def _flatten_cases(methods: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _case_methods_for_run(
-    experiment: dict[str, Any], methods: list[dict[str, Any]]
+    evaluation: dict[str, Any], methods: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Return the rows a reviewer expects to see for a single evaluation.
 
@@ -165,7 +154,7 @@ def _case_methods_for_run(
     methods.  The case review should therefore contain one answer sheet per
     question rather than two mixed rows per question.
     """
-    if experiment.get("id") != "end_to_end_baseline":
+    if evaluation.get("id") != "end_to_end_baseline":
         return methods
     answer_methods = [method for method in methods if method.get("method") == "answer"]
     retrieval = next(
@@ -302,8 +291,7 @@ def _summary_metrics(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if normalized == "cases" and method.get("method") == "retrieval":
                     values["retrieval_cases"] = value
                     continue
-                # A canonical key always wins over a legacy alias when both
-                # exist, regardless of dict iteration order.
+                # A canonical key wins when a provider emits both spellings.
                 if normalized not in values or key == normalized:
                     values[normalized] = value
     answer_rows = [
@@ -341,7 +329,7 @@ def _summary_metrics(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _humanize(key: str) -> str:
-    from memory_eval_tests.experiments.common.metrics import METRIC_LABELS
+    from memory_eval_tests.metrics import METRIC_LABELS
 
     return METRIC_LABELS.get(key, key.replace("_", " ").title())
 
@@ -409,9 +397,7 @@ def _report_artifact(run_dir: Path, envelope: dict[str, Any]) -> dict[str, Any] 
         content = path.read_text(encoding="utf-8")[:2_000_000]
     except OSError:
         return None
-    is_end_to_end = (envelope.get("experiment") or {}).get("id") == "end_to_end_baseline"
-    if is_end_to_end:
-        content = _end_to_end_report_content(run_dir, envelope)
+    content = _end_to_end_report_content(run_dir, envelope)
     first = next(
         (
             line.strip().lstrip("# ")
@@ -501,17 +487,7 @@ def _run_record(
     *,
     with_artifacts: bool,
 ) -> dict[str, Any]:
-    persisted_kind = envelope.get("kind", "experiment")
-    experiment = envelope.get("experiment") or {}
-    # Older end-to-end runs were persisted as ``experiment`` even though each
-    # run evaluates one document set with one configuration.  Normalize them
-    # while indexing so historic results receive the same single-run review
-    # screen as newly created evaluations.
-    kind = (
-        "online"
-        if experiment.get("id") == "end_to_end_baseline"
-        else persisted_kind
-    )
+    evaluation = envelope.get("evaluation") or {}
     baseline = envelope.get("baseline") or {}
     execution_dataset = ((envelope.get("execution_manifest") or {}).get("dataset") or {}).get(
         "dataset_id"
@@ -527,43 +503,19 @@ def _run_record(
         dataset_meta,
         method_count=(
             None
-            if experiment.get("id") == "end_to_end_baseline"
-            else len(methods)
         ),
     )
     progress = _read_progress(run_dir)
     run_id = envelope.get("run_id") or run_dir.name
-    has_trust_contract = isinstance(envelope.get("execution_manifest"), dict) and isinstance(
-        envelope.get("runtime_snapshot"), dict
-    )
-    compatibility_level = envelope.get("compatibility_level")
-    if not isinstance(compatibility_level, str):
-        compatibility_level = "current" if has_trust_contract else "legacy"
-    legacy = bool(envelope.get("legacy", False)) or not has_trust_contract
-    if legacy:
-        compatibility_level = "legacy"
-    failed_checks: list[str] = []
-    if kind == "offline":
-        failed_checks = [
-            _OFFLINE_LABELS.get(
-                m.get("method") or "", m.get("label") or m.get("method") or ""
-            )
-            for m in methods
-            if m.get("method") != "offline_summary"
-            and (m.get("summary") or {}).get("passed") is False
-        ]
     record: dict[str, Any] = {
         "id": run_id,
         "run_dir": str(run_dir),
-        "kind": kind,
-        "legacy": legacy,
-        "compatibility_level": compatibility_level,
         "restarts": int(envelope.get("restarts") or 0),
         "last_restart_resume": envelope.get("last_restart_resume"),
         "launch_params": envelope.get("launch_params"),
-        "label": envelope.get("label") or experiment.get("label") or run_dir.name,
-        "experiment": experiment.get("id"),
-        "description": experiment.get("description") or "",
+        "label": envelope.get("label") or evaluation.get("label") or run_dir.name,
+        "evaluation": evaluation.get("id"),
+        "description": evaluation.get("description") or "",
         "dataset": dataset or dataset_meta.get("dataset"),
         "updated_at": envelope.get("created_at"),
         "started_at": envelope.get("started_at"),
@@ -572,11 +524,8 @@ def _run_record(
         "status": envelope.get("status"),
         "conditions": conditions,
         "progress": progress,
-        "failed_checks": failed_checks,
-        "headline": {}
-        if kind == "experiment"
-        else {metric["key"]: metric for metric in _summary_metrics(methods)},
-        "variables": envelope.get("variables") or [],
+        "failed_checks": [],
+        "headline": {metric["key"]: metric for metric in _summary_metrics(methods)},
         "artifact_titles": [],
         "execution_manifest": envelope.get("execution_manifest"),
         "runtime_snapshot": envelope.get("runtime_snapshot"),
@@ -591,65 +540,45 @@ def _run_record(
     }
     if not with_artifacts:
         record["artifact_titles"] = [
-            experiment.get("label") or run_dir.name,
+            evaluation.get("label") or run_dir.name,
             *(["报告"] if (envelope.get("reports") or {}).get("report.md") else []),
         ]
         return record
 
     artifacts: list[dict[str, Any]] = []
-    if kind == "experiment":
+    metrics = _summary_metrics(methods)
+    artifacts.append(
+        {
+            "rel_path": "summary",
+            "kind": "summary",
+            "title": "结果摘要",
+            "updated_at": envelope.get("created_at"),
+            "metrics": metrics,
+            "table": _scalar_rows(methods),
+            "meta": {"description": evaluation.get("description") or ""},
+            "report_md": None,
+            "toc": [],
+            "error": None,
+        }
+    )
+    cases = _flatten_cases(_case_methods_for_run(evaluation, methods))
+    if evaluation.get("id") == "end_to_end_baseline":
+        _hydrate_case_questions_from_trace(run_dir, cases)
+    if cases["rows"]:
         artifacts.append(
             {
-                "rel_path": "methods",
-                "kind": "experiment",
-                "title": experiment.get("label") or run_dir.name,
+                "rel_path": "cases",
+                "kind": "cases",
+                "title": "逐题详情",
                 "updated_at": envelope.get("created_at"),
                 "metrics": [],
-                "table": _scalar_rows(methods),
-                "meta": {
-                    "description": experiment.get("description") or "",
-                    "variables": envelope.get("variables") or [],
-                    "cases": _flatten_cases(methods),
-                },
+                "table": cases,
+                "meta": {},
                 "report_md": None,
                 "toc": [],
                 "error": None,
             }
         )
-    else:
-        metrics = _summary_metrics(methods)
-        artifacts.append(
-            {
-                "rel_path": "summary",
-                "kind": "summary",
-                "title": "结果摘要",
-                "updated_at": envelope.get("created_at"),
-                "metrics": metrics,
-                "table": _scalar_rows(methods),
-                "meta": {"description": experiment.get("description") or ""},
-                "report_md": None,
-                "toc": [],
-                "error": None,
-            }
-        )
-        cases = _flatten_cases(_case_methods_for_run(experiment, methods))
-        if experiment.get("id") == "end_to_end_baseline":
-            _hydrate_case_questions_from_trace(run_dir, cases)
-        if cases["rows"]:
-            artifacts.append(
-                {
-                    "rel_path": "cases",
-                    "kind": "cases",
-                    "title": "逐题详情",
-                    "updated_at": envelope.get("created_at"),
-                    "metrics": [],
-                    "table": cases,
-                    "meta": {},
-                    "report_md": None,
-                    "toc": [],
-                    "error": None,
-                }
-            )
     report = _report_artifact(run_dir, envelope)
     if report:
         artifacts.append(report)
@@ -714,7 +643,9 @@ def _write_scan_index(
     records: list[dict[str, Any]],
 ) -> None:
     try:
-        _scan_index_path(runs_root).write_text(
+        path = _scan_index_path(runs_root)
+        temporary = path.with_name(f".{path.name}.tmp")
+        temporary.write_text(
             json.dumps(
                 {
                     "signature": [list(item) for item in signature],
@@ -725,6 +656,7 @@ def _write_scan_index(
             + "\n",
             encoding="utf-8",
         )
+        temporary.replace(path)
     except OSError:
         pass
 

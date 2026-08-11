@@ -3,7 +3,6 @@ import { describe, expect, test } from 'bun:test'
 import {
   buildCompareCsv,
   buildCasesCsv,
-  buildCustomArmsPayload,
   buildReproduceDraft,
   caseFieldLabel,
   compareCompatible,
@@ -16,15 +15,10 @@ import {
 } from '@/features/eval/utils'
 
 describe('eval utils', () => {
-  test('offline failed always renders as 未通过 even without failed_checks', () => {
-    expect(statusLabel({ kind: 'offline', status: 'failed', failed_checks: [] })).toBe('eval.statusFailed')
-    expect(statusLabel({ kind: 'offline', status: 'failed', failed_checks: ['词法检索'] })).toBe('eval.statusFailed')
-  })
-
-  test('other statuses pass through unchanged', () => {
-    expect(statusLabel({ kind: 'offline', status: 'complete' })).toBe('complete')
-    expect(statusLabel({ kind: 'online', status: 'failed' })).toBe('failed')
-    expect(statusLabel({ kind: 'offline', status: null })).toBe('')
+  test('status labels pass through unchanged', () => {
+    expect(statusLabel({ status: 'complete' })).toBe('complete')
+    expect(statusLabel({ status: 'failed' })).toBe('failed')
+    expect(statusLabel({ status: null })).toBe('')
     expect(statusLabel({})).toBe('')
   })
 
@@ -107,26 +101,21 @@ describe('eval utils', () => {
     expect(diffParams({}, { top_k: 5 })).toEqual(['top_k'])
   })
 
-  test('compareCompatible requires same kind and dataset', () => {
+  test('compareCompatible requires the same dataset', () => {
     expect(
       compareCompatible([
-        { kind: 'online', dataset: 'd1' },
-        { kind: 'online', dataset: 'd1' }
+        { dataset: 'd1' },
+        { dataset: 'd1' }
       ])
     ).toBe(true)
     expect(
       compareCompatible([
-        { kind: 'online', dataset: 'd1' },
-        { kind: 'offline', dataset: 'd1' }
+        { dataset: 'd1' },
+        { dataset: 'd1' }
       ])
-    ).toBe(false)
-    expect(
-      compareCompatible([
-        { kind: 'online', dataset: 'd1' },
-        { kind: 'online', dataset: 'd2' }
-      ])
-    ).toBe(false)
-    expect(compareCompatible([{ kind: 'online', dataset: 'd1' }])).toBe(true)
+    ).toBe(true)
+    expect(compareCompatible([{ dataset: 'd1' }, { dataset: 'd2' }])).toBe(false)
+    expect(compareCompatible([{ dataset: 'd1' }])).toBe(true)
   })
 
   test('buildReproduceDraft prefers launch_params and fills extraText', () => {
@@ -138,12 +127,11 @@ describe('eval utils', () => {
         extra: ['stage=eval', 'selected_limit=5']
       },
       conditions: [],
-      experiment: 'context_size',
+      evaluation: 'end_to_end',
       dataset: 'rich-smoke-v1'
     })
     expect(draft.params).toEqual({ model: 'gpt-4o-mini', top_k: 5, kg: true })
     expect(draft.extraText).toBe('stage=eval,selected_limit=5')
-    expect(draft.experiment).toBe('context_size')
   })
 
   test('buildReproduceDraft falls back to conditions with kg mapping', () => {
@@ -154,20 +142,11 @@ describe('eval utils', () => {
         { key: 'top_k', value: '5' },
         { key: 'kg', value: '开' }
       ],
-      experiment: 'online_baseline',
+      evaluation: 'end_to_end',
       dataset: 'rich-smoke-v1'
     })
     expect(draft.params).toEqual({ model: 'qwen3:8b', top_k: '5', kg: true })
     expect(draft.extraText).toBe('')
   })
 
-  test('buildCustomArmsPayload filters empty rows and dedupes values', () => {
-    const axes = buildCustomArmsPayload([
-      { key: 'top_k', values: '1, 3, 1, ' },
-      { key: '  ', values: 'x' },
-      { key: 'model', values: 'a,b,a' }
-    ])
-    expect(axes).toEqual({ top_k: ['1', '3'], model: ['a', 'b'] })
-    expect(buildCustomArmsPayload([{ key: ' ', values: ' , ' }])).toBeNull()
-  })
 })

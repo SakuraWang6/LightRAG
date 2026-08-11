@@ -4,8 +4,6 @@ import { errorMessage } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings'
 import { navigationService } from '@/services/navigation'
 
-export type EvalRunKind = 'offline' | 'online' | 'experiment' | 'report'
-
 export type MetricItem = {
   key: string
   label: string
@@ -60,18 +58,6 @@ export type EvalRunFailure = {
   log_offset: number
 }
 
-export type VariableArm = {
-  arm: string
-  label?: string
-  [key: string]: unknown
-}
-
-export type EvalVariable = {
-  axis: string
-  label?: string
-  arms: VariableArm[]
-}
-
 export type EvalArtifact = {
   rel_path: string
   kind: string
@@ -88,13 +74,10 @@ export type EvalArtifact = {
 export type EvalRun = {
   id: string
   run_dir?: string
-  kind: EvalRunKind
-  legacy?: boolean
-  compatibility_level?: 'legacy' | 'current' | string
   restarts?: number
   last_restart_resume?: boolean | null
   label: string
-  experiment?: string | null
+  evaluation?: string | null
   launch_params?: Record<string, unknown> | null
   dataset?: string | null
   updated_at?: string | null
@@ -104,7 +87,6 @@ export type EvalRun = {
   status?: string | null
   conditions: RunCondition[]
   description?: string
-  variables: EvalVariable[]
   progress: EvalRunProgress
   failed_checks?: string[]
   headline: Record<string, MetricItem>
@@ -124,7 +106,7 @@ export type EvalRunDetail = EvalRun & {
 export type EvalJob = {
   id: string
   kind: 'run' | 'dataset'
-  experiment?: string | null
+  evaluation?: string | null
   label?: string | null
   dataset?: string | null
   dataset_id?: string | null
@@ -200,7 +182,6 @@ evalApiClient.interceptors.response.use(
 )
 
 export async function listEvalRuns(params?: {
-  kind?: EvalRunKind | ''
   dataset?: string
   q?: string
 }): Promise<{ runs: EvalRun[]; runs_root: string }> {
@@ -237,7 +218,6 @@ export async function listEvalModels(): Promise<{
 export async function createEvalJob(payload: {
   kind: 'run' | 'dataset'
   name?: string
-  experiment?: string
   dataset?: string
   params?: Record<string, unknown>
   dataset_create?: {

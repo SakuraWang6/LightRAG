@@ -108,11 +108,6 @@ function RunHeader({
     <div className="border-b px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-lg font-semibold">{run.label}</h2>
-        {run.legacy ? (
-          <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
-            {t('eval.legacyRun')}
-          </Badge>
-        ) : null}
         {(run.restarts ?? 0) > 0 ? (
           <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-300">
             {t('eval.restarts', { count: run.restarts ?? 0 })}
@@ -173,17 +168,6 @@ function RunHeader({
       <div className="mt-2">
         <ConditionChips conditions={run.conditions} limit={10} />
       </div>
-      {run.variables && run.variables.length > 0 ? (
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          <span className="text-muted-foreground text-xs">{t('eval.variables')}:</span>
-          {run.variables.map((variable) => (
-            <Badge key={variable.axis} variant="outline" className="font-normal">
-              {variable.label ?? variable.axis}:{' '}
-              {variable.arms.map((arm) => arm.label ?? String(arm.arm)).join(' / ')}
-            </Badge>
-          ))}
-        </div>
-      ) : null}
       <ProgressBar progress={run.progress} />
     </div>
   )
@@ -378,19 +362,6 @@ export default function EvalRunDetail({
     onDelete: remove
   }
 
-  if (run.kind === 'report') {
-    const report = run.artifacts.find((artifact) => artifact.report_md) ?? run.artifacts[0]
-    return (
-      <div className="flex h-full flex-col overflow-hidden">
-        <RunHeader {...headerProps} />
-        <div className="min-h-0 flex-1 overflow-auto p-4">
-          <div>
-            {report ? <ReportDocument artifact={report} /> : <EmptyCard title="—" description="—" />}
-          </div>
-        </div>
-      </div>
-    )
-  }
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <RunHeader {...headerProps} />

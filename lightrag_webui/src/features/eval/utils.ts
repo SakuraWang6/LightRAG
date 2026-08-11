@@ -1,4 +1,4 @@
-import type { EvalRunKind, MetricItem } from '@/api/eval'
+import type { MetricItem } from '@/api/eval'
 
 export function formatMetricValue(value: MetricItem['value']): string {
   if (typeof value === 'boolean') {
@@ -151,31 +151,26 @@ export function diffParams(
 }
 
 export function compareCompatible(
-  runs: Array<{ kind?: string; dataset?: string | null; legacy?: boolean; compatibility_level?: string }>
+  runs: Array<{ dataset?: string | null }>
 ): boolean {
   if (runs.length < 2) return true
   const first = runs[0]
   return runs.every(
-    (run) =>
-      run.kind === first.kind &&
-      (run.dataset ?? null) === (first.dataset ?? null) &&
-      Boolean(run.legacy) === Boolean(first.legacy) &&
-      (run.compatibility_level ?? 'legacy') === (first.compatibility_level ?? 'legacy')
+    (run) => (run.dataset ?? null) === (first.dataset ?? null)
   )
 }
 
 export function buildReproduceDraft(run: {
   launch_params?: Record<string, unknown> | null
   conditions: Array<{ key: string; value: string }>
-  experiment?: string | null
+  evaluation?: string | null
   dataset?: string | null
-}): { params: Record<string, unknown>; extraText: string; experiment: string; dataset: string } {
+}): { params: Record<string, unknown>; extraText: string; dataset: string } {
   if (run.launch_params && typeof run.launch_params === 'object') {
     const { extra, ...rest } = run.launch_params
     return {
       params: rest,
       extraText: Array.isArray(extra) ? (extra as unknown[]).map(String).join(',') : '',
-      experiment: run.experiment ?? '',
       dataset: run.dataset ?? ''
     }
   }
@@ -201,42 +196,7 @@ export function buildReproduceDraft(run: {
   return {
     params,
     extraText: '',
-    experiment: run.experiment ?? '',
     dataset: run.dataset ?? ''
-  }
-}
-
-export function buildCustomArmsPayload(
-  rows: Array<{ key: string; values: string }>
-): Record<string, string[]> | null {
-  const axes: Record<string, string[]> = {}
-  for (const row of rows) {
-    const key = row.key.trim()
-    if (!key) continue
-    const values = Array.from(
-      new Set(
-        row.values
-          .split(',')
-          .map((value) => value.trim())
-          .filter(Boolean)
-      )
-    )
-    if (values.length === 0) continue
-    axes[key] = values
-  }
-  return Object.keys(axes).length > 0 ? axes : null
-}
-
-export function runKindClass(kind: EvalRunKind): string {
-  switch (kind) {
-    case 'offline':
-      return 'border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-700 dark:bg-sky-950 dark:text-sky-300'
-    case 'online':
-      return 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
-    case 'experiment':
-      return 'border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-700 dark:bg-violet-950 dark:text-violet-300'
-    default:
-      return 'border-zinc-300 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'
   }
 }
 
@@ -255,13 +215,9 @@ export function statusBadgeClass(status?: string | null): string {
 }
 
 export function statusLabel(run: {
-  kind?: string
   status?: string | null
   failed_checks?: string[]
 }): string {
-  if (run.kind === 'offline' && run.status === 'failed') {
-    return 'eval.statusFailed'
-  }
   return run.status ?? ''
 }
 

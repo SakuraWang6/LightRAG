@@ -7,9 +7,9 @@ keeps the WebUI refresh button meaningful.
 
 from __future__ import annotations
 
-import json
 import csv
 import io
+import json
 import math
 import os
 import re
@@ -39,11 +39,9 @@ try:
         load_oracle,
     )
     from memory_eval_tests import __version__ as _eval_framework_version
-    from memory_eval_tests.experiments.registry import get_spec
-    from memory_eval_tests.experiments.supervise import RunParams
+    from memory_eval_tests.runner import RunParams
 
-    from .. import eval_jobs
-    from .. import eval_comparison
+    from .. import eval_comparison, eval_jobs
     from ..eval_index import clear_scan_cache, default_runs_root, load_run, scan_runs
 
     _EVAL_AVAILABLE = True
@@ -67,7 +65,6 @@ class DatasetCreateJobRequest(BaseModel):
 
 class CreateJobRequest(BaseModel):
     kind: Literal["run", "dataset"] = "run"
-    experiment: str | None = None
     dataset: str | None = None
     name: str | None = Field(default=None, max_length=128)
     params: dict[str, Any] = Field(default_factory=dict)
@@ -413,35 +410,28 @@ def _evaluation_model_capability() -> dict[str, Any]:
 
 def _build_run_params(
     *,
-    experiment: str,
     dataset: str,
     name: str | None,
     params: dict[str, Any],
     runs_root: Path,
     datasets_root: Path,
 ) -> RunParams:
-    spec = get_spec(experiment)
-    if not spec.webui_launchable:
-        raise ValueError(
-            f"{experiment} is not available in the WebUI: {spec.webui_block_reason}"
-        )
-    unknown = set(params) - _GENERIC_PARAM_KEYS - _INFRA_PARAMS - set(spec.extra_schema)
+    allowed_extra = {"allow_partial_ingestion", "ingestion_success_threshold"}
+    unknown = set(params) - _GENERIC_PARAM_KEYS - _INFRA_PARAMS - allowed_extra
     if unknown:
         raise ValueError(f"unknown parameters: {sorted(unknown)}")
     infra = set(params) & _INFRA_PARAMS
     if infra:
         raise ValueError(f"infrastructure parameters are not accepted: {sorted(infra)}")
-    missing_env = [key for key in spec.env_required if not os.getenv(key)]
-    if missing_env:
-        raise ValueError(
-            f"experiment requires environment variables: {', '.join(missing_env)}"
-        )
     if not _DATASET_ID_RE.fullmatch(dataset) or dataset in {".", ".."}:
         raise ValueError("invalid dataset id")
     extra = _extra_pairs(params.get("extra") or [])
-    for key in spec.extra_schema:
+    for key, value_type in {
+        "allow_partial_ingestion": "bool",
+        "ingestion_success_threshold": "float",
+    }.items():
         if key in params:
-            extra.append(f"{key}={_coerce(params[key], spec.extra_schema[key])}")
+            extra.append(f"{key}={_coerce(params[key], value_type)}")
     dataset_dir = datasets_root / dataset
     if not (dataset_dir / "manifest.json").exists():
         raise ValueError(f"dataset not found under generated root: {dataset}")
@@ -488,7 +478,6 @@ def _build_run_params(
             f"model must be one of the server-available models: {selectable_models}"
         )
     return RunParams(
-        experiment=experiment,
         dataset=dataset_dir,
         output_dir=Path("."),
         label=_run_label(name),
@@ -564,7 +553,6 @@ def create_eval_routes(
 
     @router.get("/runs", dependencies=[Depends(combined_auth)])
     async def list_runs(
-        kind: Optional[str] = Query(default=None, description="Filter by run kind"),
         dataset: Optional[str] = Query(
             default=None, description="Filter by dataset id"
         ),
@@ -579,8 +567,6 @@ def create_eval_routes(
         try:
             require_eval()
             runs = scan_runs(root)
-            if kind:
-                runs = [r for r in runs if r["kind"] == kind]
             if dataset:
                 runs = [r for r in runs if r["dataset"] == dataset]
             if q:
@@ -802,14 +788,13 @@ def create_eval_routes(
         try:
             require_eval()
             if request.kind == "run":
-                if not request.experiment or not request.dataset:
+                if not request.dataset:
                     raise HTTPException(
                         status_code=400,
-                        detail="experiment and dataset are required for run jobs",
+                        detail="dataset is required for evaluation jobs",
                     )
                 try:
                     params = _build_run_params(
-                        experiment=request.experiment,
                         dataset=request.dataset,
                         name=request.name,
                         params=request.params,

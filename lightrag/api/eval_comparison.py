@@ -14,7 +14,7 @@ def compare_contract(envelopes: list[dict[str, Any]]) -> dict[str, Any]:
         "case_set": lambda run: sorted((run.get("launch_params") or {}).get("case_ids") or []),
         "environment_version": lambda run: ((run.get("execution_manifest") or {}).get("execution_unit") or {}).get("profile"),
         "environment_configuration": lambda run: ((run.get("execution_manifest") or {}).get("execution_unit") or {}).get("configuration_fingerprint"),
-        "experiment_type": lambda run: ((run.get("experiment") or {}).get("id")),
+        "evaluation_type": lambda run: ((run.get("evaluation") or {}).get("id")),
         "scorer_version": lambda run: run.get("scorer_version"),
         "repetitions": lambda run: (run.get("comparison_settings") or {}).get("repetitions", 1),
         "warmups": lambda run: (run.get("comparison_settings") or {}).get("warmups", 0),
