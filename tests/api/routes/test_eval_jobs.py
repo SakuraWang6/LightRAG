@@ -121,7 +121,7 @@ def test_run_job_rejects_infra_and_unknown_params(
     assert unknown.status_code == 400
 
 
-def test_run_job_requires_env_ready_experiments(
+def test_run_job_rejects_cli_only_experiments(
     runs_root: Path, tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setattr(_utils_api, "auth_configured", False)
@@ -138,7 +138,7 @@ def test_run_job_requires_env_ready_experiments(
         },
     )
     assert response.status_code == 400
-    assert "LIGHTRAG_PROJECT_OPENAI_API_KEY" in response.json()["detail"]
+    assert "not available in the WebUI" in response.json()["detail"]
 
 
 def test_run_job_starts_and_dataset_delete_is_guarded(
@@ -165,7 +165,7 @@ def test_run_job_starts_and_dataset_delete_is_guarded(
         "/eval/jobs",
         json={
             "kind": "run",
-            "experiment": "context_size",
+                "experiment": "end_to_end_baseline",
             "dataset": "rich-smoke-v1",
             "params": {"top_k": 5},
         },
@@ -356,7 +356,7 @@ def test_job_validation_gaps(runs_root: Path, tmp_path: Path, monkeypatch) -> No
     client = _client(runs_root, tmp_path)
     base = {
         "kind": "run",
-        "experiment": "context_size",
+        "experiment": "end_to_end_baseline",
         "dataset": "rich-smoke-v1",
         "params": {},
     }
@@ -398,6 +398,9 @@ def test_models_endpoint_filters_embeddings(
     payload = client.get("/eval/models").json()
     assert payload["models"] == ["qwen3:8b"]
     assert payload["embedding_filtered"] == ["bge-m3:latest"]
+    assert "qwen3:8b" in payload["selectable_models"]
+    assert "native" in payload["parser_engines"]
+    assert payload["default_parser_engine"] == "native"
 
     monkeypatch.setattr(
         _eval_routes.urllib.request,
@@ -454,7 +457,7 @@ def test_jobs_queue_when_max_active_reached(
     monkeypatch.setattr(eval_jobs, "_spawn_run_job", fake_spawn)
     payload = {
         "kind": "run",
-        "experiment": "context_size",
+        "experiment": "end_to_end_baseline",
         "dataset": "rich-smoke-v1",
         "params": {},
     }

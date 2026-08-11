@@ -277,6 +277,7 @@ def test_create_evaluation_passes_custom_name_and_runtime_parameters(
                 "max_total_tokens": 4096,
                 "num_predict": 256,
                 "max_cases": 3,
+                "engine": "native",
                 "kg": False,
             },
         },
@@ -286,6 +287,7 @@ def test_create_evaluation_passes_custom_name_and_runtime_parameters(
     assert params.label == "合同文档测评"
     assert params.max_total_tokens == 4096
     assert params.top_k == 8
+    assert params.engine == "native"
     assert params.skip_kg is True
 
 

@@ -7,6 +7,7 @@ import {
   createEvalJob,
   listDatasets,
   listEvalJobs,
+  listEvalModels,
   type DatasetSummary
 } from '@/api/eval'
 import { hasRunningJobs } from '@/features/eval/utils'
@@ -70,10 +71,37 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
   const [temperature, setTemperature] = useState(() => numberParam(initial?.params, 'temperature', 0))
   const [engine, setEngine] = useState(() => stringParam(initial?.params, 'engine', 'native'))
   const [kg, setKg] = useState(() => initial?.params?.kg !== false)
+  const [modelOptions, setModelOptions] = useState<string[]>([])
+  const [engineOptions, setEngineOptions] = useState<string[]>([])
+  const [optionsLoading, setOptionsLoading] = useState(true)
+  const [optionsError, setOptionsError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     void listDatasets().then((data) => setDatasets(data.datasets)).catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    void listEvalModels()
+      .then((data) => {
+        const models = data.selectable_models?.length ? data.selectable_models : data.models
+        const engines = data.parser_engines ?? []
+        const defaultModel = data.default_model ?? models[0]
+        const defaultEngine = data.default_parser_engine ?? engines[0]
+        setModelOptions(models)
+        setEngineOptions(engines)
+        setModel((current) => (models.includes(current) ? current : defaultModel ?? ''))
+        setEngine((current) => (engines.includes(current) ? current : defaultEngine ?? ''))
+        if (!Array.isArray(data.parser_engines)) {
+          setOptionsError('当前 LightRAG API 尚未更新，请重启 LightRAG API 后重试。')
+        } else if (models.length === 0 || engines.length === 0) {
+          setOptionsError('服务器没有可用于测评的模型或解析引擎，请先完成服务配置。')
+        }
+      })
+      .catch((error) => {
+        setOptionsError(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => setOptionsLoading(false))
   }, [])
 
   const start = useCallback(async () => {
@@ -83,6 +111,10 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
     }
     if (!dataset) {
       toast.error(t('eval.wizardIncomplete'))
+      return
+    }
+    if (!model || !engine || optionsLoading || optionsError) {
+      toast.error(optionsError ?? '正在加载服务器运行选项，请稍后重试。')
       return
     }
     const parsedTemperature = Number(temperature)
@@ -122,7 +154,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
     } finally {
       setSubmitting(false)
     }
-  }, [chunkTopK, dataset, engine, kg, maxCases, maxTotalTokens, mode, model, name, numCtx, numPredict, onStarted, t, temperature, topK])
+  }, [chunkTopK, dataset, engine, kg, maxCases, maxTotalTokens, mode, model, name, numCtx, numPredict, onStarted, optionsError, optionsLoading, t, temperature, topK])
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -164,8 +196,8 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-sm">检索与评分范围</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-1.5"><span className="text-sm font-medium">模型</span><Input value={model} onChange={(event) => setModel(event.target.value)} placeholder="服务器已配置的模型名称" /></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">检索模式</span><Select value={mode} onValueChange={setMode}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="mix">Mix</SelectItem><SelectItem value="local">Local</SelectItem><SelectItem value="global">Global</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">模型</span><Select value={model} onValueChange={setModel} disabled={optionsLoading || modelOptions.length === 0}><SelectTrigger><SelectValue placeholder="选择服务器已配置的模型" /></SelectTrigger><SelectContent>{modelOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">仅显示当前服务器可用的回答模型。</span></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">检索模式</span><Select value={mode} onValueChange={setMode}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="naive">Naive</SelectItem><SelectItem value="mix">Mix</SelectItem><SelectItem value="local">Local</SelectItem><SelectItem value="global">Global</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">检索条数（Top-K）</span><Input type="number" min="1" value={topK} onChange={(event) => setTopK(event.target.value)} /></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">Chunk Top-K</span><Input type="number" min="1" value={chunkTopK} onChange={(event) => setChunkTopK(event.target.value)} /></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">最多运行题数</span><Input type="number" min="0" value={maxCases} onChange={(event) => setMaxCases(event.target.value)} /><span className="text-muted-foreground block text-xs">填 0 表示运行数据集中的全部题目。</span></label>
@@ -180,11 +212,12 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
               <label className="space-y-1.5"><span className="text-sm font-medium">最大上下文 Token</span><Input type="number" min="1" value={maxTotalTokens} onChange={(event) => setMaxTotalTokens(event.target.value)} /></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">最大输出 Token</span><Input type="number" min="1" value={numPredict} onChange={(event) => setNumPredict(event.target.value)} /></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">温度</span><Input type="number" min="0" max="2" step="0.1" value={temperature} onChange={(event) => setTemperature(event.target.value)} /></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">解析引擎</span><Input value={engine} onChange={(event) => setEngine(event.target.value)} placeholder="native" /></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">解析引擎</span><Select value={engine} onValueChange={setEngine} disabled={optionsLoading || engineOptions.length === 0}><SelectTrigger><SelectValue placeholder="选择已配置的解析引擎" /></SelectTrigger><SelectContent>{engineOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">仅显示当前服务器已安装并配置完成的解析引擎。</span></label>
             </CardContent>
           </Card>
 
-          <Button onClick={() => void start()} disabled={submitting}>
+          {optionsError ? <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{optionsError}</p> : null}
+          <Button onClick={() => void start()} disabled={submitting || optionsLoading || Boolean(optionsError)}>
             <PlayIcon className="mr-1 size-4" />
             {t('eval.startRun')}
           </Button>

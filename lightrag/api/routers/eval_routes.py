@@ -338,6 +338,33 @@ def _run_label(value: str | None) -> str | None:
     return label
 
 
+def _available_parser_engines() -> list[str]:
+    """Return only parser engines this server can actually start."""
+    try:
+        from lightrag.parser.registry import (
+            engine_endpoint_configured,
+            supported_parser_engines,
+        )
+
+        return sorted(
+            engine
+            for engine in supported_parser_engines()
+            if engine_endpoint_configured(engine)
+        )
+    except Exception:
+        # Keep the launch form usable during a partial parser installation.
+        return ["native"]
+
+
+def _configured_query_model() -> str:
+    return (
+        os.getenv("QUERY_LLM_MODEL")
+        or os.getenv("LLM_MODEL")
+        or os.getenv("OLLAMA_MODEL")
+        or "qwen3:8b"
+    )
+
+
 def _build_run_params(
     *,
     experiment: str,
@@ -428,6 +455,13 @@ def _build_run_params(
     dataset_dir = datasets_root / dataset
     if not (dataset_dir / "manifest.json").exists():
         raise ValueError(f"dataset not found under generated root: {dataset}")
+    engine = params.get("engine")
+    if engine is not None:
+        available_engines = _available_parser_engines()
+        if engine not in available_engines:
+            raise ValueError(
+                f"engine must be one of the configured parser engines: {available_engines}"
+            )
     env = os.environ
     max_cases = params.get("max_cases", 0)
     if isinstance(max_cases, bool):
@@ -456,7 +490,7 @@ def _build_run_params(
         api_key=env.get("LIGHTRAG_API_KEY"),
         access_token=env.get("LIGHTRAG_ACCESS_TOKEN"),
         runs_root=runs_root,
-        engine=params.get("engine"),
+        engine=engine,
         max_cases=max_cases,
         skip_kg=not bool(params.get("kg", True)),
         extra=extra,
@@ -1216,9 +1250,16 @@ def create_eval_routes(
                     embedding_filtered.append(name)
                 else:
                     models.append(name)
+            parser_engines = _available_parser_engines()
             return {
                 "models": sorted(set(models)),
                 "embedding_filtered": sorted(set(embedding_filtered)),
+                "selectable_models": sorted(set([_configured_query_model(), *models])),
+                "default_model": _configured_query_model(),
+                "parser_engines": parser_engines,
+                "default_parser_engine": "native"
+                if "native" in parser_engines
+                else (parser_engines[0] if parser_engines else None),
             }
         except HTTPException:
             raise

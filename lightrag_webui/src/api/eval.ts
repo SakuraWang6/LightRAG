@@ -195,6 +195,18 @@ evalApiClient.interceptors.response.use(
     // client interceptor.  Axios' default message was hiding it as merely
     // "Request failed with status code 400".
     if (detail) throw new Error(detail)
+    if (Array.isArray(payload?.detail)) {
+      const first = payload.detail[0] as { loc?: unknown; msg?: unknown; type?: unknown } | undefined
+      const location = Array.isArray(first?.loc)
+        ? first.loc.filter((item) => item !== 'body').map(String).join('.')
+        : ''
+      if (first?.type === 'extra_forbidden' && location === 'name') {
+        throw new Error('服务器接口尚未更新。请重启 LightRAG API 后重试。')
+      }
+      if (typeof first?.msg === 'string') {
+        throw new Error(`${location ? `${location}：` : ''}${first.msg}`)
+      }
+    }
     throw new Error(errorMessage(error))
   }
 )
@@ -216,6 +228,18 @@ export async function getEvalRunLog(
     `/eval/runs/${encodeURIComponent(runId)}/log`,
     { params: { lines } }
   )
+  return response.data
+}
+
+export async function listEvalModels(): Promise<{
+  models: string[]
+  embedding_filtered: string[]
+  selectable_models?: string[]
+  default_model?: string | null
+  parser_engines?: string[]
+  default_parser_engine?: string | null
+}> {
+  const response = await evalApiClient.get('/eval/models')
   return response.data
 }
 
