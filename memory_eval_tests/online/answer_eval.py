@@ -12,7 +12,8 @@ from memory_eval_tests.common.sampling import sample_evenly
 from memory_eval_tests.online.review import build_review_queue
 
 SCORER_NAME = "deterministic-answer-rules"
-SCORER_VERSION = "1.0"
+SCORER_VERSION = "1.1"
+_EVIDENCE_UNSET = object()
 
 
 class SemanticAnswerScorer(Protocol):
@@ -73,12 +74,21 @@ def evaluate_answers(
         expected = question.get("answer", "")
         evidence_ids = question.get("evidence_fact_ids", [])
         evidence_facts = [facts_by_id[fid] for fid in evidence_ids if fid in facts_by_id]
+        final_context_trace = response.get("evaluation_trace")
+        final_context_evidence = (
+            _not_applicable_final_context_evidence()
+            if question.get("expected_behavior") == "abstain"
+            else _final_context_evidence(evidence_facts, final_context_trace)
+        )
         scores = score_answer(
             answer_text=answer_text,
             expected=expected,
             question=question,
             evidence_facts=evidence_facts,
             references_blob=references_blob,
+            # References expose candidate retrieval results only.  The
+            # controlled trace is the sole proof of model-visible context.
+            evidence_available_override=final_context_evidence["available"],
             semantic_scorer=semantic_scorer,
         )
         results.append(
@@ -92,12 +102,14 @@ def evaluate_answers(
                 "answer": answer_text,
                 "expected": expected,
                 "question_type": question.get("question_type", ""),
+                "expected_behavior": question.get("expected_behavior", "answer"),
                 "question_variant": question_variant,
                 "scenario_labels": question.get("scenario_labels", []),
                 # References are kept as a response-side observation only. They
                 # are not used as proof of the final prompt context (I2).
                 "response_references": response.get("references", []),
-                "final_context_trace": response.get("evaluation_trace"),
+                "final_context_trace": final_context_trace,
+                "final_context_evidence": final_context_evidence,
             }
         )
     total = len(results)
@@ -121,6 +133,15 @@ def evaluate_answers(
         "table_cell_accuracy": _average(results, "table_cell_correct"),
         "abstention_accuracy": _average(results, "abstention_correct"),
         "evidence_available": _average(results, "evidence_available"),
+        "final_context_observable_rate": _average_nested_bool(
+            results, "final_context_evidence", "observable"
+        ),
+        "final_context_evidence_coverage": _average_nested_number(
+            results, "final_context_evidence", "coverage"
+        ),
+        "final_context_evidence_available": _average_nested_bool(
+            results, "final_context_evidence", "available"
+        ),
         "citation_presence": _average(results, "citation_presence"),
         "citation_correctness": _average(results, "citation_correctness"),
         "groundedness": _rate(results, "grounded"),
@@ -141,7 +162,7 @@ def score_answer(
     question: dict[str, Any],
     evidence_facts: list[dict[str, Any]],
     references_blob: str,
-    evidence_available_override: bool | None = None,
+    evidence_available_override: bool | None | object = _EVIDENCE_UNSET,
     semantic_scorer: SemanticAnswerScorer | None = None,
 ) -> dict[str, Any]:
     question_type = question.get("question_type", "")
@@ -164,9 +185,9 @@ def score_answer(
             scorer_name, scorer_version = semantic_scorer.name, semantic_scorer.version
     exact = verdict == "pass"
     evidence_available = (
-        evidence_available_override
-        if evidence_available_override is not None
-        else _evidence_available(evidence_facts, references_blob)
+        _evidence_available(evidence_facts, references_blob)
+        if evidence_available_override is _EVIDENCE_UNSET
+        else evidence_available_override
     )
     citation_presence, citation_correctness = _citation_metrics(evidence_facts, answer_text)
 
@@ -194,14 +215,21 @@ def score_answer(
         citation_correctness = None
 
     # Groundedness means the answer is correct and its oracle evidence was
-    # supplied to the model; a correct abstain is grounded without evidence.
-    grounded: bool | None = (
-        None
-        if verdict == "uncertain"
-        else bool(exact and (True if evidence_available is None else evidence_available))
-    )
-    ungrounded = bool(expected_behavior == "abstain" and not abstention_correct)
-    if expected_behavior != "abstain" and verdict != "uncertain":
+    # supplied to the model. An unavailable trace is an observability gap, not
+    # a positive or negative evidence judgement.
+    if verdict == "uncertain":
+        grounded: bool | None = None
+    elif expected_behavior == "abstain":
+        grounded = bool(abstention_correct)
+    elif evidence_available is None:
+        grounded = None
+    else:
+        grounded = bool(exact and evidence_available)
+    if expected_behavior == "abstain":
+        ungrounded: bool | None = not bool(abstention_correct)
+    elif verdict == "uncertain" or grounded is None:
+        ungrounded = None
+    else:
         ungrounded = not grounded
 
     return {
@@ -327,6 +355,76 @@ def _evidence_available(evidence_facts: list[dict[str, Any]], references_blob: s
     return hits == len(evidence_facts)
 
 
+def _final_context_evidence(
+    evidence_facts: list[dict[str, Any]], final_context_trace: Any
+) -> dict[str, Any]:
+    """Report which oracle facts actually reached the answer model.
+
+    Candidate response references are deliberately not used as a fallback.
+    Missing trace data is an observability gap, not an evidence miss.
+    """
+    expected_ids = [str(fact.get("fact_id") or "") for fact in evidence_facts]
+    if not isinstance(final_context_trace, dict) or final_context_trace.get("status") != "observed":
+        reason = (
+            str(final_context_trace.get("reason") or "")
+            if isinstance(final_context_trace, dict)
+            else ""
+        )
+        return {
+            "status": "unavailable",
+            "observable": False,
+            "available": None,
+            "coverage": None,
+            "expected_fact_ids": expected_ids,
+            "hit_fact_ids": [],
+            "missing_fact_ids": expected_ids,
+            "reason": reason or "controlled final-context trace was not returned by the API",
+        }
+    context = str(final_context_trace.get("final_context") or "")
+    normalized_context = _compact(context)
+    hit_ids = [
+        fact_id
+        for fact_id, fact in zip(expected_ids, evidence_facts)
+        if _fact_in_context(fact, context, normalized_context)
+    ]
+    missing_ids = [fact_id for fact_id in expected_ids if fact_id not in hit_ids]
+    coverage = len(hit_ids) / len(expected_ids) if expected_ids else 1.0
+    return {
+        "status": "observed",
+        "observable": True,
+        "available": not missing_ids,
+        "coverage": coverage,
+        "expected_fact_ids": expected_ids,
+        "hit_fact_ids": hit_ids,
+        "missing_fact_ids": missing_ids,
+        "context_chars": final_context_trace.get("final_context_chars"),
+    }
+
+
+def _not_applicable_final_context_evidence() -> dict[str, Any]:
+    return {
+        "status": "not_applicable",
+        "observable": None,
+        "available": None,
+        "coverage": None,
+        "expected_fact_ids": [],
+        "hit_fact_ids": [],
+        "missing_fact_ids": [],
+    }
+
+
+def _fact_in_context(fact: dict[str, Any], context: str, normalized_context: str) -> bool:
+    candidates = (
+        str(fact.get("fact_id") or ""),
+        str(fact.get("answer") or ""),
+        str(fact.get("expected_text") or ""),
+    )
+    return any(
+        candidate and (candidate in context or _compact(candidate) in normalized_context)
+        for candidate in candidates
+    )
+
+
 def _citation_metrics(
     evidence_facts: list[dict[str, Any]], answer_text: str
 ) -> tuple[bool, bool | None]:
@@ -351,6 +449,29 @@ def _average(results: list[dict[str, Any]], key: str) -> float | None:
     if not applicable:
         return None
     return sum(bool(value) for value in applicable) / len(applicable)
+
+
+def _average_nested_bool(
+    results: list[dict[str, Any]], parent_key: str, key: str
+) -> float | None:
+    values = [
+        row[parent_key].get(key)
+        for row in results
+        if isinstance(row.get(parent_key), dict) and row[parent_key].get(key) is not None
+    ]
+    return sum(bool(value) for value in values) / len(values) if values else None
+
+
+def _average_nested_number(
+    results: list[dict[str, Any]], parent_key: str, key: str
+) -> float | None:
+    values = [
+        float(row[parent_key][key])
+        for row in results
+        if isinstance(row.get(parent_key), dict)
+        and isinstance(row[parent_key].get(key), (int, float))
+    ]
+    return sum(values) / len(values) if values else None
 
 
 def _stratify(results: list[dict[str, Any]], key: str) -> dict[str, dict[str, Any]]:
@@ -387,10 +508,10 @@ def _metric_definitions() -> dict[str, dict[str, str]]:
             "limitation": "不代表证据是否进入最终上下文",
         },
         "evidence_available": {
-            "definition": "oracle 证据在候选检索引用中可见的比例",
+            "definition": "oracle 证据完整进入最终回答上下文的比例",
             "denominator": "有 oracle 证据的非拒答题",
-            "scope": "检索候选层",
-            "limitation": "不证明证据进入最终上下文或回答引用正确",
+            "scope": "受控 final-context trace",
+            "limitation": "API 未返回 trace 时不可观测，不计为证据缺失",
         },
         "citation_correctness": {
             "definition": "回答中稳定 ID 引用覆盖 oracle 事实的比例",

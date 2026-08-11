@@ -224,3 +224,77 @@ def test_evaluate_answers_requests_and_records_controlled_final_context_trace(mo
     )
     assert seen["evaluation_trace"] is True
     assert result["results"][0]["final_context_trace"]["final_context"] == "oracle context"
+
+
+def test_evaluate_answers_uses_final_context_not_response_references_for_evidence(monkeypatch, tmp_path):
+    from memory_eval_tests.online.answer_eval import evaluate_answers
+
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "oracle.json").write_text(
+        json.dumps(
+            {
+                "questions": [
+                    {"id": "Q1", "question": "What?", "answer": "42", "evidence_fact_ids": ["FACT-1"]}
+                ],
+                "facts": [{"fact_id": "FACT-1", "answer": "42", "expected_text": "42"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_post_json(_url, _payload, **_kwargs):
+        return {
+            "response": "42",
+            # Candidate references intentionally contain no oracle fact.
+            "references": [],
+            "evaluation_trace": {"status": "observed", "final_context": "FACT-1: 42"},
+        }
+
+    monkeypatch.setattr("memory_eval_tests.online.answer_eval._post_json", fake_post_json)
+    result = evaluate_answers(
+        dataset_source=str(dataset), rag_api_url="http://api.test", evaluation_trace=True
+    )
+    row = result["results"][0]
+    assert row["evidence_available"] is True
+    assert row["grounded"] is True
+    assert row["final_context_evidence"] == {
+        "status": "observed",
+        "observable": True,
+        "available": True,
+        "coverage": 1.0,
+        "expected_fact_ids": ["FACT-1"],
+        "hit_fact_ids": ["FACT-1"],
+        "missing_fact_ids": [],
+        "context_chars": None,
+    }
+
+
+def test_abstain_does_not_inflate_final_context_evidence_summary(monkeypatch, tmp_path):
+    from memory_eval_tests.online.answer_eval import evaluate_answers
+
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "oracle.json").write_text(
+        json.dumps(
+            {
+                "questions": [{
+                    "id": "Q1",
+                    "question": "What is missing?",
+                    "question_type": "abstain",
+                    "expected_behavior": "abstain",
+                    "answer": "The document does not provide this information.",
+                    "evidence_fact_ids": [],
+                }],
+                "facts": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "memory_eval_tests.online.answer_eval._post_json",
+        lambda *_args, **_kwargs: {"response": "The document does not mention this."},
+    )
+    result = evaluate_answers(dataset_source=str(dataset), rag_api_url="http://api.test")
+    assert result["results"][0]["final_context_evidence"]["status"] == "not_applicable"
+    assert result["final_context_evidence_coverage"] is None

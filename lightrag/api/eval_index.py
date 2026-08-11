@@ -120,6 +120,10 @@ def _flatten_cases(methods: list[dict[str, Any]]) -> dict[str, Any]:
             row: dict[str, Any] = {}
             detail: dict[str, Any] = {}
             for key, value in case.items():
+                if isinstance(value, dict):
+                    if key in {"retrieval", "final_context_evidence", "scorer"}:
+                        detail[key] = value
+                    continue
                 if (
                     isinstance(value, (int, float, bool, str, list))
                     and value is not None
@@ -164,7 +168,59 @@ def _case_methods_for_run(
     if experiment.get("id") != "end_to_end_baseline":
         return methods
     answer_methods = [method for method in methods if method.get("method") == "answer"]
-    return answer_methods or methods
+    retrieval = next(
+        (method for method in methods if method.get("method") == "retrieval"), None
+    )
+    if not answer_methods:
+        return methods
+    if retrieval is None:
+        return answer_methods
+    return [_merge_end_to_end_case_methods(answer_methods[0], retrieval)]
+
+
+def _merge_end_to_end_case_methods(
+    answer_method: dict[str, Any], retrieval_method: dict[str, Any]
+) -> dict[str, Any]:
+    """Attach retrieval diagnostics to each answer sheet, never as duplicate rows."""
+    retrieval_by_question = {
+        str(row.get("question_id")): row
+        for row in retrieval_method.get("results") or []
+        if isinstance(row, dict) and row.get("question_id") is not None
+    }
+    merged_rows: list[dict[str, Any]] = []
+    for answer_row in answer_method.get("results") or []:
+        if not isinstance(answer_row, dict):
+            continue
+        row = dict(answer_row)
+        question_id = str(row.get("question_id") or "")
+        retrieval = retrieval_by_question.get(question_id)
+        if row.get("expected_behavior") == "abstain":
+            row["retrieval"] = {"status": "not_applicable"}
+        elif retrieval is None:
+            row["retrieval"] = {
+                "status": "unavailable",
+                "reason": "no retrieval trace was produced for this question",
+            }
+        else:
+            hit_evidence = retrieval.get("hit_evidence") or []
+            ranks = [
+                item.get("rank")
+                for item in hit_evidence
+                if isinstance(item, dict) and isinstance(item.get("rank"), int)
+            ]
+            row["retrieval"] = {
+                "status": "observed",
+                "recall_at_k": retrieval.get("recall_at_k"),
+                "reciprocal_rank": retrieval.get("reciprocal_rank"),
+                "context_precision": retrieval.get("context_precision"),
+                "first_evidence_rank": min(ranks) if ranks else None,
+                "expected_fact_ids": retrieval.get("expected_fact_ids") or [],
+                "hit_fact_ids": retrieval.get("hit_fact_ids") or [],
+                "hit_evidence": hit_evidence,
+                "top_contexts": retrieval.get("top_contexts") or [],
+            }
+        merged_rows.append(row)
+    return {**answer_method, "results": merged_rows}
 
 
 def _hydrate_case_questions_from_trace(
@@ -175,19 +231,30 @@ def _hydrate_case_questions_from_trace(
         traces = _read_json(run_dir / "case_trace.json").get("cases") or []
     except (OSError, ValueError):
         return
-    question_by_id = {
-        str(trace.get("question_id")): str((trace.get("oracle") or {}).get("question") or "")
+    oracle_by_question_id = {
+        str(trace.get("question_id")): trace.get("oracle") or {}
         for trace in traces
         if isinstance(trace, dict)
     }
     hydrated = False
     for row in cases.get("rows") or []:
-        if not isinstance(row, dict) or row.get("question"):
+        if not isinstance(row, dict):
             continue
-        question = question_by_id.get(str(row.get("question_id") or ""))
-        if question:
+        oracle = oracle_by_question_id.get(str(row.get("question_id") or ""))
+        if not isinstance(oracle, dict):
+            continue
+        question = str(oracle.get("question") or "")
+        if question and not row.get("question"):
             row["question"] = question
             hydrated = True
+        if row.get("expected_behavior") is None and oracle.get("expected_behavior"):
+            row["expected_behavior"] = oracle["expected_behavior"]
+        if row.get("expected_behavior") == "abstain":
+            detail = row.get("detail")
+            retrieval = detail.get("retrieval") if isinstance(detail, dict) else None
+            if isinstance(retrieval, dict) and retrieval.get("status") == "unavailable":
+                retrieval.clear()
+                retrieval["status"] = "not_applicable"
     if hydrated and not any(column.get("key") == "question" for column in cases.get("columns") or []):
         cases["columns"].insert(0, {"key": "question", "label": "Question"})
 
@@ -196,12 +263,16 @@ def _summary_metrics(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Union of scalar summary metrics across methods, canonical order first."""
     ordered = [
         "correct_cases",
+        "retrieval_cases",
         "answer_accuracy",
         "accuracy",
         "groundedness",
         "ungrounded_rate",
         "abstention_accuracy",
         "evidence_available",
+        "final_context_observable_rate",
+        "final_context_evidence_coverage",
+        "final_context_evidence_available",
         "citation_presence",
         "citation_correctness",
         "numeric_unit_accuracy",
@@ -228,6 +299,9 @@ def _summary_metrics(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for key, value in (method.get("summary") or {}).items():
             if isinstance(value, (int, float, bool)):
                 normalized = normalize_metric_key(key)
+                if normalized == "cases" and method.get("method") == "retrieval":
+                    values["retrieval_cases"] = value
+                    continue
                 # A canonical key always wins over a legacy alias when both
                 # exist, regardless of dict iteration order.
                 if normalized not in values or key == normalized:

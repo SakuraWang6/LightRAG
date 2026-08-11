@@ -579,7 +579,7 @@ def test_flatten_cases_keeps_full_retrieval_evidence() -> None:
     assert len(row["hit_fact_ids"].split(", ")) == 5
 
 
-def test_end_to_end_run_indexes_answer_sheet_not_pipeline_methods(
+def test_end_to_end_run_indexes_answer_sheet_with_retrieval_diagnostics(
     runs_tree: Path,
 ) -> None:
     """A regular document evaluation is one run with one review row per question."""
@@ -601,6 +601,13 @@ def test_end_to_end_run_indexes_answer_sheet_not_pipeline_methods(
                     "question_id": "Q1",
                     "question": "文档标题是什么？",
                     "recall_at_k": 1.0,
+                    "reciprocal_rank": 1.0,
+                    "context_precision": 0.5,
+                    "expected_fact_ids": ["FACT-1"],
+                    "hit_fact_ids": ["FACT-1"],
+                    "hit_evidence": [
+                        {"fact_id": "FACT-1", "rank": 1, "text": "LightRAG"}
+                    ],
                 }
             ],
         },
@@ -615,6 +622,12 @@ def test_end_to_end_run_indexes_answer_sheet_not_pipeline_methods(
                     "expected": "LightRAG",
                     "exact_match": True,
                     "question_type": "事实题",
+                    "expected_behavior": "answer",
+                    "final_context_evidence": {
+                        "status": "observed",
+                        "available": True,
+                        "coverage": 1.0,
+                    },
                 }
             ],
         },
@@ -642,21 +655,41 @@ def test_end_to_end_run_indexes_answer_sheet_not_pipeline_methods(
     assert detail["headline"]["answer_accuracy"]["value"] == 1.0
     assert detail["headline"]["correct_cases"]["value"] == 1
     cases = next(artifact for artifact in detail["artifacts"] if artifact["kind"] == "cases")
-    assert cases["table"]["rows"] == [
-        {
-            "question_id": "Q1",
-            "question": "文档标题是什么？",
-            "answer": "LightRAG",
-            "expected": "LightRAG",
-            "exact_match": True,
-            "question_type": "事实题",
-            "method": "answer",
-        }
-    ]
+    row = cases["table"]["rows"][0]
+    assert row["question_id"] == "Q1"
+    assert row["method"] == "answer"
+    assert row["detail"]["retrieval"]["recall_at_k"] == 1.0
+    assert row["detail"]["retrieval"]["first_evidence_rank"] == 1
+    assert row["detail"]["final_context_evidence"]["available"] is True
     report = next(artifact for artifact in detail["artifacts"] if artifact["kind"] == "markdown_report")
     assert report["title"] == "测评报告"
     assert report["meta"]["uses_llm"] is False
     assert "不调用 LLM" in report["report_md"]
+
+
+def test_end_to_end_legacy_trace_backfills_abstain_without_fake_retrieval_gap(
+    runs_tree: Path,
+) -> None:
+    from lightrag.api.eval_index import clear_scan_cache, load_run
+
+    payload = _experiment_envelope("end-to-end-abstain")
+    payload["experiment"] = {"id": "end_to_end_baseline", "label": "端到端测评", "description": ""}
+    payload["methods"] = [
+        {"method": "retrieval", "results": []},
+        {"method": "answer", "results": [{"question_id": "Q1", "answer": "无法确定", "expected": "无法确定", "exact_match": True}]},
+    ]
+    _write(runs_tree / "end-to-end-abstain" / "run.json", payload)
+    _write(
+        runs_tree / "end-to-end-abstain" / "case_trace.json",
+        {"cases": [{"question_id": "Q1", "oracle": {"question": "文档有吗？", "expected_behavior": "abstain"}}]},
+    )
+
+    clear_scan_cache(runs_tree)
+    detail = load_run(runs_tree, "end-to-end-abstain")
+    assert detail is not None
+    case = next(artifact for artifact in detail["artifacts"] if artifact["kind"] == "cases")["table"]["rows"][0]
+    assert case["expected_behavior"] == "abstain"
+    assert case["detail"]["retrieval"] == {"status": "not_applicable"}
 
 
 def test_summary_metrics_prefers_canonical_over_legacy_key() -> None:

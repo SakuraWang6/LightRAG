@@ -9,8 +9,7 @@ import {
   listEvalJobs,
   type EvalArtifact,
   type EvalJob,
-  type EvalRunDetail,
-  type MetricItem
+  type EvalRunDetail
 } from '@/api/eval'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -27,36 +26,44 @@ import EmptyCard from '@/components/ui/EmptyCard'
 import AiAnalysis from '@/features/eval/AiAnalysis'
 import CasesView from '@/features/eval/CasesView'
 import ConditionChips from '@/features/eval/ConditionChips'
+import EvaluationSummary from '@/features/eval/EvaluationSummary'
 import MetricCards from '@/features/eval/MetricCards'
 import ProgressBar from '@/features/eval/ProgressBar'
 import ReportDocument from '@/features/eval/ReportDocument'
 import RunLog from '@/features/eval/RunLog'
 import { formatDate, statusBadgeClass, statusLabel } from '@/features/eval/utils'
 
-const HEADLINE_ORDER = [
-  'passed',
+const ANSWER_METRIC_KEYS = new Set([
+  'correct_cases',
   'answer_accuracy',
-  'groundedness',
-  'ungrounded_rate',
+  'abstention_accuracy',
+  'numeric_unit_accuracy',
+  'formula_accuracy',
+  'table_cell_accuracy',
+  'final_context_observable_rate',
+  'final_context_evidence_coverage',
+  'final_context_evidence_available',
+  'cases'
+])
+
+const RETRIEVAL_METRIC_KEYS = new Set([
+  'retrieval_cases',
   'average_recall',
   'mrr',
-  'evidence_available',
-  'retrieval_recall'
-]
+  'context_precision',
+  'object_hit_rate',
+  'full_recall_cases'
+])
 
-function headlineMetrics(run: EvalRunDetail, questionScore?: MetricItem): MetricItem[] {
-  const entries = Object.values(run.headline ?? {})
-  if (entries.length === 0) return []
-  const ordered = HEADLINE_ORDER
-    .map((key) => entries.find((m) => m.key === key))
-    .filter((m): m is MetricItem => Boolean(m))
-  const rest = entries.filter((m) => !HEADLINE_ORDER.includes(m.key))
-  const metrics = [...ordered, ...rest]
-  const withoutSeparateCounts = questionScore
-    ? metrics.filter((metric) => !['correct_cases', 'cases'].includes(metric.key))
-    : metrics
-  return questionScore ? [questionScore, ...withoutSeparateCounts].slice(0, 6) : withoutSeparateCounts.slice(0, 6)
-}
+// These were response-reference observations in older runs and do not explain
+// an answer outcome. The case sheet now presents final-context evidence instead.
+const HIDDEN_DIAGNOSTIC_METRIC_KEYS = new Set([
+  'evidence_available',
+  'groundedness',
+  'ungrounded_rate',
+  'citation_presence',
+  'citation_correctness'
+])
 
 interface EvalRunDetailProps {
   run: EvalRunDetail
@@ -191,6 +198,14 @@ function RunHeader({
 }
 
 function ArtifactMetricsCard({ artifact }: { artifact: EvalArtifact }) {
+  const visibleMetrics = artifact.metrics.filter(
+    (metric) => !HIDDEN_DIAGNOSTIC_METRIC_KEYS.has(metric.key)
+  )
+  const answerMetrics = visibleMetrics.filter((metric) => ANSWER_METRIC_KEYS.has(metric.key))
+  const retrievalMetrics = visibleMetrics.filter((metric) => RETRIEVAL_METRIC_KEYS.has(metric.key))
+  const remainingMetrics = visibleMetrics.filter(
+    (metric) => !ANSWER_METRIC_KEYS.has(metric.key) && !RETRIEVAL_METRIC_KEYS.has(metric.key)
+  )
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -205,8 +220,25 @@ function ArtifactMetricsCard({ artifact }: { artifact: EvalArtifact }) {
       <CardContent>
         {artifact.error ? (
           <p className="text-destructive text-sm">{artifact.error}</p>
+        ) : artifact.kind === 'summary' && (answerMetrics.length > 0 || retrievalMetrics.length > 0) ? (
+          <div className="grid gap-4 xl:grid-cols-2">
+            <section>
+              <h3 className="mb-2 text-sm font-semibold">回答测评指标</h3>
+              <MetricCards metrics={answerMetrics} />
+            </section>
+            <section>
+              <h3 className="mb-2 text-sm font-semibold">检索测评指标</h3>
+              <MetricCards metrics={retrievalMetrics} />
+            </section>
+            {remainingMetrics.length > 0 ? (
+              <section className="xl:col-span-2">
+                <h3 className="mb-2 text-sm font-semibold">其他运行指标</h3>
+                <MetricCards metrics={remainingMetrics} />
+              </section>
+            ) : null}
+          </div>
         ) : (
-          <MetricCards metrics={artifact.metrics} />
+          <MetricCards metrics={visibleMetrics} />
         )}
       </CardContent>
     </Card>
@@ -230,25 +262,15 @@ function StandardRunView({ run, active }: { run: EvalRunDetail; active: boolean 
   )
   const [selectedReportPath, setSelectedReportPath] = useState<string | null>(null)
   const selectedReport = reportArtifacts.find((a) => a.rel_path === selectedReportPath) ?? reportArtifacts[0]
-  const questionScore = useMemo<MetricItem | undefined>(() => {
-    const rows = caseArtifact?.table.rows ?? []
-    const scored = rows.filter((row) => typeof row.exact_match === 'boolean')
-    if (scored.length === 0) return undefined
-    const correct = scored.filter((row) => row.exact_match === true).length
-    return {
-      key: 'question_score',
-      label: '正确题数 / 总题数',
-      value: `${correct} / ${scored.length}`,
-      type: 'text'
-    }
-  }, [caseArtifact])
 
   return (
     <div className="p-4">
       <div className="mb-4">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm">结果摘要</CardTitle></CardHeader>
-          <CardContent><MetricCards metrics={headlineMetrics(run, questionScore)} /></CardContent>
+          <CardContent>
+            <EvaluationSummary metrics={run.headline} rows={caseArtifact?.table.rows ?? []} />
+          </CardContent>
         </Card>
       </div>
 
