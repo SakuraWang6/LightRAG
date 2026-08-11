@@ -596,14 +596,18 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
                     response=response_content,
                     references=references,
                     response_time=response_time,
-                    evaluation_trace=(data.get("evaluation_trace") if request.evaluation_trace else None),
+                    evaluation_trace=(
+                        result.get("evaluation_trace") if request.evaluation_trace else None
+                    ),
                 )
             else:
                 return QueryResponse(
                     response=response_content,
                     references=None,
                     response_time=response_time,
-                    evaluation_trace=(data.get("evaluation_trace") if request.evaluation_trace else None),
+                    evaluation_trace=(
+                        result.get("evaluation_trace") if request.evaluation_trace else None
+                    ),
                 )
         except Exception as e:
             logger.error(f"Error processing query: {str(e)}", exc_info=True)

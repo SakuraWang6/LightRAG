@@ -16,6 +16,24 @@ def test_run_command_uses_only_the_product_cli(tmp_path: Path) -> None:
     )
     assert command[:3] == [command[0], "-m", "memory_eval_tests.cli"]
     assert "--experiment" not in command
+    assert "--ollama-url" not in command
+    assert "--rag-api-url" not in command
+    assert "--storage-dir" not in command
+
+
+def test_legacy_job_parameters_do_not_block_resumption(tmp_path: Path) -> None:
+    params = eval_jobs._params_from_json(
+        {
+            "dataset": str(tmp_path / "dataset"),
+            "output_dir": str(tmp_path / "output"),
+            "ollama_url": "http://obsolete.invalid",
+            "rag_api_url": "http://obsolete.invalid",
+            "storage_dir": str(tmp_path / "obsolete-storage"),
+        }
+    )
+
+    assert params.dataset == tmp_path / "dataset"
+    assert params.output_dir == tmp_path / "output"
 
 
 def test_job_file_is_written_atomically(tmp_path: Path) -> None:
@@ -32,6 +50,27 @@ def test_job_file_is_written_atomically(tmp_path: Path) -> None:
     path = jobs / "evaluation-1" / "job.json"
     assert json.loads(path.read_text(encoding="utf-8")) == job
     assert not (jobs / "evaluation-1" / "job.json.tmp").exists()
+
+
+def test_dataset_job_persists_requested_language(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(eval_jobs, "_dispatch", lambda *_args, **_kwargs: None)
+
+    job = eval_jobs.start_dataset_job(
+        runs_root=tmp_path,
+        dataset_id=None,
+        display_name="中文检索质量测评",
+        tier="smoke",
+        profile="rich",
+        pages=2,
+        formats=["docx"],
+        modalities=["text"],
+        language="zh",
+    )
+
+    assert job["params"]["language"] == "zh"
+    assert job["params"]["display_name"] == "中文检索质量测评"
+    assert job["display_name"] == "中文检索质量测评"
+    assert job["dataset_id"] == job["id"]
 
 
 def test_pending_run_is_visible_before_a_worker_starts(

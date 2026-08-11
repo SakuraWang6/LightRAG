@@ -7,21 +7,21 @@ import {
   caseFieldLabel,
   compactRunStages,
   compareCompatible,
-  diffParams,
+  evalStatusLabel,
   formatDelta,
   hasRunningJobs,
   metricStats,
   metricRank,
-  questionTypeLabel,
-  statusLabel
+  questionTypeLabel
 } from '@/features/eval/utils'
 
 describe('eval utils', () => {
-  test('status labels pass through unchanged', () => {
-    expect(statusLabel({ status: 'complete' })).toBe('complete')
-    expect(statusLabel({ status: 'failed' })).toBe('failed')
-    expect(statusLabel({ status: null })).toBe('')
-    expect(statusLabel({})).toBe('')
+  test('maps evaluation statuses to translation keys and preserves unknown values', () => {
+    expect(evalStatusLabel('complete')).toBe('eval.statusComplete')
+    expect(evalStatusLabel('succeeded')).toBe('eval.statusComplete')
+    expect(evalStatusLabel('failed')).toBe('eval.failed')
+    expect(evalStatusLabel('unknown')).toBe('unknown')
+    expect(evalStatusLabel(null)).toBe('')
   })
 
   test('canonical metric keys rank before unknown keys', () => {
@@ -106,19 +106,6 @@ describe('eval utils', () => {
     expect(hasRunningJobs([])).toBe(false)
   })
 
-  test('diffParams normalizes types and ignores null', () => {
-    expect(diffParams({ top_k: 5 }, { top_k: '5' })).toEqual([])
-    expect(diffParams({ max_cases: null }, { max_cases: 3 })).toEqual(['max_cases'])
-    expect(diffParams({ top_k: 5, model: 'a' }, { top_k: 5, model: 'b' })).toEqual(['model'])
-  })
-
-  test('diffParams flags cleared fields and treats missing key as null', () => {
-    expect(diffParams({ model: 'a' }, { model: null })).toEqual(['model'])
-    expect(diffParams({ model: null }, { model: '' })).toEqual([])
-    expect(diffParams({ top_k: 5 }, {})).toEqual(['top_k'])
-    expect(diffParams({}, { top_k: 5 })).toEqual(['top_k'])
-  })
-
   test('compareCompatible requires the same dataset', () => {
     expect(
       compareCompatible([
@@ -145,7 +132,6 @@ describe('eval utils', () => {
         extra: ['stage=eval', 'selected_limit=5']
       },
       conditions: [],
-      evaluation: 'end_to_end',
       dataset: 'rich-smoke-v1'
     })
     expect(draft.params).toEqual({ model: 'gpt-4o-mini', top_k: 5, kg: true })
@@ -160,7 +146,6 @@ describe('eval utils', () => {
         { key: 'top_k', value: '5' },
         { key: 'kg', value: '开' }
       ],
-      evaluation: 'end_to_end',
       dataset: 'rich-smoke-v1'
     })
     expect(draft.params).toEqual({ model: 'qwen3:8b', top_k: '5', kg: true })

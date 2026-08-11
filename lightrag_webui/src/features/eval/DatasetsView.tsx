@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeftIcon, TrashIcon, UploadIcon } from 'lucide-react'
+import { ArrowLeftIcon, ChevronsUpDownIcon, TrashIcon, UploadIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
@@ -16,7 +16,9 @@ import {
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
+import Checkbox from '@/components/ui/Checkbox'
 import Input from '@/components/ui/Input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/Popover'
 import {
   Select,
   SelectContent,
@@ -37,16 +39,40 @@ interface DatasetsViewProps {
   onBack: () => void
 }
 
+type ContentElement = 'tables' | 'figures' | 'equations'
+
+const SCALE_LABELS: Record<string, string> = {
+  smoke: 'eval.scaleSmoke',
+  medium: 'eval.scaleMedium',
+  large: 'eval.scaleLarge',
+  stress: 'eval.scaleStress'
+}
+const COMPLEXITY_LABELS: Record<string, string> = {
+  basic: 'eval.complexityBasic',
+  rich: 'eval.complexityRich'
+}
+const CONTENT_LABELS: Record<string, string> = {
+  text: 'eval.contentText',
+  tables: 'eval.contentTables',
+  figures: 'eval.contentFigures',
+  equations: 'eval.contentEquations'
+}
+
 export default function DatasetsView({ onBack }: DatasetsViewProps) {
   const { t } = useTranslation()
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
   const [jobs, setJobs] = useState<EvalJob[]>([])
-  const [datasetId, setDatasetId] = useState('')
+  const [datasetName, setDatasetName] = useState('')
   const [tier, setTier] = useState('smoke')
   const [profile, setProfile] = useState('rich')
+  const [language, setLanguage] = useState<'en' | 'zh'>('en')
   const [pages, setPages] = useState<string>('')
-  const [formats, setFormats] = useState('docx')
-  const [modalities, setModalities] = useState('text,tables,figures,equations')
+  const [outputFormat, setOutputFormat] = useState<'docx' | 'docx,pdf'>('docx')
+  const [contentElements, setContentElements] = useState<ContentElement[]>([
+    'tables',
+    'figures',
+    'equations'
+  ])
   const [force, setForce] = useState(false)
   const [creating, setCreating] = useState(false)
   const [importing, setImporting] = useState(false)
@@ -73,30 +99,63 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
   )
 
   const create = useCallback(async () => {
-    if (!datasetId.trim()) return
+    if (!datasetName.trim()) return
     setCreating(true)
     try {
       await createEvalJob({
         kind: 'dataset',
         dataset_create: {
-          dataset_id: datasetId.trim(),
+          display_name: datasetName.trim(),
           tier,
           profile,
+          language,
           pages: pages === '' ? null : Number(pages),
-          formats: formats.split(',').map((item) => item.trim()).filter(Boolean),
-          modalities: modalities.split(',').map((item) => item.trim()).filter(Boolean),
+          formats: outputFormat.split(',') as ('docx' | 'pdf')[],
+          modalities: ['text', ...contentElements],
           force
         }
       })
       toast.success(t('eval.datasetJobStarted'))
-      setDatasetId('')
+      setDatasetName('')
       void refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
     } finally {
       setCreating(false)
     }
-  }, [datasetId, tier, profile, pages, formats, modalities, force, refresh, t])
+  }, [
+    datasetName,
+    tier,
+    profile,
+    language,
+    pages,
+    outputFormat,
+    contentElements,
+    force,
+    refresh,
+    t
+  ])
+
+  const toggleContentElement = useCallback((element: ContentElement, checked: boolean) => {
+    setContentElements((current) => {
+      if (checked) return current.includes(element) ? current : [...current, element]
+      return current.filter((item) => item !== element)
+    })
+  }, [])
+
+  const selectedContentLabel = [
+    t('eval.contentText'),
+    ...contentElements.map((element) => t(CONTENT_LABELS[element]))
+  ].join(', ')
+
+  const displayDatasetName = (item: DatasetSummary) => {
+    if (item.display_name.trim()) return item.display_name
+    return t('eval.legacyDatasetName', {
+      complexity: t(COMPLEXITY_LABELS[item.profile] ?? item.profile),
+      scale: t(SCALE_LABELS[item.tier] ?? item.tier),
+      pages: item.pages
+    })
+  }
 
   const remove = useCallback(
     async (datasetIdToRemove: string) => {
@@ -126,25 +185,28 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
     [refresh, t]
   )
 
-  const importDataset = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-    if (!file.name.toLowerCase().endsWith('.zip')) {
-      toast.error('请选择包含 manifest.json、oracle.json 和文档的 .zip 数据集包')
-      return
-    }
-    setImporting(true)
-    try {
-      const dataset = await importEvalDataset(file)
-      toast.success(`已导入数据集：${dataset.dataset_id}`)
-      void refresh()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error))
-    } finally {
-      setImporting(false)
-    }
-  }, [refresh])
+  const importDataset = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      event.target.value = ''
+      if (!file) return
+      if (!file.name.toLowerCase().endsWith('.zip')) {
+        toast.error('请选择包含 manifest.json、oracle.json 和文档的 .zip 数据集包')
+        return
+      }
+      setImporting(true)
+      try {
+        const dataset = await importEvalDataset(file)
+        toast.success(`已导入数据集：${dataset.display_name || dataset.title}`)
+        void refresh()
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : String(error))
+      } finally {
+        setImporting(false)
+      }
+    },
+    [refresh]
+  )
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -161,9 +223,6 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <CardTitle className="text-sm">新建或导入数据集</CardTitle>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    数据集包包含文档、标准答案与题目；测评时会在独立 LightRAG 工作区中处理，不会污染当前知识库。
-                  </p>
                 </div>
                 <input
                   ref={importInputRef}
@@ -183,52 +242,127 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className="grid grid-cols-3 gap-3">
+            <CardContent className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <label className="flex flex-col gap-1 text-xs">
-                <span className="text-muted-foreground">dataset_id</span>
-                <Input value={datasetId} onChange={(event) => setDatasetId(event.target.value)} />
+                <span className="text-muted-foreground">{t('eval.datasetName')}</span>
+                <Input
+                  value={datasetName}
+                  onChange={(event) => setDatasetName(event.target.value)}
+                  placeholder={t('eval.datasetNameHint')}
+                />
               </label>
               <label className="flex flex-col gap-1 text-xs">
-                <span className="text-muted-foreground">{t('eval.tier')}</span>
+                <span className="text-muted-foreground">{t('eval.documentScale')}</span>
                 <Select value={tier} onValueChange={setTier}>
-                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
-                    {['smoke', 'medium', 'large', 'stress'].map((item) => (
-                      <SelectItem key={item} value={item}>{item}</SelectItem>
-                    ))}
+                    <SelectItem value="smoke">{t('eval.scaleSmoke')}</SelectItem>
+                    <SelectItem value="medium">{t('eval.scaleMedium')}</SelectItem>
+                    <SelectItem value="large">{t('eval.scaleLarge')}</SelectItem>
+                    <SelectItem value="stress">{t('eval.scaleStress')}</SelectItem>
                   </SelectContent>
                 </Select>
               </label>
               <label className="flex flex-col gap-1 text-xs">
-                <span className="text-muted-foreground">{t('eval.profile')}</span>
+                <span className="text-muted-foreground">{t('eval.documentComplexity')}</span>
                 <Select value={profile} onValueChange={setProfile}>
-                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="basic">basic</SelectItem>
-                    <SelectItem value="rich">rich</SelectItem>
+                    <SelectItem value="basic">{t('eval.complexityBasic')}</SelectItem>
+                    <SelectItem value="rich">{t('eval.complexityRich')}</SelectItem>
                   </SelectContent>
                 </Select>
               </label>
               <label className="flex flex-col gap-1 text-xs">
-                <span className="text-muted-foreground">{t('eval.pages')}</span>
+                <span className="text-muted-foreground">{t('eval.datasetLanguage')}</span>
+                <Select
+                  value={language}
+                  onValueChange={(value) => setLanguage(value as 'en' | 'zh')}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="en">{t('eval.languageEnglish')}</SelectItem>
+                    <SelectItem value="zh">{t('eval.languageChinese')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="flex flex-col gap-1 text-xs">
+                <span className="text-muted-foreground">{t('eval.customPages')}</span>
                 <Input
                   type="number"
                   value={pages}
                   onChange={(event) => setPages(event.target.value)}
-                  placeholder={t('eval.pagesHint')}
+                  placeholder={t('eval.customPagesHint')}
                 />
               </label>
               <label className="flex flex-col gap-1 text-xs">
-                <span className="text-muted-foreground">{t('eval.formats')}</span>
-                <Input value={formats} onChange={(event) => setFormats(event.target.value)} />
+                <span className="text-muted-foreground">{t('eval.outputFormat')}</span>
+                <Select
+                  value={outputFormat}
+                  onValueChange={(value) => setOutputFormat(value as 'docx' | 'docx,pdf')}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="docx">{t('eval.formatDocx')}</SelectItem>
+                    <SelectItem value="docx,pdf">{t('eval.formatDocxPdf')}</SelectItem>
+                  </SelectContent>
+                </Select>
               </label>
-              <label className="flex flex-col gap-1 text-xs">
-                <span className="text-muted-foreground">{t('eval.modalities')}</span>
-                <Input value={modalities} onChange={(event) => setModalities(event.target.value)} />
-              </label>
-              <div className="col-span-2 flex items-center gap-4">
+              <div className="col-span-2 flex flex-col gap-1 text-xs lg:col-span-2">
+                <span className="text-muted-foreground">{t('eval.contentElements')}</span>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" className="h-9 w-full justify-between px-3 font-normal">
+                      <span className="truncate">{selectedContentLabel}</span>
+                      <ChevronsUpDownIcon className="ml-2 size-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-2">
+                    <div className="space-y-1" role="group" aria-label={t('eval.contentElements')}>
+                      <label className="bg-muted/30 text-muted-foreground flex items-center gap-2 rounded-sm px-2 py-2 text-sm">
+                        <Checkbox checked disabled />
+                        <span>{t('eval.contentText')}</span>
+                      </label>
+                      {([
+                        ['tables', 'contentTables'],
+                        ['figures', 'contentFigures'],
+                        ['equations', 'contentEquations']
+                      ] as const).map(([element, labelKey]) => {
+                        const selected = contentElements.includes(element)
+                        return (
+                          <label
+                            key={element}
+                            className="hover:bg-muted flex cursor-pointer items-center gap-2 rounded-sm px-2 py-2 text-sm"
+                          >
+                            <Checkbox
+                              checked={selected}
+                              onCheckedChange={(checked) =>
+                                toggleContentElement(element, checked === true)
+                              }
+                            />
+                            <span>{t(`eval.${labelKey}`)}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+              <div className="col-span-2 flex items-center gap-4 lg:col-span-4">
                 <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} />
+                  <input
+                    type="checkbox"
+                    checked={force}
+                    onChange={(event) => setForce(event.target.checked)}
+                  />
                   {t('eval.force')}
                 </label>
                 <Button size="sm" onClick={() => void create()} disabled={creating}>
@@ -244,7 +378,7 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
               {activeDatasetJobs.map((job) => (
                 <span key={job.id} className="flex items-center gap-1">
                   <Badge variant="outline" className="text-[10px]">
-                    {job.dataset_id}
+                    {job.display_name || job.dataset_id}
                   </Badge>
                   <Button
                     size="sm"
@@ -266,13 +400,15 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
             <CardContent>
               <div className="overflow-auto rounded-md border">
                 <Table className="min-w-full text-left text-sm">
-                  <TableHeader className="sticky top-0 bg-background">
+                  <TableHeader className="bg-background sticky top-0">
                     <TableRow>
-                      <TableHead className="px-3 py-2">id</TableHead>
-                      <TableHead className="px-3 py-2">{t('eval.tier')}</TableHead>
+                      <TableHead className="px-3 py-2">{t('eval.datasetName')}</TableHead>
+                      <TableHead className="px-3 py-2">{t('eval.documentScale')}</TableHead>
+                      <TableHead className="px-3 py-2">{t('eval.documentComplexity')}</TableHead>
+                      <TableHead className="px-3 py-2">{t('eval.datasetLanguage')}</TableHead>
                       <TableHead className="px-3 py-2">{t('eval.pages')}</TableHead>
-                      <TableHead className="px-3 py-2">{t('eval.modalities')}</TableHead>
-                      <TableHead className="px-3 py-2">{t('eval.files')}</TableHead>
+                      <TableHead className="px-3 py-2">{t('eval.contentElements')}</TableHead>
+                      <TableHead className="px-3 py-2">{t('eval.outputFormat')}</TableHead>
                       <TableHead className="px-3 py-2">{t('eval.updatedAt')}</TableHead>
                       <TableHead className="px-3 py-2" />
                     </TableRow>
@@ -281,20 +417,43 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
                     {datasets.map((item) => (
                       <TableRow key={item.dataset_id}>
                         <TableCell className="px-3 py-2 font-medium">
-                          {item.dataset_id}
-                          {item.profile === 'rich' ? (
-                            <Badge variant="outline" className="ml-1 text-[10px]">rich</Badge>
-                          ) : null}
+                          {displayDatasetName(item)}
                         </TableCell>
-                        <TableCell className="px-3 py-2">{item.tier}</TableCell>
+                        <TableCell className="px-3 py-2">
+                          {t(SCALE_LABELS[item.tier] ?? item.tier)}
+                        </TableCell>
+                        <TableCell className="px-3 py-2">
+                          {t(COMPLEXITY_LABELS[item.profile] ?? item.profile)}
+                        </TableCell>
+                        <TableCell className="px-3 py-2">
+                          <Badge variant="outline" className="text-[10px]">
+                            {item.language === 'zh'
+                              ? t('eval.languageChinese')
+                              : t('eval.languageEnglish')}
+                          </Badge>
+                        </TableCell>
                         <TableCell className="px-3 py-2">{item.pages}</TableCell>
                         <TableCell className="px-3 py-2">
-                          {item.files.filter((name) => name !== 'manifest.json').length}
+                          <div className="flex flex-wrap gap-1">
+                            {item.modalities.map((modality) => (
+                              <Badge key={modality} variant="outline" className="text-[10px]">
+                                {t(CONTENT_LABELS[modality] ?? modality)}
+                              </Badge>
+                            ))}
+                          </div>
                         </TableCell>
-                        <TableCell className="px-3 py-2">{item.files.length}</TableCell>
+                        <TableCell className="px-3 py-2">
+                          {item.formats
+                            .map((format) => (format === 'docx' ? t('eval.formatDocx') : 'PDF'))
+                            .join(' + ')}
+                        </TableCell>
                         <TableCell className="px-3 py-2">{item.created_at.slice(0, 19)}</TableCell>
                         <TableCell className="px-3 py-2 text-right">
-                          <Button size="sm" variant="ghost" onClick={() => void remove(item.dataset_id)}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => void remove(item.dataset_id)}
+                          >
                             <TrashIcon className="size-4" />
                           </Button>
                         </TableCell>
@@ -302,7 +461,7 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
                     ))}
                     {datasets.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-muted-foreground h-24 text-center">
+                        <TableCell colSpan={9} className="text-muted-foreground h-24 text-center">
                           {t('eval.noDatasets')}
                         </TableCell>
                       </TableRow>

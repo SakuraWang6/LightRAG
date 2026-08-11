@@ -7,17 +7,17 @@ import subprocess
 import time
 from pathlib import Path
 
-from memory_data_service.resource_guard import (
-    GenerationResourceMonitor,
-    enforce_generation_limits,
-    estimate_generation_resources,
-)
+from memory_data_service.cross_document import add_cross_document_case
 from memory_data_service.provenance import (
     annotate_question_scenarios,
     build_provenance,
     resolve_scenario_quotas,
 )
-from memory_data_service.cross_document import add_cross_document_case
+from memory_data_service.resource_guard import (
+    GenerationResourceMonitor,
+    enforce_generation_limits,
+    estimate_generation_resources,
+)
 from memory_data_service.schemas import (
     DatasetCreateRequest,
     DatasetManifest,
@@ -54,6 +54,7 @@ def generate_dataset(
                 dataset_path=dataset_path,
                 facts=facts,
                 questions=questions,
+                language=request.language,
             )
             if "docx" in request.formats
             else None
@@ -67,14 +68,19 @@ def generate_dataset(
         else:
             pdf_record = _skipped("pdf")
 
-        oracle = OraclePayload(dataset_id=dataset_id, facts=facts, questions=questions)
-        write_json(dataset_path / "facts.json", {"dataset_id": dataset_id, "facts": facts})
+        oracle = OraclePayload(
+            dataset_id=dataset_id, language=request.language, facts=facts, questions=questions
+        )
+        write_json(
+            dataset_path / "facts.json",
+            {"dataset_id": dataset_id, "language": request.language, "facts": facts},
+        )
         write_json(
             dataset_path / "questions.json",
-            {"dataset_id": dataset_id, "questions": questions},
+            {"dataset_id": dataset_id, "language": request.language, "questions": questions},
         )
-        write_json(dataset_path / "objects.json", {"dataset_id": dataset_id, "objects": []})
-        write_json(dataset_path / "relations.json", {"dataset_id": dataset_id, "relations": []})
+        write_json(dataset_path / "objects.json", {"dataset_id": dataset_id, "language": request.language, "objects": []})
+        write_json(dataset_path / "relations.json", {"dataset_id": dataset_id, "language": request.language, "relations": []})
         write_json(dataset_path / "oracle.json", oracle)
     files: list[GeneratedFile] = [
         _file_record(docx_path, "docx", role="source_document")
@@ -104,9 +110,11 @@ def generate_dataset(
         tier=request.tier,
         pages=pages,
         profile=request.profile,
+        language=request.language,
         formats=request.formats,
         modalities=request.modalities,
         title=request.title,
+        display_name=request.display_name,
         split=request.split,
         scenario_quotas=scenario_quotas,
         scenario_counts=scenario_counts,

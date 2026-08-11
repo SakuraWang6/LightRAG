@@ -72,6 +72,7 @@ WIDE_CONTEXT_ARMS = {
 
 _CONDITION_LABELS = {
     "dataset": "数据集",
+    "dataset_name": "数据集名称",
     "pages": "文档页数",
     "tier": "规模档",
     "profile": "生成档案",
@@ -88,9 +89,6 @@ _CONDITION_LABELS = {
     "temperature": "温度",
     "kg": "KG",
     "vlm": "VLM 抽取",
-    "rag_api_url": "RAG API",
-    "ollama_url": "Ollama",
-    "storage_dir": "存储目录",
     "embedding_model": "Embedding",
     "methods": "方法数",
 }
@@ -157,9 +155,11 @@ def _dataset_meta(dataset: Path) -> dict[str, Any]:
         return {}
     return {
         "dataset": str(payload.get("dataset_id") or dataset.name),
+        "dataset_name": payload.get("display_name"),
         "pages": payload.get("pages"),
         "tier": payload.get("tier"),
         "profile": payload.get("profile"),
+        "language": payload.get("language"),
         "formats": payload.get("formats"),
         "title": payload.get("title"),
     }
@@ -331,8 +331,10 @@ def build_execution_manifest(
             "pages": manifest.get("pages") if manifest else None,
             "tier": manifest.get("tier") if manifest else None,
             "profile": manifest.get("profile") if manifest else None,
+            "language": manifest.get("language") if manifest else None,
             "formats": manifest.get("formats") if manifest else None,
             "title": manifest.get("title") if manifest else None,
+            "display_name": manifest.get("display_name") if manifest else None,
         },
         "evaluation": {"id": evaluation_id, "type": evaluation_type},
         "code": {"git_commit": _git_commit(), "framework_version": framework_version},
@@ -609,7 +611,14 @@ def build_failure(
     }
 
 
-def capture_environment(**overrides: Any) -> dict[str, Any]:
+def capture_environment(
+    *, api_key: str | None = None, access_token: str | None = None
+) -> dict[str, Any]:
+    """Capture the server configuration inherited by an isolated run.
+
+    The execution unit owns its temporary API endpoint and storage directory,
+    so neither is a caller-configurable environment property.
+    """
     try:
         from lightrag._version import __api_version__ as api_version
         from lightrag._version import __version__ as core_version
@@ -618,8 +627,6 @@ def capture_environment(**overrides: Any) -> dict[str, Any]:
     env: dict[str, Any] = {
         "lightrag_version": core_version,
         "api_version": api_version,
-        "rag_api_url": os.getenv("RAG_API_URL", "http://127.0.0.1:9621"),
-        "ollama_url": os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
         "api_key": os.getenv("LIGHTRAG_API_KEY"),
         "access_token": os.getenv("LIGHTRAG_ACCESS_TOKEN"),
         "llm_binding": os.getenv("LLM_BINDING", "ollama"),
@@ -629,9 +636,11 @@ def capture_environment(**overrides: Any) -> dict[str, Any]:
         "vlm_model": os.getenv("VLM_LLM_MODEL", "gemma3:4b"),
         "vlm_process_enable": os.getenv("VLM_PROCESS_ENABLE", "false").lower()
         in {"1", "true", "yes"},
-        "storage_dir": os.getenv("WORKING_DIR", ""),
     }
-    env.update({k: v for k, v in overrides.items() if v is not None})
+    if api_key is not None:
+        env["api_key"] = api_key
+    if access_token is not None:
+        env["access_token"] = access_token
     return env
 
 
@@ -644,16 +653,17 @@ def build_conditions(
     merged: dict[str, Any] = {}
     merged.update(dataset_meta)
     merged.update(baseline)
-    merged.update(
-        {
-            key: environment[key]
-            for key in ("rag_api_url", "ollama_url", "storage_dir", "embedding_model")
-            if environment.get(key)
-        }
-    )
+    # The immutable internal identifier remains in the run envelope, but a
+    # reviewer only needs to see it when no business-facing dataset name was
+    # captured (old runs).
+    if merged.get("dataset_name"):
+        merged.pop("dataset", None)
+    if environment.get("embedding_model"):
+        merged["embedding_model"] = environment["embedding_model"]
     if method_count is not None:
         merged["methods"] = method_count
     order = [
+        "dataset_name",
         "dataset",
         "pages",
         "tier",
@@ -672,9 +682,6 @@ def build_conditions(
         "vlm_model",
         "vlm",
         "methods",
-        "rag_api_url",
-        "ollama_url",
-        "storage_dir",
         "embedding_model",
     ]
     result = []
@@ -726,11 +733,11 @@ def write_envelope(
     else:
         runtime_snapshot = context.runtime_snapshot or existing_snapshot or {}
     if not runtime_snapshot:
-        runtime_snapshot = capture_runtime_snapshot(
-            rag_api_url=context.environment.get("rag_api_url"),
-            api_key=context.environment.get("api_key"),
-            access_token=context.environment.get("access_token"),
-        )
+        runtime_snapshot = {
+            "snapshot_version": "1.0",
+            "status": "unavailable",
+            "reason": "isolated execution unit has not started yet",
+        }
     declared_model, effective_model, configuration_mismatch = _model_identity(
         baseline=context.baseline,
         runtime_snapshot=runtime_snapshot,

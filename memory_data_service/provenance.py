@@ -75,9 +75,11 @@ def build_provenance(
         "tier": request.tier,
         "pages": pages,
         "profile": request.profile,
+        "language": request.language,
         "formats": list(request.formats),
         "modalities": list(request.modalities),
         "title": request.title,
+        "display_name": request.display_name,
         "split": request.split,
         "scenario_quotas": dict(sorted(request.scenario_quotas.items())),
     }

@@ -51,9 +51,16 @@ except ImportError:
 
 
 class DatasetCreateJobRequest(BaseModel):
-    dataset_id: str
+    dataset_id: str | None = None
+    # ``title`` is kept as a short-lived compatibility alias for WebUI bundles
+    # that may still be cached in a browser during an API upgrade.  New clients
+    # must use ``display_name``: it is the user-facing dataset name, rather than
+    # a source document title.
+    display_name: str | None = Field(default=None, min_length=1, max_length=200)
+    title: str | None = Field(default=None, min_length=1, max_length=200)
     tier: str = "smoke"
     profile: str = "rich"
+    language: Literal["en", "zh"] = "en"
     pages: int | None = None
     formats: list[str] = Field(default_factory=lambda: ["docx"])
     modalities: list[str] = Field(
@@ -489,8 +496,6 @@ def _build_run_params(
         num_predict=num_predict,
         max_total_tokens=max_total_tokens,
         temperature=temperature,
-        ollama_url=env.get("OLLAMA_URL", "http://127.0.0.1:11434"),
-        rag_api_url=env.get("RAG_API_URL", "http://127.0.0.1:9621"),
         api_key=env.get("LIGHTRAG_API_KEY"),
         access_token=env.get("LIGHTRAG_ACCESS_TOKEN"),
         runs_root=runs_root,
@@ -824,14 +829,22 @@ def create_eval_routes(
                     detail="dataset_create is required for dataset jobs",
                 )
             create = request.dataset_create
+            display_name = (create.display_name or create.title or "").strip()
+            if not display_name:
+                raise HTTPException(
+                    status_code=400,
+                    detail="dataset_create.display_name is required",
+                )
             pages = create.pages or TIER_PAGE_DEFAULTS.get(create.tier, 12)
             try:
                 job = eval_jobs.start_dataset_job(
                     runs_root=root,
                     datasets_root=datasets,
                     dataset_id=create.dataset_id,
+                    display_name=display_name,
                     tier=create.tier,
                     profile=create.profile,
+                    language=create.language,
                     pages=pages,
                     formats=create.formats,
                     modalities=create.modalities,

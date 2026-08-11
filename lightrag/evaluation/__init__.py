@@ -1,7 +1,10 @@
 """
-LightRAG Evaluation Module
+Standalone RAGAS compatibility module.
 
-RAGAS-based evaluation framework for assessing RAG system quality.
+This is not the product evaluation workflow exposed by the WebUI and API.
+That workflow lives in ``memory_eval_tests``.  The RAGAS entry point remains
+available for existing standalone users while it is kept as a separate,
+compatibility-focused interface.
 
 Usage:
     from lightrag.evaluation import RAGEvaluator

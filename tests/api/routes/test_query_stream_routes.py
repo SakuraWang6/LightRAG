@@ -114,10 +114,11 @@ class TestQueryRouteJsonOnly:
             async def aquery_llm(self, *_args, **_kwargs):
                 return {
                     "llm_response": {"content": "answer", "is_streaming": False},
-                    "data": {
-                        "references": [],
-                        "evaluation_trace": {"status": "observed", "final_context": "controlled"},
-                    },
+                    "data": {"references": []},
+                    # ``LightRAG.aquery_llm`` returns raw retrieval data in
+                    # ``data`` but attaches the controlled trace at the result
+                    # top level. Keep this mock faithful to that real contract.
+                    "evaluation_trace": {"status": "observed", "final_context": "controlled"},
                 }
 
         app = FastAPI()

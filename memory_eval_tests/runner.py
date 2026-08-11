@@ -6,9 +6,9 @@ The evaluation itself is run as a child process so the supervisor can:
   isolated execution unit;
 * optionally detect a hidden interpreter hang via the child's ``.heartbeat``
   liveness file (``--supervision heartbeat``).  Hang detection is OFF by
-  default: LLM stalls are already bounded by the chat-layer hard timeout, so
-  crash-restart is the default capability and hang-kill is an explicit
-  advanced option;
+  default: legitimate LLM and ingestion work can take minutes without emitting
+  runner activity, so crash-restart is the default capability and hang-kill is
+  an explicit advanced option;
 * give up after ``--max-restarts`` failures so a broken run does not loop
   forever.
 
@@ -188,12 +188,9 @@ class RunParams:
     num_predict: int | None = None
     max_total_tokens: int | None = None
     temperature: float | None = None
-    ollama_url: str = "http://127.0.0.1:11434"
-    rag_api_url: str = "http://127.0.0.1:9621"
     api_key: str | None = None
     access_token: str | None = None
     runs_root: Path | None = None
-    storage_dir: Path | None = None
     engine: str | None = None
     max_cases: int = 0
     skip_kg: bool = False
@@ -218,12 +215,9 @@ def params_from_args(args: argparse.Namespace) -> RunParams:
         num_predict=args.num_predict,
         max_total_tokens=args.max_total_tokens,
         temperature=args.temperature,
-        ollama_url=args.ollama_url,
-        rag_api_url=args.rag_api_url,
         api_key=args.api_key,
         access_token=args.access_token,
         runs_root=args.runs_root,
-        storage_dir=args.storage_dir,
         engine=args.engine,
         max_cases=args.max_cases,
         skip_kg=args.skip_kg,
@@ -251,9 +245,6 @@ def build_run_command(params: RunParams) -> list[str]:
         "num_predict",
         "max_total_tokens",
         "temperature",
-        "ollama_url",
-        "rag_api_url",
-        "storage_dir",
         "engine",
         "max_cases",
     ):
@@ -327,9 +318,6 @@ def build_supervise_command(
         "num_predict",
         "max_total_tokens",
         "temperature",
-        "ollama_url",
-        "rag_api_url",
-        "storage_dir",
         "engine",
         "max_cases",
     ):
@@ -365,8 +353,6 @@ def _child_env(args: argparse.Namespace) -> dict[str, str]:
                 env[key] = os.environ[key]
     env["NO_PROXY"] = "127.0.0.1,localhost"
     env["no_proxy"] = "127.0.0.1,localhost"
-    if args.storage_dir is not None:
-        env["WORKING_DIR"] = str(args.storage_dir)
     return env
 
 
@@ -454,8 +440,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--num-predict", type=int, default=None)
     parser.add_argument("--max-total-tokens", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=None)
-    parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
-    parser.add_argument("--rag-api-url", default="http://127.0.0.1:9621")
     parser.add_argument(
         "--api-key", default=None, help="X-API-Key for the LightRAG API."
     )
@@ -471,7 +455,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Keep http(s)/all proxy env vars for the child (needed by "
         "evaluations that call external APIs).",
     )
-    parser.add_argument("--storage-dir", type=Path, default=None)
     parser.add_argument("--engine", default=None)
     parser.add_argument("--max-cases", type=int, default=0)
     parser.add_argument("--skip-kg", action="store_true")

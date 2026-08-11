@@ -6,14 +6,17 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-DATASET_SCHEMA_VERSION = "1.2"
-_SUPPORTED_SCHEMA_VERSIONS = frozenset({"1.0", "1.1", DATASET_SCHEMA_VERSION})
+DATASET_SCHEMA_VERSION = "1.4"
+_SUPPORTED_SCHEMA_VERSIONS = frozenset({"1.0", "1.1", "1.2", "1.3", DATASET_SCHEMA_VERSION})
+
+DEFAULT_SYNTHETIC_DOCUMENT_TITLE = "LightRAG Synthetic Rich Memory Document"
 
 
 TierName = Literal["smoke", "medium", "large", "stress"]
 DocumentFormat = Literal["docx", "pdf"]
 ModalityName = Literal["text", "tables", "figures", "equations"]
 ProfileName = Literal["basic", "rich"]
+DatasetLanguage = Literal["en", "zh"]
 DatasetSplit = Literal["tuning", "validation"]
 ScenarioName = Literal[
     "single_hop",
@@ -73,13 +76,15 @@ class DatasetCreateRequest(BaseModel):
     pages: int | None = Field(default=None, ge=1)
     allow_oversized_generation: bool = False
     profile: ProfileName = "rich"
+    language: DatasetLanguage = "en"
     formats: list[DocumentFormat] = Field(default_factory=lambda: ["docx"])
     modalities: list[ModalityName] = Field(
         default_factory=lambda: ["text", "tables", "figures", "equations"]
     )
     dataset_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_.-]+$")
     seed: int = 13
-    title: str = "LightRAG Synthetic Rich Memory Document"
+    display_name: str = Field(default="", max_length=200)
+    title: str = DEFAULT_SYNTHETIC_DOCUMENT_TITLE
     split: DatasetSplit = "validation"
     scenario_quotas: dict[ScenarioName, int] = Field(default_factory=dict)
 
@@ -173,9 +178,11 @@ class DatasetManifest(BaseModel):
     tier: TierName
     pages: int
     profile: ProfileName = "basic"
+    language: DatasetLanguage = "en"
     formats: list[DocumentFormat]
     modalities: list[ModalityName]
     title: str
+    display_name: str = ""
     split: DatasetSplit = "validation"
     scenario_quotas: dict[ScenarioName, int] = Field(default_factory=dict)
     scenario_counts: dict[ScenarioName, int] = Field(default_factory=dict)
@@ -197,6 +204,7 @@ class DatasetManifest(BaseModel):
 class OraclePayload(BaseModel):
     schema_version: str = DATASET_SCHEMA_VERSION
     dataset_id: str
+    language: DatasetLanguage = "en"
     facts: list[FactRecord]
     questions: list[QuestionRecord]
     objects: list[DocumentObject] = Field(default_factory=list)
@@ -205,9 +213,14 @@ class OraclePayload(BaseModel):
 
 class DatasetSummary(BaseModel):
     dataset_id: str
+    display_name: str = ""
+    title: str
     tier: str
     profile: str = "basic"
+    language: DatasetLanguage = "en"
     pages: int
+    formats: list[DocumentFormat] = Field(default_factory=lambda: ["docx"])
+    modalities: list[ModalityName] = Field(default_factory=lambda: ["text"])
     path: str
     created_at: str
     files: list[str]

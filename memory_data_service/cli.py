@@ -23,6 +23,7 @@ def generate(
         str, typer.Option(help="smoke, medium, large, or stress")
     ] = "smoke",
     profile: Annotated[str, typer.Option(help="basic or rich")] = "rich",
+    language: Annotated[str, typer.Option(help="Dataset language: en or zh")] = "en",
     formats: Annotated[
         str, typer.Option(help="Comma-separated formats: docx,pdf")
     ] = "docx",
@@ -34,6 +35,12 @@ def generate(
     dataset_id: Annotated[
         str | None, typer.Option(help="Optional stable dataset id")
     ] = None,
+    title: Annotated[
+        str, typer.Option(help="User-facing document title")
+    ] = "LightRAG Synthetic Rich Memory Document",
+    display_name: Annotated[
+        str, typer.Option(help="User-facing dataset name")
+    ] = "",
     allow_oversized_generation: Annotated[
         bool,
         typer.Option(
@@ -51,10 +58,13 @@ def generate(
     request = DatasetCreateRequest(
         tier=tier,  # type: ignore[arg-type]
         profile=profile,  # type: ignore[arg-type]
+        language=language,  # type: ignore[arg-type]
         pages=pages,
         formats=[f.strip() for f in formats.split(",") if f.strip()],  # type: ignore[list-item]
         modalities=[m.strip() for m in modalities.split(",") if m.strip()],  # type: ignore[list-item]
         dataset_id=dataset_id,
+        title=title,
+        display_name=display_name,
         allow_oversized_generation=allow_oversized_generation,
     )
     try:
@@ -74,16 +84,20 @@ def list_command(
 ) -> None:
     table = Table(title="Generated datasets")
     table.add_column("dataset_id")
+    table.add_column("display_name")
     table.add_column("tier")
     table.add_column("profile")
+    table.add_column("language")
     table.add_column("pages", justify="right")
     table.add_column("files")
     table.add_column("path")
     for summary in list_datasets(output_root):
         table.add_row(
             summary.dataset_id,
+            summary.display_name or summary.title,
             summary.tier,
             summary.profile,
+            summary.language,
             str(summary.pages),
             ", ".join(summary.files),
             summary.path,

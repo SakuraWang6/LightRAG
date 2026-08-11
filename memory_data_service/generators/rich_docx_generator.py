@@ -15,22 +15,22 @@ from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
 from docx.shared import Inches
 
+from memory_data_service.cross_document import add_cross_document_case
 from memory_data_service.generators.docx_generator import (
     _convert_pdf,
     _file_record,
     _skipped,
-)
-from memory_data_service.resource_guard import (
-    GenerationResourceMonitor,
-    enforce_generation_limits,
-    estimate_generation_resources,
 )
 from memory_data_service.provenance import (
     annotate_question_scenarios,
     build_provenance,
     resolve_scenario_quotas,
 )
-from memory_data_service.cross_document import add_cross_document_case
+from memory_data_service.resource_guard import (
+    GenerationResourceMonitor,
+    enforce_generation_limits,
+    estimate_generation_resources,
+)
 from memory_data_service.schemas import (
     DatasetCreateRequest,
     DatasetManifest,
@@ -62,6 +62,8 @@ class RichDocxBuilder:
         self.object_counter = 1
         self.relation_counter = 1
         self.bookmark_counter = 1
+        self.last_delivery_fact = ""
+        self.last_risk_fact = ""
 
     def build(self, docx_path: Path, pages: int) -> None:
         from docx import Document
@@ -84,6 +86,7 @@ class RichDocxBuilder:
         self._cover(doc)
         self._toc(doc, pages)
         self._executive_summary(doc, root_id)
+        self._add_program_dossier(doc, root_id)
         self._add_note_references(doc, root_id)
         self._add_complex_layout_controls(doc, root_id)
 
@@ -137,6 +140,7 @@ class RichDocxBuilder:
 
             self._add_distractor_paragraph(doc, page, section_path, section_id, text_fact_id)
             self._add_numbered_controls(doc, page, section_path, section_id)
+            self._add_operational_dependency(doc, page, section_path, section_id)
 
             if page % 7 == 0:
                 self._add_version_fact(doc, page, section_path, section_id)
@@ -219,11 +223,12 @@ class RichDocxBuilder:
 
     def _cover(self, doc) -> None:
         doc.add_heading(self.request.title, 0)
-        doc.add_paragraph("Document class: controlled synthetic technical white paper.")
+        doc.add_paragraph("Document class: controlled operational decision dossier.")
         doc.add_paragraph(f"Dataset id: {self.dataset_id}")
         doc.add_paragraph(
-            "This document intentionally mixes authoritative facts, distractors, captions, "
-            "references, tables, figures, equations, glossary entries, and appendix material."
+            "The Northstar Knowledge Operations programme is preparing a phased customer-support "
+            "release. This dossier records business outcomes, accountable owners, quality gates, "
+            "risk controls, and the technical evidence required for each decision."
         )
 
     def _toc(self, doc, pages: int) -> None:
@@ -259,10 +264,12 @@ class RichDocxBuilder:
         doc.add_page_break()
         doc.add_heading("Executive Summary", level=1)
         paragraph = (
-            "The benchmark evaluates whether a retrieval system can preserve document-level "
-            "memory across narrative text, structured tables, visual captions, formulas, "
-            "and cross references. Gold facts are marked by stable FACT identifiers, while "
-            "nearby distractors intentionally share similar vocabulary and numeric ranges."
+            "Northstar must reduce repeat customer contacts without allowing unreviewed policy "
+            "or privacy-sensitive guidance into production. Each release therefore connects a "
+            "business owner, a data steward, a security approver, measurable quality gates, "
+            "and a rollback decision. The benchmark evaluates whether a retrieval system can "
+            "preserve these dependencies across narrative text, tables, visual captions, "
+            "formulas, references, and deliberately plausible drafts."
         )
         doc.add_paragraph(paragraph)
         paragraph_id = self._add_object(
@@ -274,6 +281,118 @@ class RichDocxBuilder:
             labels=["summary"],
         )
         self._add_relation(root_id, paragraph_id, "contains")
+
+    def _add_program_dossier(self, doc, root_id: str) -> None:
+        doc.add_heading("Programme Governance and Decision Rights", level=1)
+        text = (
+            "FACT-GOV-00001: In the Northstar programme, Maya Chen owns business acceptance, "
+            "Darius Holt owns source-data approval, and Priya Shah owns security sign-off. "
+            "A release may enter production only when the quality gate, source approval, "
+            "security sign-off, and rollback plan are all complete."
+        )
+        doc.add_paragraph(text)
+        object_id = self._add_object(
+            "paragraph",
+            title="FACT-GOV-00001",
+            text=text,
+            section="Programme Governance and Decision Rights",
+            page_start=1,
+            parent_id=root_id,
+            labels=["programme_context", "governance", "gold_fact"],
+        )
+        self._add_relation(root_id, object_id, "contains")
+        self._add_fact(
+            fact_id="FACT-GOV-00001",
+            fact_type="governance_owner",
+            answer="Maya Chen: business acceptance; Darius Holt: source-data approval; Priya Shah: security sign-off",
+            expected_text=text,
+            section="Programme Governance and Decision Rights",
+            page=1,
+            object_type="text",
+            object_id_hint=object_id,
+        )
+        self._add_question(
+            id="Q-FACT-GOV-00001",
+            question="Who owns business acceptance, source-data approval, and security sign-off in Northstar?",
+            answer="Maya Chen: business acceptance; Darius Holt: source-data approval; Priya Shah: security sign-off",
+            question_type="multi_hop",
+            evidence_fact_ids=["FACT-GOV-00001"],
+        )
+        self._add_relation(object_id, "FACT-GOV-00001", "supports", evidence_text=text)
+
+    def _add_operational_dependency(self, doc, page: int, section: str, section_id: str) -> None:
+        """Create interdependent delivery and risk evidence across nearby pages."""
+        if page % 4 == 1:
+            fact_id = self._next_fact_id()
+            milestone = f"NS-GATE-{page:02d}"
+            text = (
+                f"{fact_id}: Delivery commitment for Retrieval Cell {page:04d}: "
+                f"{milestone} is the business-acceptance gate owned by Maya Chen. "
+                "Materials that miss this gate may remain in controlled preview but cannot be released."
+            )
+            doc.add_paragraph(text)
+            object_id = self._add_object(
+                "paragraph",
+                title=fact_id,
+                text=text,
+                section=section,
+                page_start=page,
+                parent_id=section_id,
+                labels=["delivery_milestone", "gold_fact"],
+            )
+            self._add_relation(section_id, object_id, "contains")
+            self._add_fact(
+                fact_id=fact_id,
+                fact_type="delivery_milestone",
+                answer=milestone,
+                expected_text=text,
+                section=section,
+                page=page,
+                object_type="text",
+                object_id_hint=object_id,
+            )
+            self.last_delivery_fact = fact_id
+        elif page % 4 == 3:
+            fact_id = self._next_fact_id()
+            control = "Darius Holt source approval and Priya Shah security sign-off"
+            text = (
+                f"{fact_id}: Release constraint for Retrieval Cell {page:04d}: whenever the "
+                f"change touches refunds or personal data, {control} are required after the "
+                "business gate and before production deployment."
+            )
+            doc.add_paragraph(text)
+            object_id = self._add_object(
+                "paragraph",
+                title=fact_id,
+                text=text,
+                section=section,
+                page_start=page,
+                parent_id=section_id,
+                labels=["release_constraint", "gold_fact"],
+            )
+            self._add_relation(section_id, object_id, "contains")
+            self._add_fact(
+                fact_id=fact_id,
+                fact_type="release_constraint",
+                answer=control,
+                expected_text=text,
+                section=section,
+                page=page,
+                object_type="text",
+                object_id_hint=object_id,
+            )
+            self.last_risk_fact = fact_id
+        elif page % 4 == 0 and self.last_delivery_fact and self.last_risk_fact:
+            self._add_multihop_question(
+                page=page,
+                question_id=f"Q-RELEASE-GATE-{page:04d}",
+                fact_ids=[self.last_delivery_fact, self.last_risk_fact],
+                question=(
+                    "After the most recent business-acceptance gate is met, what additional "
+                    "approvals are required before a refund or personal-data change can enter production?"
+                ),
+                answer="Darius Holt source approval and Priya Shah security sign-off",
+            )
 
     def _add_note_references(self, doc, root_id: str) -> None:
         footnote_text = (
@@ -1405,6 +1524,7 @@ def generate_rich_dataset(
                 dataset_path=dataset_path,
                 facts=builder.facts,
                 questions=builder.questions,
+                language=request.language,
             )
             if "docx" in request.formats
             else None
@@ -1420,23 +1540,24 @@ def generate_rich_dataset(
 
         oracle = OraclePayload(
             dataset_id=dataset_id,
+            language=request.language,
             facts=builder.facts,
             questions=builder.questions,
             objects=builder.objects,
             relations=builder.relations,
         )
-        write_json(dataset_path / "facts.json", {"dataset_id": dataset_id, "facts": builder.facts})
+        write_json(dataset_path / "facts.json", {"dataset_id": dataset_id, "language": request.language, "facts": builder.facts})
         write_json(
             dataset_path / "questions.json",
-            {"dataset_id": dataset_id, "questions": builder.questions},
+            {"dataset_id": dataset_id, "language": request.language, "questions": builder.questions},
         )
         write_json(
             dataset_path / "objects.json",
-            {"dataset_id": dataset_id, "objects": builder.objects},
+            {"dataset_id": dataset_id, "language": request.language, "objects": builder.objects},
         )
         write_json(
             dataset_path / "relations.json",
-            {"dataset_id": dataset_id, "relations": builder.relations},
+            {"dataset_id": dataset_id, "language": request.language, "relations": builder.relations},
         )
         write_json(dataset_path / "oracle.json", oracle)
     files: list[GeneratedFile] = [
@@ -1456,7 +1577,7 @@ def generate_rich_dataset(
         request=request,
         pages=pages,
         generator="rich_docx_generator",
-        template_version="rich-docx-v1",
+        template_version="rich-docx-v2",
         source_file=Path(__file__),
     )
     manifest = DatasetManifest(
@@ -1464,9 +1585,11 @@ def generate_rich_dataset(
         tier=request.tier,
         pages=pages,
         profile=request.profile,
+        language=request.language,
         formats=request.formats,
         modalities=request.modalities,
         title=request.title,
+        display_name=request.display_name,
         split=request.split,
         scenario_quotas=scenario_quotas,
         scenario_counts=scenario_counts,

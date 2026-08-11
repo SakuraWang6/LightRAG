@@ -60,9 +60,14 @@ def list_datasets(root: Path = DEFAULT_GENERATED_ROOT) -> list[DatasetSummary]:
         summaries.append(
             DatasetSummary(
                 dataset_id=manifest.dataset_id,
+                display_name=manifest.display_name,
+                title=manifest.title,
                 tier=manifest.tier,
                 profile=manifest.profile,
+                language=manifest.language,
                 pages=manifest.pages,
+                formats=manifest.formats,
+                modalities=manifest.modalities,
                 path=str(dataset_path),
                 created_at=manifest.created_at,
                 files=[f.name for f in manifest.files],

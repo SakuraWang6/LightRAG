@@ -39,9 +39,9 @@ import JobsView from '@/features/eval/JobsView'
 import {
   buildReproduceDraft,
   compareCompatible,
+  evalStatusLabel,
   formatDate,
   statusBadgeClass,
-  statusLabel
 } from '@/features/eval/utils'
 
 type SimpleEvalDraft = {
@@ -148,7 +148,7 @@ export default function EvalConsole() {
     return runs.filter((run) => {
       if (datasetFilter !== 'all' && run.dataset !== datasetFilter) return false
       if (needle) {
-        const haystack = `${run.label} ${run.dataset ?? ''} ${run.artifact_titles.join(' ')}`.toLowerCase()
+        const haystack = `${run.label} ${run.dataset_display_name ?? ''} ${run.dataset ?? ''} ${run.artifact_titles.join(' ')}`.toLowerCase()
         if (!haystack.includes(needle)) return false
       }
       return true
@@ -156,11 +156,13 @@ export default function EvalConsole() {
   }, [runs, datasetFilter, search])
 
   const datasetOptions = useMemo(() => {
-    const values = new Set<string>()
+    const values = new Map<string, string>()
     for (const run of runs ?? []) {
-      if (run.dataset) values.add(run.dataset)
+      if (run.dataset) values.set(run.dataset, run.dataset_display_name ?? run.dataset)
     }
-    return Array.from(values).sort()
+    return Array.from(values, ([id, label]) => ({ id, label })).sort((left, right) =>
+      left.label.localeCompare(right.label)
+    )
   }, [runs])
 
   const hasActiveRuns = useMemo(
@@ -276,11 +278,11 @@ export default function EvalConsole() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
-        <h1 className="mr-2 text-base font-semibold">LightRAG 测评</h1>
+        <h1 className="mr-2 text-base font-semibold">{t('eval.title')}</h1>
         <div className="ml-auto flex items-center gap-2">
           <Button size="sm" onClick={() => { setSimpleDraft(null); setView('new') }}>
             <PlusIcon className="mr-1 size-4" />
-            新建测评
+            {t('eval.newRun')}
           </Button>
           <Button size="sm" variant="outline" onClick={() => setView('datasets')}>
             <FolderOpenIcon className="mr-1 size-4" />
@@ -302,7 +304,7 @@ export default function EvalConsole() {
           )}
           <Button size="sm" variant="outline" onClick={() => void handleRefresh()} disabled={refreshing}>
             <RefreshCwIcon className={`mr-1 size-4 ${refreshing ? 'animate-spin' : ''}`} />
-            刷新列表
+            {t('eval.refresh')}
           </Button>
         </div>
       </div>
@@ -327,8 +329,8 @@ export default function EvalConsole() {
                 <SelectContent>
                   <SelectItem value="all">{t('eval.datasetAll')}</SelectItem>
                   {datasetOptions.map((dataset) => (
-                    <SelectItem key={dataset} value={dataset}>
-                      {dataset}
+                    <SelectItem key={dataset.id} value={dataset.id}>
+                      {dataset.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -387,10 +389,10 @@ export default function EvalConsole() {
                           ) : null}
                         </div>
                         <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-1 text-[11px]">
-                          {run.dataset ? <span className="truncate">{run.dataset}</span> : null}
+                          {run.dataset ? <span className="truncate">{run.dataset_display_name ?? run.dataset}</span> : null}
                           {run.status ? (
                             <Badge variant="outline" className={`text-[10px] ${statusBadgeClass(run.status)}`}>
-                              {t(statusLabel(run))}
+                              {t(evalStatusLabel(run.status))}
                             </Badge>
                           ) : null}
                           <span>{formatDate(run.updated_at)}</span>

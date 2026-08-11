@@ -1,4 +1,8 @@
-# 📊 RAGAS-based Evaluation Framework
+# 📊 Standalone RAGAS Evaluation Framework
+
+> This is a standalone compatibility workflow, not the current LightRAG
+> product evaluation path. The WebUI/API evaluation workflow is documented in
+> [`memory_eval_tests/README.md`](../../memory_eval_tests/README.md).
 
 ## What is RAGAS?
 

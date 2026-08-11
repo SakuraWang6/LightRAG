@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import random
-from collections import Counter
 from typing import Any
 
 
@@ -27,45 +26,3 @@ def build_review_queue(
         }
         for row in selected
     ]
-
-
-def review_agreement(records: list[dict[str, Any]]) -> dict[str, Any]:
-    """Report agreement without treating either side as infallible ground truth."""
-    comparable = [
-        row
-        for row in records
-        if row.get("automatic_verdict") in {"pass", "fail", "uncertain"}
-        and row.get("review_verdict") in {"pass", "fail", "uncertain"}
-    ]
-    matrix = Counter(
-        (str(row["automatic_verdict"]), str(row["review_verdict"]))
-        for row in comparable
-    )
-    disagreements = [row for row in comparable if row["automatic_verdict"] != row["review_verdict"]]
-    return {
-        "sample_count": len(comparable),
-        "agreement_rate": (
-            (len(comparable) - len(disagreements)) / len(comparable)
-            if comparable
-            else None
-        ),
-        "confusion": {
-            f"automatic_{automatic}__review_{review}": count
-            for (automatic, review), count in sorted(matrix.items())
-        },
-        "error_direction": {
-            "automatic_false_positive": sum(
-                row["automatic_verdict"] == "pass" and row["review_verdict"] == "fail"
-                for row in disagreements
-            ),
-            "automatic_false_negative": sum(
-                row["automatic_verdict"] == "fail" and row["review_verdict"] == "pass"
-                for row in disagreements
-            ),
-            "uncertain_disagreement": sum(
-                "uncertain" in {row["automatic_verdict"], row["review_verdict"]}
-                for row in disagreements
-            ),
-        },
-        "disagreement_count": len(disagreements),
-    }

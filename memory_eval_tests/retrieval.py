@@ -1,12 +1,7 @@
 from __future__ import annotations
 
-import json
-import math
-import re
-from pathlib import Path
 from typing import Any, Callable
 
-from memory_data_service.schemas import OraclePayload
 from memory_eval_tests.dataset import DatasetClient
 from memory_eval_tests.evidence import normalize_evidence
 from memory_eval_tests.http import post_json as _http_post_json
@@ -152,116 +147,6 @@ def evaluate_api(
     return report
 
 
-def evaluate_sidecar(
-    *,
-    dataset_source: str,
-    parsed_dir: Path,
-    mode: str = "sidecar",
-    top_k: int = 10,
-    max_cases: int | None = None,
-) -> dict[str, Any]:
-    oracle = OraclePayload.model_validate(DatasetClient(dataset_source).oracle())
-    facts_by_id = {fact.fact_id: fact for fact in oracle.facts}
-    contexts = _load_sidecar_contexts(parsed_dir)
-    results: list[dict[str, Any]] = []
-
-    questions = sample_evenly(list(oracle.questions), max_cases)
-    questions = [
-        question for question in questions if question.expected_behavior != "abstain"
-    ]
-    for question in questions:
-        ranked = _rank_contexts(question.question, contexts)
-        top_contexts = ranked[:top_k]
-        expected_facts = [
-            facts_by_id[fact_id]
-            for fact_id in question.evidence_fact_ids
-            if fact_id in facts_by_id
-        ]
-        hits_by_fact: dict[str, int] = {}
-        hit_evidence: dict[str, dict[str, Any]] = {}
-        object_hits: set[str] = set()
-        hit_context_count = 0
-        for rank, context in enumerate(top_contexts, start=1):
-            context_hit = False
-            for fact in expected_facts:
-                if _context_contains_fact(context, fact):
-                    if fact.fact_id not in hits_by_fact:
-                        hits_by_fact[fact.fact_id] = rank
-                        hit_evidence[fact.fact_id] = {
-                            "fact_id": fact.fact_id,
-                            "rank": rank,
-                            "kind": context["kind"],
-                            "id": context["id"],
-                            "text": str(context.get("content", ""))[
-                                :_HIT_EVIDENCE_CHARS
-                            ],
-                        }
-                    context_hit = True
-                    if context["kind"] == fact.object_type or (
-                        fact.object_type == "figure" and context["kind"] == "drawing"
-                    ):
-                        object_hits.add(fact.fact_id)
-            if context_hit:
-                hit_context_count += 1
-
-        expected_count = len(expected_facts)
-        recall = len(hits_by_fact) / expected_count if expected_count else 0.0
-        first_rank = min(hits_by_fact.values()) if hits_by_fact else 0
-        object_expected = [
-            fact
-            for fact in expected_facts
-            if fact.object_type in {"table", "figure", "equation"}
-        ]
-        results.append(
-            {
-                "question_id": question.id,
-                "question_type": question.question_type,
-                "recall_at_k": recall,
-                "reciprocal_rank": 1 / first_rank if first_rank else 0.0,
-                "context_precision": hit_context_count / len(top_contexts)
-                if top_contexts
-                else 0.0,
-                "object_hit_rate": (
-                    len(object_hits) / len(object_expected) if object_expected else 1.0
-                ),
-                "expected_fact_ids": [fact.fact_id for fact in expected_facts],
-                "hit_fact_ids": sorted(hits_by_fact),
-                "hit_evidence": [
-                    hit_evidence[fact_id]
-                    for fact_id in sorted(
-                        hit_evidence, key=lambda item: hits_by_fact[item]
-                    )
-                ][:_HIT_EVIDENCE_LIMIT],
-                "top_contexts": [
-                    {
-                        "rank": index + 1,
-                        "kind": context["kind"],
-                        "id": context["id"],
-                        "blockid": context.get("blockid", ""),
-                        "score": context["score"],
-                    }
-                    for index, context in enumerate(top_contexts)
-                ],
-                "top_k_candidates": [
-                    {
-                        "rank": index + 1,
-                        "kind": context["kind"],
-                        "id": context["id"],
-                        "blockid": context.get("blockid", ""),
-                        "score": context["score"],
-                        "text": str(context.get("content", ""))[:_TRACE_CANDIDATE_CHARS],
-                        "truncated": len(str(context.get("content", ""))) > _TRACE_CANDIDATE_CHARS,
-                    }
-                    for index, context in enumerate(top_contexts)
-                ],
-            }
-        )
-
-    report = _summarize_dict_results(results, mode=mode, top_k=top_k, backend="sidecar")
-    report["max_cases"] = max_cases
-    return report
-
-
 def _summarize_dict_results(
     results: list[dict[str, Any]],
     *,
@@ -301,80 +186,6 @@ def _summarize_dict_results(
     }
 
 
-def _load_sidecar_contexts(parsed_dir: Path) -> list[dict[str, Any]]:
-    contexts: list[dict[str, Any]] = []
-    blocks_path = next(parsed_dir.glob("*.blocks.jsonl"), None)
-    if blocks_path is None:
-        raise FileNotFoundError(f"no *.blocks.jsonl found in {parsed_dir}")
-    for line in blocks_path.read_text(encoding="utf-8").splitlines():
-        row = json.loads(line)
-        if row.get("type") != "content":
-            continue
-        contexts.append(
-            {
-                "kind": "text",
-                "id": row.get("blockid", ""),
-                "blockid": row.get("blockid", ""),
-                "content": "\n".join(
-                    str(value)
-                    for value in (
-                        row.get("heading", ""),
-                        row.get("parent_headings", ""),
-                        row.get("content", ""),
-                    )
-                    if value
-                ),
-            }
-        )
-    for kind, root_key, suffix in (
-        ("table", "tables", ".tables.json"),
-        ("drawing", "drawings", ".drawings.json"),
-        ("equation", "equations", ".equations.json"),
-    ):
-        path = next(parsed_dir.glob(f"*{suffix}"), None)
-        if not path:
-            continue
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        for item_id, item in (payload.get(root_key) or {}).items():
-            contexts.append(
-                {
-                    "kind": kind,
-                    "id": item_id,
-                    "blockid": item.get("blockid", ""),
-                    "content": "\n".join(
-                        str(value)
-                        for value in (
-                            item_id,
-                            item.get("heading", ""),
-                            item.get("parent_headings", ""),
-                            item.get("content", ""),
-                            item.get("caption", ""),
-                        )
-                        if value
-                    ),
-                }
-            )
-    return contexts
-
-
-def _rank_contexts(query: str, contexts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    query_terms = _terms(query)
-    ranked = []
-    for context in contexts:
-        content = str(context.get("content", ""))
-        terms = _terms(content)
-        overlap = len(query_terms & terms)
-        score = overlap / math.sqrt(max(len(terms), 1))
-        if query_terms and query_terms <= terms:
-            score += 1.0
-        ranked.append({**context, "score": score})
-    return sorted(ranked, key=lambda item: item["score"], reverse=True)
-
-
-def _terms(text: str) -> set[str]:
-    return set(re.findall(r"[A-Za-z0-9_]+", text.lower()))
-
-
 def _ranked_references(response: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract the ranked reference list from a ``/query/data`` response.
 
@@ -401,17 +212,6 @@ def _ranked_references(response: dict[str, Any]) -> list[dict[str, Any]]:
             )
     return references
 
-
-def _context_contains_fact(context: dict[str, Any], fact: Any) -> bool:
-    content = str(context.get("content", ""))
-    normalized_content = normalize_evidence(content)
-    return (
-        fact.fact_id in content
-        or fact.answer in content
-        or fact.expected_text in content
-        or normalize_evidence(fact.answer) in normalized_content
-        or normalize_evidence(fact.expected_text) in normalized_content
-    )
 
 def _content_contains_fact(content: str, fact: dict[str, Any]) -> bool:
     normalized_content = normalize_evidence(content)

@@ -8,7 +8,12 @@ from memory_data_service.schemas import FactRecord, QuestionRecord
 
 
 def add_cross_document_case(
-    *, dataset_id: str, dataset_path: Path, facts: list[FactRecord], questions: list[QuestionRecord]
+    *,
+    dataset_id: str,
+    dataset_path: Path,
+    facts: list[FactRecord],
+    questions: list[QuestionRecord],
+    language: str = "en",
 ) -> Path | None:
     """Materialize a companion DOCX and a question that requires both sources."""
     if not facts:
@@ -19,22 +24,29 @@ def add_cross_document_case(
         raise RuntimeError("python-docx is required for cross-document cases") from exc
     source = facts[0]
     companion_fact_id = "FACT-CROSS-00001"
-    companion_answer = "enabled"
+    is_chinese = language == "zh"
+    companion_answer = "已启用" if is_chinese else "enabled"
     companion = dataset_path / f"{dataset_id}-companion.docx"
     document = Document()
-    document.core_properties.title = "LightRAG Synthetic Companion Evidence"
-    document.add_heading("Companion Evidence Register", 0)
-    document.add_paragraph(
-        f"{companion_fact_id}: The companion verification state is {companion_answer}."
+    document.core_properties.title = (
+        "LightRAG 合成辅助证据" if is_chinese else "LightRAG Synthetic Companion Evidence"
     )
+    section = "辅助证据登记" if is_chinese else "Companion Evidence Register"
+    expected_text = (
+        f"{companion_fact_id}：辅助文档的核验状态为{companion_answer}。"
+        if is_chinese
+        else f"{companion_fact_id}: The companion verification state is {companion_answer}."
+    )
+    document.add_heading(section, 0)
+    document.add_paragraph(expected_text)
     document.save(companion)
     facts.append(
         FactRecord(
             fact_id=companion_fact_id,
             fact_type="cross_document",
             answer=companion_answer,
-            expected_text=f"{companion_fact_id}: The companion verification state is {companion_answer}.",
-            section="Companion Evidence Register",
+            expected_text=expected_text,
+            section=section,
             page=1,
             object_type="text",
             object_id_hint="companion.docx",
@@ -44,8 +56,12 @@ def add_cross_document_case(
         QuestionRecord(
             id="Q-CROSS-DOCUMENT-00001",
             question=(
-                "Using the primary document and the companion document, what are the "
-                f"canonical value for {source.fact_id} and the companion verification state?"
+                f"结合主文档与辅助文档，{source.fact_id}的标准值和辅助文档的核验状态分别是什么？"
+                if is_chinese
+                else (
+                    "Using the primary document and the companion document, what are the "
+                    f"canonical value for {source.fact_id} and the companion verification state?"
+                )
             ),
             answer=f"{source.answer}; {companion_answer}",
             question_type="cross_document",

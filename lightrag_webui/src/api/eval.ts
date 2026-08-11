@@ -77,25 +77,18 @@ export type EvalRun = {
   restarts?: number
   last_restart_resume?: boolean | null
   label: string
-  evaluation?: string | null
   launch_params?: Record<string, unknown> | null
   dataset?: string | null
+  dataset_display_name?: string | null
   updated_at?: string | null
   started_at?: string | null
-  finished_at?: string | null
   duration_seconds?: number | null
   status?: string | null
   conditions: RunCondition[]
-  description?: string
   progress: EvalRunProgress
-  failed_checks?: string[]
   headline: Record<string, MetricItem>
   artifact_titles: string[]
-  declared_model?: unknown
-  effective_model?: unknown
-  configuration_mismatch?: boolean | null
   failure?: EvalRunFailure | null
-  events_path?: string | null
 }
 
 export type EvalRunDetail = EvalRun & {
@@ -107,25 +100,26 @@ export type EvalJob = {
   id: string
   kind: 'run' | 'dataset'
   evaluation?: string | null
-  label?: string | null
   dataset?: string | null
   dataset_id?: string | null
+  display_name?: string | null
   output_dir: string
   status: string
   queue_position?: number | null
-  active_count?: number | null
-  created_at?: string | null
   started_at?: string | null
-  finished_at?: string | null
   log?: string[]
-  params?: Record<string, unknown>
 }
 
 export type DatasetSummary = {
   dataset_id: string
+  display_name: string
+  title: string
   tier: string
   profile: string
+  language: 'en' | 'zh'
   pages: number
+  formats: ('docx' | 'pdf')[]
+  modalities: ('text' | 'tables' | 'figures' | 'equations')[]
   path: string
   created_at: string
   files: string[]
@@ -156,17 +150,19 @@ evalApiClient.interceptors.response.use(
       throw new Error('Authentication required')
     }
     const payload = error.response?.data as { detail?: unknown; message?: unknown } | undefined
-    const detail = typeof payload?.detail === 'string'
-      ? payload.detail
-      : typeof payload?.message === 'string'
-        ? payload.message
-        : null
+    const detail =
+      typeof payload?.detail === 'string'
+        ? payload.detail
+        : typeof payload?.message === 'string'
+          ? payload.message
+          : null
     // A 400 is actionable only when the API's validation reason survives the
     // client interceptor.  Axios' default message was hiding it as merely
     // "Request failed with status code 400".
     if (detail) throw new Error(detail)
     if (Array.isArray(payload?.detail)) {
-      const first = payload.detail[0] as { loc?: unknown; msg?: unknown; type?: unknown } | undefined
+      const first = payload.detail[0] as
+        { loc?: unknown; msg?: unknown; type?: unknown } | undefined
       const location = Array.isArray(first?.loc)
         ? first.loc.filter((item) => item !== 'body').map(String).join('.')
         : ''
@@ -193,10 +189,9 @@ export async function getEvalRunLog(
   runId: string,
   lines = 200
 ): Promise<{ exists: boolean; lines: string[] }> {
-  const response = await evalApiClient.get(
-    `/eval/runs/${encodeURIComponent(runId)}/log`,
-    { params: { lines } }
-  )
+  const response = await evalApiClient.get(`/eval/runs/${encodeURIComponent(runId)}/log`, {
+    params: { lines }
+  })
   return response.data
 }
 
@@ -221,9 +216,11 @@ export async function createEvalJob(payload: {
   dataset?: string
   params?: Record<string, unknown>
   dataset_create?: {
-    dataset_id: string
+    dataset_id?: string
+    display_name: string
     tier?: string
     profile?: string
+    language?: 'en' | 'zh'
     pages?: number | null
     formats?: string[]
     modalities?: string[]
@@ -246,15 +243,14 @@ export async function getEvalJob(jobId: string): Promise<EvalJob> {
 }
 
 export async function cancelEvalJob(jobId: string): Promise<EvalJob> {
-  const response = await evalApiClient.post(
-    `/eval/jobs/${encodeURIComponent(jobId)}/cancel`
-  )
+  const response = await evalApiClient.post(`/eval/jobs/${encodeURIComponent(jobId)}/cancel`)
   return response.data
 }
 
-export async function listDatasets(
-  params?: { limit?: number; offset?: number }
-): Promise<{ datasets: DatasetSummary[]; total: number }> {
+export async function listDatasets(params?: {
+  limit?: number
+  offset?: number
+}): Promise<{ datasets: DatasetSummary[]; total: number }> {
   const response = await evalApiClient.get('/eval/datasets', { params })
   return response.data
 }
@@ -269,16 +265,12 @@ export async function importEvalDataset(file: File): Promise<DatasetSummary> {
 }
 
 export async function deleteDataset(datasetId: string): Promise<unknown> {
-  const response = await evalApiClient.delete(
-    `/eval/datasets/${encodeURIComponent(datasetId)}`
-  )
+  const response = await evalApiClient.delete(`/eval/datasets/${encodeURIComponent(datasetId)}`)
   return response.data
 }
 
 export async function deleteEvalRun(runId: string): Promise<{ deleted: string }> {
-  const response = await evalApiClient.delete(
-    `/eval/runs/${encodeURIComponent(runId)}`
-  )
+  const response = await evalApiClient.delete(`/eval/runs/${encodeURIComponent(runId)}`)
   return response.data
 }
 

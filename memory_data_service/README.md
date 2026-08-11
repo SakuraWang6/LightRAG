@@ -32,6 +32,35 @@ conda run -n lightrag-memory-eval python -m memory_data_service.cli generate \
 conda run -n lightrag-memory-eval python -m memory_data_service.cli list
 ```
 
+### Choose the corpus language
+
+Datasets default to English. Pass `--language zh` to create a Simplified-Chinese
+corpus: source documents, oracle questions, and answers are Chinese, while the
+manifest records `language: "zh"` for reproducibility. The rich profile retains
+its object graph, tables, figures, equations, and cross-document question.
+
+```bash
+conda run -n lightrag-memory-eval python -m memory_data_service.cli generate \
+  --profile rich --tier smoke --language zh --formats docx \
+  --dataset-id zh-rich-smoke-v1 --output-root "$PWD/memory_data_service/generated"
+```
+
+The evaluation workbench exposes the same choice as **数据语言** when creating a
+dataset. Existing datasets without this field are treated as English.
+
+### Name a dataset
+
+`dataset_id` is an internal filesystem/API identifier. Use `--display-name` for
+the name shown in the workbench and copied into the document title; generated
+IDs remain stable even when the display name contains spaces or non-ASCII text.
+Older manifests without a display name remain valid and are shown with a
+configuration-derived fallback label.
+
+```bash
+conda run -n lightrag-memory-eval python -m memory_data_service.cli generate \
+  --display-name "Q3 Chinese support release" --language zh --profile rich
+```
+
 Generation has a default 3000-page safety guard because DOCX writing uses
 `python-docx` in-process. Larger experiments must opt in explicitly:
 
@@ -47,7 +76,10 @@ where the in-package directory is usually read-only).
 `manifest.json` records `generation_peak_memory_mb` and a
 `generation_resource_estimate` so large-run resource behavior is auditable.
 
-The default `rich` profile creates a DOCX with chapter/section hierarchy,
+The default `rich` profile creates an operational decision dossier: a coherent
+programme narrative with accountable owners, staged delivery gates, source and
+security approvals, rollback constraints, risk controls, and cross-page
+dependency questions. It also creates a DOCX with chapter/section hierarchy,
 automatic TOC field plus manual TOC entries, header/footer, numbered controls,
 bullet and nested bullet lists, section summaries, local conclusions,
 merged-header tables, text-bearing figures, OMML equations, captions,

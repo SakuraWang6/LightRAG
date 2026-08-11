@@ -71,9 +71,11 @@ def _dataset_meta(runs_root: Path, dataset: str | None) -> dict[str, Any]:
             continue
         return {
             "dataset": payload.get("dataset_id") or dataset,
+            "dataset_name": payload.get("display_name"),
             "pages": payload.get("pages"),
             "tier": payload.get("tier"),
             "profile": payload.get("profile"),
+            "language": payload.get("language"),
             "formats": payload.get("formats"),
             "title": payload.get("title"),
         }
@@ -89,12 +91,14 @@ def _snapshot_dataset_meta(
         return {}
     values = {
         key: captured.get(key)
-        for key in ("pages", "tier", "profile", "formats", "title")
+        for key in ("pages", "tier", "profile", "language", "formats", "title", "display_name")
         if captured.get(key) not in (None, "")
     }
     dataset_id = captured.get("dataset_id") or dataset
     if isinstance(dataset_id, str) and dataset_id:
         values["dataset"] = dataset_id
+    if isinstance(values.get("display_name"), str) and values["display_name"].strip():
+        values["dataset_name"] = values.pop("display_name")
     return values
 
 
@@ -272,7 +276,6 @@ def _summary_metrics(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "correct_cases",
         "retrieval_cases",
         "answer_accuracy",
-        "accuracy",
         "groundedness",
         "ungrounded_rate",
         "abstention_accuracy",
@@ -290,15 +293,6 @@ def _summary_metrics(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "context_precision",
         "object_hit_rate",
         "full_recall_cases",
-        "candidate_recall",
-        "selected_recall",
-        "selection_precision",
-        "role_coverage",
-        "full_role_coverage_rate",
-        "retrieval_recall",
-        "mean_context_chars",
-        "mean_selected_context_chars",
-        "changed_cases",
         "cases",
     ]
     values: dict[str, Any] = {}
@@ -540,6 +534,7 @@ def _run_record(
         "evaluation": evaluation.get("id"),
         "description": evaluation.get("description") or "",
         "dataset": dataset or dataset_meta.get("dataset"),
+        "dataset_display_name": dataset_meta.get("dataset_name"),
         "updated_at": envelope.get("created_at"),
         "started_at": envelope.get("started_at"),
         "finished_at": envelope.get("finished_at"),
@@ -547,7 +542,6 @@ def _run_record(
         "status": envelope.get("status"),
         "conditions": conditions,
         "progress": progress,
-        "failed_checks": [],
         "headline": {metric["key"]: metric for metric in _summary_metrics(methods)},
         "artifact_titles": [],
         "execution_manifest": envelope.get("execution_manifest"),

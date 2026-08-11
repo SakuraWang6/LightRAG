@@ -274,9 +274,9 @@ export default function CasesView({ rows }: CasesViewProps) {
         </div>
         <div className="w-44">
           <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="h-8"><SelectValue placeholder="题型" /></SelectTrigger>
+            <SelectTrigger className="h-8"><SelectValue placeholder={t('eval.caseType')} /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">全部题型</SelectItem>
+              <SelectItem value="all">{t('eval.caseAllGroups')}</SelectItem>
               {types.map((type) => (
                 <SelectItem key={type} value={type}>{questionTypeLabel(type)}</SelectItem>
               ))}
@@ -304,16 +304,16 @@ export default function CasesView({ rows }: CasesViewProps) {
               </header>
               <div className="space-y-5 px-5 py-5 pl-6">
                 <section>
-                  <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">题目</p>
+                  <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">{t('eval.caseQuestion')}</p>
                   <p className="font-serif whitespace-pre-wrap break-words text-base leading-7">{c.question || c.id || '—'}</p>
                 </section>
                 <div className="grid gap-3 lg:grid-cols-2">
                   <section className="rounded-md border bg-muted/25 p-4">
-                    <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">模型回答</p>
+                    <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">{t('eval.caseAnswer')}</p>
                     <p className="whitespace-pre-wrap break-words text-sm leading-6">{c.answer || '—'}</p>
                   </section>
                   <section className="rounded-md border border-primary/20 bg-primary/[0.03] p-4">
-                    <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">标准答案</p>
+                    <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">{t('eval.caseExpected')}</p>
                     <p className="whitespace-pre-wrap break-words text-sm leading-6">{c.expected || '—'}</p>
                   </section>
                 </div>
@@ -327,7 +327,7 @@ export default function CasesView({ rows }: CasesViewProps) {
                 </section>
                 <section className="border-border/70 flex gap-2 rounded-md border border-dashed px-3 py-2.5 text-sm leading-6">
                   <FileSearchIcon className="text-muted-foreground mt-0.5 size-4 shrink-0" />
-                  <div><span className="font-medium">结果解读：</span>{diagnosticHint(c)}</div>
+                  <div><span className="font-medium">{t('eval.caseResult')}：</span>{diagnosticHint(c)}</div>
                 </section>
               </div>
             </article>

@@ -382,7 +382,12 @@ def _unique_run_dir(runs_root: Path) -> Path:
 
 def _params_from_json(payload: dict[str, Any]) -> RunParams:
     data = dict(payload)
-    for key in ("dataset", "output_dir", "runs_root", "storage_dir"):
+    # Jobs persisted before the isolated-runtime refactor may contain these
+    # no-op connection overrides.  Consume them so pending legacy jobs remain
+    # resumable while new jobs cannot declare them.
+    for key in ("ollama_url", "rag_api_url", "storage_dir"):
+        data.pop(key, None)
+    for key in ("dataset", "output_dir", "runs_root"):
         if data.get(key) is not None:
             data[key] = Path(data[key])
     data["extra"] = list(data.get("extra") or [])
@@ -464,11 +469,8 @@ def _write_queued_run_envelope(*, runs_root: Path, params: RunParams) -> None:
         output_dir=params.output_dir,
         baseline=baseline,
         environment=capture_environment(
-            rag_api_url=params.rag_api_url,
-            ollama_url=params.ollama_url,
             api_key=params.api_key,
             access_token=params.access_token,
-            storage_dir=str(params.output_dir / "rag_storage"),
         ),
         run_id=params.run_id or params.output_dir.name,
         label=params.label,
@@ -612,6 +614,8 @@ def _spawn_dataset_job(
         str(params["tier"]),
         "--profile",
         str(params["profile"]),
+        "--language",
+        str(params.get("language") or "en"),
         "--pages",
         str(params["pages"]),
         "--formats",
@@ -620,6 +624,10 @@ def _spawn_dataset_job(
         ",".join(params["modalities"]),
         "--dataset-id",
         str(job["dataset_id"]),
+        "--title",
+        str(params.get("display_name") or "LightRAG Synthetic Rich Memory Document"),
+        "--display-name",
+        str(params.get("display_name") or ""),
         "--output-root",
         str(datasets_root),
     ]
@@ -837,17 +845,21 @@ def start_dataset_job(
     *,
     runs_root: Path,
     datasets_root: Path | None = None,
-    dataset_id: str,
+    dataset_id: str | None,
     tier: str,
     profile: str,
     pages: int,
     formats: list[str],
     modalities: list[str],
+    display_name: str = "",
+    language: str = "en",
     force: bool = False,
     allow_oversized_generation: bool = False,
 ) -> dict[str, Any]:
-    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", dataset_id):
+    if dataset_id is not None and not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", dataset_id):
         raise ValueError("invalid dataset_id")
+    if language not in {"en", "zh"}:
+        raise ValueError("invalid dataset language")
     if pages > DEFAULT_DATASET_PAGE_CAP and not allow_oversized_generation:
         raise ValueError(
             f"pages {pages} exceeds default cap {DEFAULT_DATASET_PAGE_CAP}; "
@@ -855,10 +867,12 @@ def start_dataset_job(
         )
     job_dir = jobs_root(runs_root) / _job_id("dataset")
     job_dir.mkdir(parents=True, exist_ok=True)
+    resolved_dataset_id = dataset_id or job_dir.name
     job = {
         "id": job_dir.name,
         "kind": "dataset",
-        "dataset_id": dataset_id,
+        "dataset_id": resolved_dataset_id,
+        "display_name": display_name,
         "output_dir": str(job_dir),
         "supervise": False,
         "status": "pending",
@@ -866,6 +880,8 @@ def start_dataset_job(
         "params": {
             "tier": tier,
             "profile": profile,
+            "language": language,
+            "display_name": display_name,
             "pages": pages,
             "formats": formats,
             "modalities": modalities,

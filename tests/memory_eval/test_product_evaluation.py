@@ -73,6 +73,14 @@ def test_manifest_resolves_the_repository_root_for_git_provenance(
     assert captured["cwd"] == Path(artifacts.__file__).resolve().parents[1]
 
 
+def test_environment_snapshot_excludes_obsolete_runtime_coordinates() -> None:
+    environment = artifacts.capture_environment()
+
+    assert "rag_api_url" not in environment
+    assert "ollama_url" not in environment
+    assert "storage_dir" not in environment
+
+
 def test_comparison_requires_exact_case_set_and_scorer_inventory() -> None:
     base = {
         "status": "complete",

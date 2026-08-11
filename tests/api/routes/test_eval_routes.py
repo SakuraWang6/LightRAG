@@ -155,3 +155,49 @@ def test_create_job_rejects_infrastructure_parameters(client: TestClient) -> Non
     )
     assert response.status_code == 400
     assert "infrastructure parameters" in response.json()["detail"]
+
+
+def test_dataset_job_uses_a_business_name_not_a_user_supplied_id(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    def start_dataset_job(**kwargs):
+        captured.update(kwargs)
+        return {"id": "dataset-job", "status": "pending"}
+
+    monkeypatch.setattr(eval_routes.eval_jobs, "start_dataset_job", start_dataset_job)
+    response = client.post(
+        "/eval/jobs",
+        json={
+            "kind": "dataset",
+            "dataset_create": {
+                "display_name": "中文检索质量测评",
+                "language": "zh",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["dataset_id"] is None
+    assert captured["display_name"] == "中文检索质量测评"
+    assert captured["language"] == "zh"
+
+
+def test_dataset_job_accepts_legacy_title_during_webui_rollout(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    def start_dataset_job(**kwargs):
+        captured.update(kwargs)
+        return {"id": "dataset-job", "status": "pending"}
+
+    monkeypatch.setattr(eval_routes.eval_jobs, "start_dataset_job", start_dataset_job)
+    response = client.post(
+        "/eval/jobs",
+        json={"kind": "dataset", "dataset_create": {"title": "旧版浏览器名称"}},
+    )
+
+    assert response.status_code == 200
+    assert captured["display_name"] == "旧版浏览器名称"

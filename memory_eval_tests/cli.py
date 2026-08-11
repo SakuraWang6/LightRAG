@@ -20,7 +20,6 @@ from memory_eval_tests.artifacts import (
     build_execution_manifest,
     build_failure,
     capture_environment,
-    capture_runtime_snapshot,
     read_progress,
     redact_launch_extra,
     redact_sensitive_text,
@@ -215,8 +214,6 @@ def main() -> None:
     parser.add_argument("--num-predict", type=int, default=None)
     parser.add_argument("--max-total-tokens", type=int, default=None)
     parser.add_argument("--temperature", type=float, default=None)
-    parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
-    parser.add_argument("--rag-api-url", default="http://127.0.0.1:9621")
     parser.add_argument(
         "--api-key",
         default=None,
@@ -255,7 +252,6 @@ def main() -> None:
         default="none",
         help="How the last supervisor restart behaved (display metadata only).",
     )
-    parser.add_argument("--storage-dir", type=Path, default=None)
     parser.add_argument("--engine", default=None)
     parser.add_argument("--max-cases", type=int, default=0)
     parser.add_argument(
@@ -303,17 +299,9 @@ def main() -> None:
     launch_params = _launch_params(baseline, args.extra, case_ids)
     parameter_sources = _parameter_sources(args, baseline)
 
-    storage_dir = args.storage_dir or (args.output_dir / "rag_storage")
-    # The in-process LightRAG instance resolves its working directory from the
-    # environment; pin it to this run's storage so the evaluation reads the
-    # right index/cache regardless of the launching shell.
-    os.environ["WORKING_DIR"] = str(storage_dir)
     environment = capture_environment(
-        rag_api_url=args.rag_api_url,
-        ollama_url=args.ollama_url,
         api_key=args.api_key,
         access_token=args.access_token,
-        storage_dir=str(storage_dir),
     )
     run_id = args.run_id or args.output_dir.name
     runs_root = args.runs_root or Path(
@@ -359,19 +347,11 @@ def main() -> None:
             definition.prepare(context)
         except Exception as exc:
             preflight_error = exc
-    context.runtime_snapshot = (
-        {
-            "snapshot_version": "1.0",
-            "status": "provisioning",
-            "reason": "isolated execution unit has not started yet",
-        }
-        if definition.id == "end_to_end_baseline"
-        else capture_runtime_snapshot(
-            rag_api_url=args.rag_api_url,
-            api_key=args.api_key,
-            access_token=args.access_token,
-        )
-    )
+    context.runtime_snapshot = {
+        "snapshot_version": "1.0",
+        "status": "provisioning",
+        "reason": "isolated execution unit has not started yet",
+    }
     _install_sigterm_handler(args.output_dir)
     _log(
         args.output_dir,

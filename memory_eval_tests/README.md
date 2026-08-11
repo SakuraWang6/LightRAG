@@ -88,9 +88,8 @@ ollama pull bge-m3:latest
 | --- | --- |
 | `MEMORY_EVAL_DATASETS_ROOT` | 数据集根目录；wheel 安装时尤其需要 |
 | `MEMORY_EVAL_RUNS_ROOT` | 运行产物根目录；WebUI 与 CLI 必须保持一致 |
-| `OLLAMA_URL` | Ollama 服务地址，默认 `http://127.0.0.1:11434` |
-| `LLM_BINDING` / `LLM_MODEL` | 回答与抽取模型提供方、模型名 |
-| `EMBEDDING_BINDING` / `EMBEDDING_MODEL` | 向量模型提供方、模型名 |
+| `LLM_BINDING` / `LLM_MODEL` / `LLM_BINDING_HOST` | 回答与抽取模型提供方、模型名和服务地址 |
+| `EMBEDDING_BINDING` / `EMBEDDING_MODEL` / `EMBEDDING_BINDING_HOST` | 向量模型提供方、模型名和服务地址 |
 | `LIGHTRAG_API_KEY` / `LIGHTRAG_ACCESS_TOKEN` | 部署要求认证时使用；不会明文写入产物 |
 
 ## 5. 快速开始（CLI）
@@ -151,7 +150,6 @@ cat "$RUN/diagnosis.json"
 | `--engine` | `native` | 文档解析引擎 |
 | `--max-cases` | `0` | 最大测题数；`0` 表示全部，正数时做确定性均匀抽样 |
 | `--skip-kg` | 关闭 | 跳过 KG 抽取并使用 `naive` 向量检索；若同时指定 `--mode`，只能为 `naive` |
-| `--storage-dir` | `<run>/rag_storage` | 本次隔离存储位置，通常无需指定 |
 | `--runs-root` | `memory_eval_tests/runs` | WebUI 扫描与索引失效所使用的运行根目录 |
 
 导入成功门槛默认是 **100%**。只有在明确接受部分文档失败时才设置：
@@ -232,7 +230,7 @@ WebUI 和 CLI 使用相同的 `memory_eval_tests.cli` 入口及运行信封，�
 
 | 现象 | 优先检查 |
 | --- | --- |
-| 预检提示 Ollama 不可达 | `ollama serve` 是否运行；`OLLAMA_URL`/`LLM_BINDING_HOST` 是否正确；模型是否安装 |
+| 预检提示 Ollama 不可达 | `ollama serve` 是否运行；`LLM_BINDING_HOST` 与 `EMBEDDING_BINDING_HOST` 是否正确；模型是否安装 |
 | 导入阶段失败 | `ingestion_receipt.json` 中每个文档状态；`execution_unit.log`；文件是否仍与清单一致 |
 | 子服务无法健康检查 | `execution_unit.log`、模型/embedding 配置、端口占用和本机资源 |
 | 检索召回低 | `case_trace.json` 中的 `expected_fact_ids`、`hit_fact_ids`、`top_contexts`；再检查解析和 Top-K |

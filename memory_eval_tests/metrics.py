@@ -27,23 +27,9 @@ METRIC_LABELS: dict[str, str] = {
     "context_precision": "上下文精确率",
     "object_hit_rate": "对象命中率",
     "full_recall_cases": "全召回题数",
-    "candidate_recall": "候选召回",
-    "selected_recall": "选择后召回",
-    "selection_precision": "选择精确率",
-    "role_coverage": "角色覆盖",
-    "full_role_coverage_rate": "完整角色覆盖率",
-    "changed_cases": "变更题数",
     "cases": "题数",
     "correct_cases": "正确题数",
     "retrieval_cases": "检索题数",
-    "mean_context_chars": "平均上下文字符数",
-    "mean_selected_context_chars": "平均选择后字符数",
-    "mean_candidate_context_chars": "平均候选字符数",
-    "mean_evidence_count": "平均证据数",
-    "evidence_count": "证据数",
-    "context_chars": "上下文字符数",
-    "selected_context_chars": "选择后字符数",
-    "candidate_context_chars": "候选字符数",
     "estimated_tokens": "预估 Token 数",
     "num_ctx": "上下文窗口",
     "top_k": "Top-K",
@@ -102,26 +88,6 @@ CANONICAL_SUMMARY_KEYS: dict[str, list[str]] = {
         "full_recall_cases",
         "cases",
     ],
-    "selector": [
-        "answer_accuracy",
-        "groundedness",
-        "ungrounded_rate",
-        "abstention_accuracy",
-        "evidence_available",
-        "numeric_unit_accuracy",
-        "formula_accuracy",
-        "table_cell_accuracy",
-        "candidate_recall",
-        "selected_recall",
-        "selection_precision",
-        "role_coverage",
-        "full_role_coverage_rate",
-        "mean_candidate_context_chars",
-        "mean_selected_context_chars",
-        "mean_evidence_count",
-        "changed_cases",
-        "cases",
-    ],
 }
 
 
@@ -129,7 +95,7 @@ def normalize_metric_key(key: str) -> str:
     return METRIC_ALIASES.get(key, key)
 
 
-def normalize_summary(summary: dict[str, Any], stage: str = "selector") -> dict[str, Any]:
+def normalize_summary(summary: dict[str, Any], stage: str) -> dict[str, Any]:
     """Rename aliases, keep only known+extra scalars, and pad canonical keys."""
     normalized: dict[str, Any] = {}
     for key, value in summary.items():

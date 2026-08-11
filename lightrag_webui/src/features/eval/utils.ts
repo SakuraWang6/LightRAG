@@ -182,21 +182,6 @@ export function hasRunningJobs(
   return jobs.some((job) => job.status === 'running')
 }
 
-export function diffParams(
-  original: Record<string, unknown>,
-  current: Record<string, unknown>
-): string[] {
-  const keys = new Set([...Object.keys(original), ...Object.keys(current)])
-  const changed: string[] = []
-  for (const key of keys) {
-    const before = original[key] ?? null
-    const after = current[key] ?? null
-    if (before == null && after == null) continue
-    if (String(before ?? '') !== String(after ?? '')) changed.push(key)
-  }
-  return changed.sort()
-}
-
 export function compareCompatible(
   runs: Array<{ dataset?: string | null }>
 ): boolean {
@@ -210,7 +195,6 @@ export function compareCompatible(
 export function buildReproduceDraft(run: {
   launch_params?: Record<string, unknown> | null
   conditions: Array<{ key: string; value: string }>
-  evaluation?: string | null
   dataset?: string | null
 }): { params: Record<string, unknown>; extraText: string; dataset: string } {
   if (run.launch_params && typeof run.launch_params === 'object') {
@@ -261,11 +245,22 @@ export function statusBadgeClass(status?: string | null): string {
   return 'border-zinc-300 bg-zinc-50 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300'
 }
 
-export function statusLabel(run: {
-  status?: string | null
-  failed_checks?: string[]
-}): string {
-  return run.status ?? ''
+const EVAL_STATUS_LABELS: Record<string, string> = {
+  complete: 'eval.statusComplete',
+  succeeded: 'eval.statusComplete',
+  failed: 'eval.failed',
+  running: 'eval.running',
+  queued: 'eval.statusQueued',
+  pending: 'eval.statusPending',
+  claiming: 'eval.statusClaiming',
+  cancelling: 'eval.statusCancelling',
+  cancelled: 'eval.statusCancelled',
+  stale: 'eval.statusStale'
+}
+
+export function evalStatusLabel(status?: string | null): string {
+  const value = status?.toLowerCase() ?? ''
+  return EVAL_STATUS_LABELS[value] ?? status ?? ''
 }
 
 export function formatDate(iso?: string | null): string {
@@ -277,63 +272,30 @@ export function formatDate(iso?: string | null): string {
 
 /** Metrics shown first in the comparison view; the rest follow alphabetically. */
 export const COMPARE_METRIC_ORDER = [
-  'passed',
+  'correct_cases',
+  'retrieval_cases',
   'answer_accuracy',
-  'accuracy',
-  'summary.answer_accuracy',
   'groundedness',
-  'grounded_rate',
   'ungrounded_rate',
-  'hallucinated_rate',
   'abstention_accuracy',
   'evidence_available',
+  'final_context_observable_rate',
+  'final_context_evidence_coverage',
+  'final_context_evidence_available',
   'citation_presence',
   'citation_correctness',
-  'citation_rate',
   'numeric_unit_accuracy',
   'formula_accuracy',
   'table_cell_accuracy',
   'average_recall',
-  'evidence_recall_at_5',
-  'retrieval_recall',
   'mrr',
   'context_precision',
   'object_hit_rate',
   'full_recall_cases',
-  'candidate_recall',
-  'selected_recall',
-  'selection_precision',
-  'role_coverage',
-  'full_role_coverage_rate',
-  'exact_match_rate',
-  'mean_context_chars',
-  'mean_selected_context_chars',
-  'mean_candidate_context_chars',
-  'changed_cases',
-  'chunk_sidecar_coverage',
-  'fact_evidence_hit_rate',
-  'object_fact_evidence_hit_rate',
-  'position_coverage',
-  'meaningful_position_coverage',
-  'page_or_bbox_position_coverage',
-  'oracle_page_metadata_coverage',
-  'cases',
-  'pages',
-  'facts',
-  'questions',
-  'objects',
-  'relations'
+  'cases'
 ]
 
 export function metricRank(key: string): number {
   const index = COMPARE_METRIC_ORDER.indexOf(key)
   return index === -1 ? COMPARE_METRIC_ORDER.length : index
-}
-
-export function isMetricValue(value: unknown): value is number | boolean | string {
-  return (
-    typeof value === 'number' ||
-    typeof value === 'boolean' ||
-    (typeof value === 'string' && value.length > 0)
-  )
 }

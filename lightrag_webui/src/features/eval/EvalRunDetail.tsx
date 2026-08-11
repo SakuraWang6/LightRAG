@@ -23,7 +23,7 @@ import MetricCards from '@/features/eval/MetricCards'
 import ProgressBar from '@/features/eval/ProgressBar'
 import ReportDocument from '@/features/eval/ReportDocument'
 import RunLog from '@/features/eval/RunLog'
-import { formatDate, statusBadgeClass, statusLabel } from '@/features/eval/utils'
+import { evalStatusLabel, formatDate, statusBadgeClass } from '@/features/eval/utils'
 
 const ANSWER_METRIC_KEYS = new Set([
   'correct_cases',
@@ -118,12 +118,7 @@ function RunHeader({
               : ''}
           </Badge>
         ) : null}
-        {run.status ? <Badge variant="outline" className={statusBadgeClass(run.status)}>{t(statusLabel(run))}</Badge> : null}
-        {(run.failed_checks ?? []).map((check) => (
-          <Badge key={check} className="border-red-300 bg-red-50 text-red-700 dark:border-red-700 dark:bg-red-950 dark:text-red-300">
-            {t('eval.failed')}: {check}
-          </Badge>
-        ))}
+        {run.status ? <Badge variant="outline" className={statusBadgeClass(run.status)}>{t(evalStatusLabel(run.status))}</Badge> : null}
         {activeJob ? (
           <Button size="sm" variant="outline" onClick={onCancel} className="ml-auto">
             {t('eval.cancelRun')}
@@ -262,7 +257,7 @@ function StandardRunView({ run, active }: { run: EvalRunDetail; active: boolean 
           </TabsTrigger>
           <TabsTrigger value="cases">
             <ListIcon className="mr-1 size-4" />
-            逐题详情
+            {t('eval.cases')}
           </TabsTrigger>
           <TabsTrigger value="reports">
             <FileTextIcon className="mr-1 size-4" />

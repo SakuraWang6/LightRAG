@@ -53,6 +53,17 @@ function numberParam(params: SimpleEvalParams | undefined, key: string, fallback
   return typeof value === 'number' || typeof value === 'string' ? String(value) : String(fallback)
 }
 
+const SCALE_LABELS: Record<string, string> = {
+  smoke: 'eval.scaleSmoke',
+  medium: 'eval.scaleMedium',
+  large: 'eval.scaleLarge',
+  stress: 'eval.scaleStress'
+}
+const COMPLEXITY_LABELS: Record<string, string> = {
+  basic: 'eval.complexityBasic',
+  rich: 'eval.complexityRich'
+}
+
 export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleEvalWizardProps) {
   const { t } = useTranslation()
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
@@ -75,6 +86,14 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
   const [optionsError, setOptionsError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const effectiveMode = kg ? mode : 'naive'
+  const displayDatasetName = (item: DatasetSummary) => {
+    if (item.display_name.trim()) return item.display_name
+    return t('eval.legacyDatasetName', {
+      complexity: t(COMPLEXITY_LABELS[item.profile] ?? item.profile),
+      scale: t(SCALE_LABELS[item.tier] ?? item.tier),
+      pages: item.pages
+    })
+  }
 
   useEffect(() => {
     void listDatasets().then((data) => setDatasets(data.datasets)).catch(() => undefined)
@@ -128,12 +147,12 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
     }
     try {
       numericParams = {
-        top_k: integerParam(topK, '检索条数', 1),
-        chunk_top_k: integerParam(chunkTopK, 'Chunk Top-K', 1),
-        max_cases: integerParam(maxCases, '最多运行题数', 0),
-        num_ctx: integerParam(numCtx, '上下文窗口', 1),
-        max_total_tokens: integerParam(maxTotalTokens, '最大上下文 Token', 1),
-        num_predict: integerParam(numPredict, '回答最大输出 Token', 1)
+        top_k: integerParam(topK, t('eval.paramTopK'), 1),
+        chunk_top_k: integerParam(chunkTopK, t('eval.paramChunkTopK'), 1),
+        max_cases: integerParam(maxCases, t('eval.paramMaxCases'), 0),
+        num_ctx: integerParam(numCtx, t('eval.paramNumCtx'), 1),
+        max_total_tokens: integerParam(maxTotalTokens, t('eval.maxTotalTokens'), 1),
+        num_predict: integerParam(numPredict, t('eval.paramNumPredict'), 1)
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
@@ -178,19 +197,19 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
         <Button variant="ghost" size="icon" onClick={onBack} tooltip={t('eval.backToDetail')}>
           <ArrowLeftIcon className="size-4" />
         </Button>
-        <h2 className="text-lg font-semibold">新建测评</h2>
+        <h2 className="text-lg font-semibold">{t('eval.newRun')}</h2>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-4">
         <div className="mx-auto max-w-3xl space-y-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">测评信息</CardTitle>
+              <CardTitle className="text-sm">{t('eval.runInfo')}</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <label className="space-y-1.5 md:col-span-2">
-                <span className="text-sm font-medium">测评名称</span>
-                <Input value={name} maxLength={128} onChange={(event) => setName(event.target.value)} placeholder="例如：合同文档基线测评" />
-                <span className="text-muted-foreground block text-xs">名称仅用于列表与报告展示；内部运行 ID 会单独生成。</span>
+                <span className="text-sm font-medium">{t('eval.runName')}</span>
+                <Input value={name} maxLength={128} onChange={(event) => setName(event.target.value)} placeholder={t('eval.runNamePlaceholder')} />
+                <span className="text-muted-foreground block text-xs">{t('eval.runNameHint')}</span>
               </label>
               <label className="space-y-1.5 md:col-span-2">
                 <span className="text-sm font-medium">{t('eval.wizardDataset')}</span>
@@ -199,36 +218,36 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
                   <SelectContent>
                     {datasets.map((item) => (
                       <SelectItem key={item.dataset_id} value={item.dataset_id}>
-                        {item.dataset_id} · {item.pages}p · {item.tier}
+                        {displayDatasetName(item)} · {item.pages} {t('eval.pages')}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {datasets.length === 0 ? <span className="text-muted-foreground block text-xs">请先在测评首页的数据集页面创建或导入数据集。</span> : null}
+                {datasets.length === 0 ? <span className="text-muted-foreground block text-xs">{t('eval.wizardNoDatasets')}</span> : null}
               </label>
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm">检索与评分范围</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="text-sm">{t('eval.retrievalSettings')}</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-1.5"><span className="text-sm font-medium">模型</span><Select value={model} onValueChange={setModel} disabled={optionsLoading || modelOptions.length === 0 || optionsError !== null}><SelectTrigger><SelectValue placeholder="选择服务器已配置的模型" /></SelectTrigger><SelectContent>{modelOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">仅显示当前服务器实际可运行的回答模型。</span></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">检索模式</span><Select value={effectiveMode} onValueChange={setMode} disabled={!kg}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="naive">Naive</SelectItem><SelectItem value="mix">Mix</SelectItem><SelectItem value="local">Local</SelectItem><SelectItem value="global">Global</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select>{!kg ? <span className="text-muted-foreground block text-xs">关闭 KG 时自动使用 Naive，确保只评测向量检索。</span> : null}</label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">检索条数（Top-K）</span><Input type="number" min="1" value={topK} onChange={(event) => setTopK(event.target.value)} /></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">Chunk Top-K</span><Input type="number" min="1" value={chunkTopK} onChange={(event) => setChunkTopK(event.target.value)} /></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">最多运行题数</span><Input type="number" min="0" value={maxCases} onChange={(event) => setMaxCases(event.target.value)} /><span className="text-muted-foreground block text-xs">填 0 表示运行数据集中的全部题目。</span></label>
-              <label className="flex items-center gap-2 self-center rounded-md border px-3 py-2.5"><Checkbox checked={kg} onCheckedChange={(checked) => setKg(checked === true)} /><span className="text-sm font-medium">启用知识图谱抽取</span></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramModel')}</span><Select value={model} onValueChange={setModel} disabled={optionsLoading || modelOptions.length === 0 || optionsError !== null}><SelectTrigger><SelectValue placeholder={t('eval.paramModelPick')} /></SelectTrigger><SelectContent>{modelOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">{t('eval.modelHint')}</span></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramMode')}</span><Select value={effectiveMode} onValueChange={setMode} disabled={!kg}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="naive">Naive</SelectItem><SelectItem value="mix">Mix</SelectItem><SelectItem value="local">Local</SelectItem><SelectItem value="global">Global</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select>{!kg ? <span className="text-muted-foreground block text-xs">{t('eval.kgDisabledHint')}</span> : null}</label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramTopK')}</span><Input type="number" min="1" value={topK} onChange={(event) => setTopK(event.target.value)} /></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramChunkTopK')}</span><Input type="number" min="1" value={chunkTopK} onChange={(event) => setChunkTopK(event.target.value)} /></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramMaxCases')}</span><Input type="number" min="0" value={maxCases} onChange={(event) => setMaxCases(event.target.value)} /><span className="text-muted-foreground block text-xs">{t('eval.maxCasesHint')}</span></label>
+              <label className="flex items-center gap-2 self-center rounded-md border px-3 py-2.5"><Checkbox checked={kg} onCheckedChange={(checked) => setKg(checked === true)} /><span className="text-sm font-medium">{t('eval.paramKg')}</span></label>
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm">运行参数</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="text-sm">{t('eval.wizardParams')}</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-1.5"><span className="text-sm font-medium">上下文窗口</span><Input type="number" min="1" value={numCtx} onChange={(event) => setNumCtx(event.target.value)} /></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">最大上下文 Token</span><Input type="number" min="1" value={maxTotalTokens} onChange={(event) => setMaxTotalTokens(event.target.value)} /></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">回答最大输出 Token</span><Input type="number" min="1" value={numPredict} onChange={(event) => setNumPredict(event.target.value)} /><span className="text-muted-foreground block text-xs">用于回答生成。知识图谱抽取使用独立的 8192 Token 保护预算、JSON 格式和记录上限；仍截断时会使运行失败，不会索引残缺结果。</span></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">温度</span><Input type="number" min="0" max="2" step="0.1" value={temperature} onChange={(event) => setTemperature(event.target.value)} /></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">解析引擎</span><Select value={engine} onValueChange={setEngine} disabled={optionsLoading || engineOptions.length === 0}><SelectTrigger><SelectValue placeholder="选择已配置的解析引擎" /></SelectTrigger><SelectContent>{engineOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">仅显示当前服务器已安装并配置完成的解析引擎。</span></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramNumCtx')}</span><Input type="number" min="1" value={numCtx} onChange={(event) => setNumCtx(event.target.value)} /></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.maxTotalTokens')}</span><Input type="number" min="1" value={maxTotalTokens} onChange={(event) => setMaxTotalTokens(event.target.value)} /></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramNumPredict')}</span><Input type="number" min="1" value={numPredict} onChange={(event) => setNumPredict(event.target.value)} /><span className="text-muted-foreground block text-xs">{t('eval.numPredictHint')}</span></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramTemperature')}</span><Input type="number" min="0" max="2" step="0.1" value={temperature} onChange={(event) => setTemperature(event.target.value)} /></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramEngine')}</span><Select value={engine} onValueChange={setEngine} disabled={optionsLoading || engineOptions.length === 0}><SelectTrigger><SelectValue placeholder={t('eval.enginePick')} /></SelectTrigger><SelectContent>{engineOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">{t('eval.engineHint')}</span></label>
             </CardContent>
           </Card>
 
