@@ -50,6 +50,7 @@ type NormalizedCase = {
   scorer: Detail
   retrieval: Detail
   finalContextEvidence: Detail
+  evidenceFacts: Detail[]
   raw: Record<string, unknown>
 }
 
@@ -92,6 +93,7 @@ function normalize(row: Record<string, unknown>): NormalizedCase {
     scorer: asRecord(detailValue(row, 'scorer')),
     retrieval: asRecord(detailValue(row, 'retrieval')),
     finalContextEvidence: asRecord(detailValue(row, 'final_context_evidence')),
+    evidenceFacts: asList(detailValue(row, 'evidence_facts')),
     raw: row
   }
 }
@@ -118,6 +120,22 @@ const FACT_HIGHLIGHT_CLASSES = [
   'bg-fuchsia-200/80 text-fuchsia-950 dark:bg-fuchsia-400/30 dark:text-fuchsia-100',
   'bg-rose-200/80 text-rose-950 dark:bg-rose-400/30 dark:text-rose-100'
 ]
+
+const FACT_TYPE_LABELS: Record<string, string> = {
+  direct_numeric: '参数值',
+  table_cell: '表格单元',
+  equation: '公式',
+  figure_caption: '图示',
+  figure_text: '图示',
+  delivery_milestone: '交付里程碑',
+  release_constraint: '发布约束',
+  governance_owner: '治理责任',
+  version_condition: '版本条件',
+  negative_constraint: '负向约束',
+  conflict_resolution: '冲突消解',
+  text: '文本',
+  caption: '图注'
+}
 
 function factColorIndex(factId: string): number {
   let hash = 0
@@ -354,8 +372,8 @@ function TopKDialog({ retrieval }: { retrieval: Detail }) {
               <p className="text-muted-foreground text-sm">该运行未保存 Top-K chunk 内容，仅记录了候选数量。</p>
             ) : null}
             {chunks.map((chunk) => (
-              <div key={`${chunk.rank}-${chunk.filePath}`} className="rounded-md border bg-muted/[0.06] px-3 py-2.5">
-                <p className="text-muted-foreground mb-1.5 flex items-center gap-2 text-xs">
+              <details key={`${chunk.rank}-${chunk.filePath}`} className="rounded-md border bg-muted/[0.06] px-3 py-2.5 group">
+                <summary className="text-muted-foreground flex cursor-pointer items-center gap-2 text-xs select-none">
                   <span className="font-mono">第 {chunk.rank} 条</span>
                   {chunk.filePath ? <span className="truncate">{chunk.filePath}</span> : null}
                   {chunk.hit ? (
@@ -363,13 +381,15 @@ function TopKDialog({ retrieval }: { retrieval: Detail }) {
                       <CheckIcon className="size-3.5" /> 已命中
                     </span>
                   ) : null}
-                </p>
-                {chunk.hit ? (
-                  <HighlightedChunk text={chunk.text} ranges={matchRanges(asList(chunk.hit.matches))} />
-                ) : (
-                  <p className="whitespace-pre-wrap break-words text-sm leading-6">{chunk.text || '—'}</p>
-                )}
-              </div>
+                </summary>
+                <div className="mt-2">
+                  {chunk.hit ? (
+                    <HighlightedChunk text={chunk.text} ranges={matchRanges(asList(chunk.hit.matches))} />
+                  ) : (
+                    <p className="whitespace-pre-wrap break-words text-sm leading-6">{chunk.text || '—'}</p>
+                  )}
+                </div>
+              </details>
             ))}
           </div>
         </ScrollArea>
@@ -422,13 +442,26 @@ function RetrievalEvidence({ runId, c }: { runId: string; c: NormalizedCase }) {
           <ul className="space-y-1">
             {expectedIds.map((factId) => {
               const hit = hitIds.includes(factId)
+              const fact = c.evidenceFacts.find((item) => String(item.fact_id) === factId)
+              const typeLabel = FACT_TYPE_LABELS[String(fact?.fact_type ?? '')] ?? ''
+              const answer = typeof fact?.answer === 'string' ? fact.answer : ''
+              const page = typeof fact?.page === 'number' ? `第 ${fact.page} 页` : ''
+              const detailText = [answer, page].filter(Boolean).join(' · ')
               return (
-                <li key={factId} className="flex items-center gap-2 text-xs leading-5">
-                  <span className={`size-1.5 shrink-0 rounded-full ${hit ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                  <span className="font-mono">{factId}</span>
-                  <span className={`ml-auto ${hit ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                    {hit ? '已命中' : '未命中'}
-                  </span>
+                <li key={factId} className="flex items-start gap-2 text-xs leading-5">
+                  <span className={`mt-1.5 size-1.5 shrink-0 rounded-full ${hit ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono">{factId}</span>
+                      {typeLabel ? <span className="text-muted-foreground">{typeLabel}</span> : null}
+                      <span className={`ml-auto shrink-0 ${hit ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                        {hit ? '已命中' : '未命中'}
+                      </span>
+                    </div>
+                    {detailText ? (
+                      <p className="text-muted-foreground mt-0.5 truncate" title={detailText}>{detailText}</p>
+                    ) : null}
+                  </div>
                 </li>
               )
             })}

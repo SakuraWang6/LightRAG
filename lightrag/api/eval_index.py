@@ -149,6 +149,7 @@ def _flatten_cases(methods: list[dict[str, Any]]) -> dict[str, Any]:
                             "expected_fact_ids",
                             "top_contexts",
                             "hit_evidence",
+                            "evidence_facts",
                         }:
                             detail[key] = value
                         cell_value = ", ".join(str(item) for item in value[:5])
@@ -291,6 +292,9 @@ def _hydrate_case_questions_from_trace(
             if isinstance(retrieval, dict) and retrieval.get("status") == "unavailable":
                 retrieval.clear()
                 retrieval["status"] = "not_applicable"
+        evidence_facts = oracle.get("evidence_facts") or []
+        if evidence_facts and isinstance(evidence_facts, list):
+            row.setdefault("detail", {})["evidence_facts"] = evidence_facts
     if hydrated and not any(column.get("key") == "question" for column in cases.get("columns") or []):
         cases["columns"].insert(0, {"key": "question", "label": "Question"})
 
@@ -430,11 +434,15 @@ def _report_artifact(run_dir: Path, envelope: dict[str, Any]) -> dict[str, Any] 
     if not rel:
         return None
     path = run_dir / rel
+    content = ""
     try:
         content = path.read_text(encoding="utf-8")[:2_000_000]
     except OSError:
-        return None
-    content = _end_to_end_report_content(run_dir, envelope)
+        content = ""
+    if not content.strip():
+        # Historical runs predate a stored report.md; rebuild the legacy
+        # summary from stored methods instead of showing an empty report.
+        content = _end_to_end_report_content(run_dir, envelope)
     first = next(
         (
             line.strip().lstrip("# ")

@@ -617,30 +617,30 @@ def _write_docx(
             document.add_paragraph(caption)
             if theme == "时延阈值":
                 rows = [
-                    ("参数", "标称值", "最大值"),
+                    ("参数", "标称值", "最大值 (ms)"),
                     ("延迟 Alpha", f"{page}.0", f"{page * 3}.5"),
                     ("延迟 Beta", f"{page + 2}.0", f"{page * 4}.5"),
                     ("重排序", f"{page * 0.5:.1f}", f"{page + 1}.0"),
                     ("生成首 token", f"{page * 0.8:.1f}", f"{page + 2}.0"),
-                    (table_fact_id, "标准行标记", table_answer),
+                    (table_fact_id, "标准行标记", f"{table_answer} {table_unit}"),
                 ]
             elif theme == "吞吐配额":
                 rows = [
-                    ("参数", "标称值", "配额"),
+                    ("参数", "标称值", "配额 (次/秒)"),
                     ("检索并发", f"{page * 10}", f"{page * 16}"),
                     ("重排并发", f"{page * 6}", f"{page * 10}"),
                     ("批处理", f"{page * 4}", f"{page * 8}"),
                     ("缓存命中", f"{page * 30}", f"{page * 44}"),
-                    (table_fact_id, "标准行标记", table_answer),
+                    (table_fact_id, "标准行标记", f"{table_answer} {table_unit}"),
                 ]
             else:
                 rows = [
-                    ("参数", "标称值", "预算上限"),
+                    ("参数", "标称值", "预算上限 (%)"),
                     ("检索错误", f"{page * 0.1:.1f}", f"{page * 0.2:.1f}"),
                     ("重排错误", f"{page * 0.05:.2f}", f"{page * 0.1:.2f}"),
                     ("生成错误", f"{page * 0.08:.2f}", f"{page * 0.16:.2f}"),
                     ("超时率", f"{page * 0.04:.2f}", f"{page * 0.08:.2f}"),
-                    (table_fact_id, "标准行标记", table_answer),
+                    (table_fact_id, "标准行标记", f"{table_answer} {table_unit}"),
                 ]
             table = document.add_table(rows=len(rows), cols=3)
             table.style = "Table Grid"

@@ -142,6 +142,11 @@ def test_chinese_rich_dataset_contains_chinese_oracle_and_provenance(tmp_path) -
     assert any("是多少" in question.question for question in oracle.questions)
     assert any(question.question_type == "equation" for question in oracle.questions)
     assert any(question.question_type == "figure_caption" for question in oracle.questions)
+    # Gold table rows must carry the same unit as the oracle answer, otherwise
+    # a model that reads "27.5" from the cell is marked wrong against "27.5 ms".
+    table_answers = [q.answer for q in oracle.questions if q.question_type == "table_cell"]
+    assert table_answers
+    assert all(any(unit in answer for unit in ("ms", "次/秒", "%")) for answer in table_answers)
     assert any(fact.fact_type == "governance_owner" for fact in oracle.facts)
     assert any(question.id == "Q-RELEASE-GATE-0004" for question in oracle.questions)
     assert any(question.question_type == "cross_document" for question in oracle.questions)
