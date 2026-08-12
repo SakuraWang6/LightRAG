@@ -3996,17 +3996,72 @@ async def extract_entities(
                 "entity_continue_extraction_user_prompt"
             ].format(**{**context_base, "input_text": content})
 
-        final_result, timestamp = await use_llm_func_with_cache(
-            entity_extraction_user_prompt,
-            use_llm_func,
-            system_prompt=entity_extraction_system_prompt,
-            llm_response_cache=llm_response_cache,
-            cache_type="extract",
-            chunk_id=chunk_key,
-            cache_keys_collector=cache_keys_collector,
-            response_format=({"type": "json_object"} if use_json_extraction else None),
-            llm_cache_identity=get_llm_cache_identity(global_config, "extract"),
-        )
+        _chunk_start_clock = time.time()
+        _chunk_start_mono = time.perf_counter()
+        _extract_error: Exception | None = None
+        try:
+            final_result, timestamp = await use_llm_func_with_cache(
+                entity_extraction_user_prompt,
+                use_llm_func,
+                system_prompt=entity_extraction_system_prompt,
+                llm_response_cache=llm_response_cache,
+                cache_type="extract",
+                chunk_id=chunk_key,
+                cache_keys_collector=cache_keys_collector,
+                response_format=({"type": "json_object"} if use_json_extraction else None),
+                llm_cache_identity=get_llm_cache_identity(global_config, "extract"),
+            )
+        except Exception as _exc:
+            _extract_error = _exc
+            raise
+        finally:
+            _latency_s = time.perf_counter() - _chunk_start_mono
+            _input_chars = len(content)
+            _input_tokens = (
+                len(extract_tokenizer.encode(content))
+                if extract_tokenizer is not None
+                else None
+            )
+            _output_text = str(final_result) if _extract_error is None else ""
+            _output_chars = len(_output_text)
+            _output_tokens = (
+                len(extract_tokenizer.encode(_output_text))
+                if extract_tokenizer is not None
+                else None
+            )
+            _truncated = (
+                is_truncated_response(final_result)
+                if _extract_error is None
+                else None
+            )
+            # tenacity attaches its retry state to the final exception after
+            # the last attempt; fall back to 1 when it is not available.
+            _retry_state = (
+                getattr(_extract_error, "retry", None) if _extract_error else None
+            )
+            _attempts = (
+                _retry_state.attempt_number
+                if _retry_state is not None
+                and hasattr(_retry_state, "attempt_number")
+                else 1
+            )
+            logger.info(
+                "[extract-telemetry] chunk=%s file=%s input_chars=%d input_tokens=%s "
+                "start=%s end=%s latency_s=%.1f output_chars=%d output_tokens=%s "
+                "truncated=%s attempts=%d error=%s",
+                chunk_key,
+                file_path,
+                _input_chars,
+                _input_tokens,
+                time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(_chunk_start_clock)),
+                time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time())),
+                _latency_s,
+                _output_chars,
+                _output_tokens,
+                _truncated,
+                _attempts,
+                type(_extract_error).__name__ if _extract_error else "none",
+            )
         initial_result_truncated = is_truncated_response(final_result)
         if initial_result_truncated:
             logger.warning(
@@ -4089,14 +4144,17 @@ async def extract_entities(
                 ),
                 llm_cache_identity=get_llm_cache_identity(global_config, "extract"),
             )
+            # Report before refusing to index: a truncated continuation is
+            # still evidence the operator needs (raise the output budget or
+            # split the chunk), and the document tally must not lose it just
+            # because the run fails closed.
+            _report_truncation(glean_result, "gleaning")
             if is_truncated_response(glean_result):
                 raise RuntimeError(
                     "entity extraction continuation was truncated; refusing to index "
                     "a partial knowledge graph. Increase the EXTRACT role output limit "
                     "and retry this document."
                 )
-
-            _report_truncation(glean_result, "gleaning")
 
             # Process gleaning result with appropriate parser
             if use_json_extraction:

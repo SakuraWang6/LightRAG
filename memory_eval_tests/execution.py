@@ -190,6 +190,14 @@ def _profile_environment(
     config = profile.get("configuration") or {}
     primary = config.get("query") or config.get("extraction") or {}
     env = dict(os.environ)
+    # The isolated server only talks to loopback backends (Ollama,
+    # embeddings).  Inherited proxy variables would route those requests
+    # through a local proxy; a stalled proxy connection surfaces as httpx
+    # ReadTimeout on otherwise fast extractions (observed on 200-page
+    # documents where chunk-009 took >1800s in-run but 190s standalone).
+    # External traffic (e.g. tiktoken first-use download) keeps the proxy.
+    env["NO_PROXY"] = "127.0.0.1,localhost"
+    env["no_proxy"] = "127.0.0.1,localhost"
     _set_role_environment(env, primary, prefix="LLM")
     for name, prefix in (("extraction", "EXTRACT_LLM"), ("query", "QUERY_LLM"), ("vlm", "VLM_LLM")):
         role = config.get(name)

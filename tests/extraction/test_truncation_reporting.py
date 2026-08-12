@@ -137,6 +137,25 @@ def _truncation_lines(messages: list[str]) -> list[str]:
     return [m for m in messages if "token-limit truncation" in m.lower()]
 
 
+def _truncated_initial_complete_glean():
+    """First LLM call per chunk truncates, the glean continuation completes.
+
+    The fail-closed policy (max_gleaning=0 or a truncated continuation)
+    refuses to index a partial graph, so an extraction that must COMPLETE
+    across many truncated chunks needs a healthy glean round: every chunk
+    records its initial truncation, then the continuation finishes cleanly.
+    """
+    calls = {"n": 0}
+
+    async def _llm(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] % 2 == 1:
+            return TruncatedResponse(_EXTRACTION_RESULT)
+        return _EXTRACTION_RESULT
+
+    return _llm
+
+
 @pytest.mark.parametrize("cache_enabled", [False, True])
 async def test_first_truncation_is_published_with_chunk_and_document_identity(
     _high_token_limit, status_messages, cache_enabled
@@ -153,12 +172,13 @@ async def test_first_truncation_is_published_with_chunk_and_document_identity(
     )
 
     tally = TokenLimitTruncationTally()
-    await extract_entities(
-        chunks=_make_chunks(),
-        global_config=config,
-        llm_response_cache=_FakeCache() if cache_enabled else None,
-        truncation_tally=tally,
-    )
+    with pytest.raises(RuntimeError, match="no recovery pass is enabled"):
+        await extract_entities(
+            chunks=_make_chunks(),
+            global_config=config,
+            llm_response_cache=_FakeCache() if cache_enabled else None,
+            truncation_tally=tally,
+        )
 
     first, aggregate = _truncation_lines(status_messages)
     assert "chunk-001" in first
@@ -227,18 +247,23 @@ async def test_extraction_cancelled_mid_wait_still_feeds_the_document_tally(
 async def test_gleaning_truncation_is_reported_and_counted(
     _high_token_limit, status_messages
 ):
-    """Gleaning is a second LLM call and truncates independently of the first."""
+    """Gleaning is a second LLM call and truncates independently of the first.
+
+    Both responses are evidence for the operator, so both are recorded even
+    though the truncated continuation makes the document fail closed.
+    """
     config = _make_global_config(gleaning=1)
     config["role_llm_funcs"]["extract"].return_value = TruncatedResponse(
         _EXTRACTION_RESULT
     )
 
     tally = TokenLimitTruncationTally()
-    await extract_entities(
-        chunks=_make_chunks(),
-        global_config=config,
-        truncation_tally=tally,
-    )
+    with pytest.raises(RuntimeError, match="continuation was truncated"):
+        await extract_entities(
+            chunks=_make_chunks(),
+            global_config=config,
+            truncation_tally=tally,
+        )
 
     payload = tally.as_metadata()
     assert payload["stages"] == {"initial": 1, "gleaning": 1}
@@ -253,11 +278,12 @@ async def test_gleaning_truncation_is_reported_and_counted(
 async def test_status_lines_do_not_grow_with_the_number_of_truncated_chunks(
     _high_token_limit, status_messages
 ):
-    """The whole point of aggregating: a fully-truncated document must not
-    flood the bounded ``history_messages`` ring with one line per chunk."""
+    """The whole point of aggregating: a document where many chunks truncate
+    (and the glean continuation recovers them) must not flood the bounded
+    ``history_messages`` ring with one line per chunk."""
     config = _make_global_config(gleaning=1)
-    config["role_llm_funcs"]["extract"].return_value = TruncatedResponse(
-        _EXTRACTION_RESULT
+    config["role_llm_funcs"]["extract"].side_effect = (
+        _truncated_initial_complete_glean()
     )
 
     tally = TokenLimitTruncationTally()
@@ -270,8 +296,8 @@ async def test_status_lines_do_not_grow_with_the_number_of_truncated_chunks(
     lines = _truncation_lines(status_messages)
     assert len(lines) == 2, f"expected first + aggregate only, got {lines}"
     assert "6 of 6 chunks" in lines[-1]
-    # 6 chunks x (initial + gleaning) all truncated.
-    assert tally.events == 12
+    # 6 chunks truncated initially, each recovered by a complete glean.
+    assert tally.events == 6
     assert tally.affected == 6
 
 
@@ -280,9 +306,9 @@ async def test_every_occurrence_still_reaches_the_server_log(
 ):
     """Aggregation trims the status ring, not the log: the per-chunk detail
     an operator needs for diagnosis stays one line per event."""
-    config = _make_global_config()
-    config["role_llm_funcs"]["extract"].return_value = TruncatedResponse(
-        _EXTRACTION_RESULT
+    config = _make_global_config(gleaning=1)
+    config["role_llm_funcs"]["extract"].side_effect = (
+        _truncated_initial_complete_glean()
     )
 
     with caplog.at_level("WARNING", logger="lightrag"):
@@ -318,7 +344,8 @@ async def test_truncation_is_reported_when_extraction_fails_midway(
     _high_token_limit, status_messages
 ):
     """A run that truncates and then dies must still hand up what it saw —
-    truncation is frequently the reason the run failed."""
+    here the glean round crashes for an unrelated reason after the initial
+    truncation was recorded."""
     calls = {"n": 0}
 
     async def _flaky(*args, **kwargs):
@@ -327,7 +354,7 @@ async def test_truncation_is_reported_when_extraction_fails_midway(
             return TruncatedResponse(_EXTRACTION_RESULT)
         raise RuntimeError("provider exploded")
 
-    config = _make_global_config()
+    config = _make_global_config(gleaning=1)
     config["role_llm_funcs"]["extract"] = _flaky
 
     tally = TokenLimitTruncationTally()
@@ -346,13 +373,14 @@ async def test_extraction_reports_without_a_caller_supplied_tally(
     _high_token_limit, status_messages
 ):
     """``truncation_tally`` is optional: direct callers (tests, custom
-    wiring) still get the status reporting."""
+    wiring) still get the status reporting before the fail-closed error."""
     config = _make_global_config()
     config["role_llm_funcs"]["extract"].return_value = TruncatedResponse(
         _EXTRACTION_RESULT
     )
 
-    await extract_entities(chunks=_make_chunks(), global_config=config)
+    with pytest.raises(RuntimeError, match="no recovery pass is enabled"):
+        await extract_entities(chunks=_make_chunks(), global_config=config)
 
     assert len(_truncation_lines(status_messages)) == 2
 

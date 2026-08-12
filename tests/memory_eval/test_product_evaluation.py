@@ -88,7 +88,7 @@ def test_evaluation_runtime_stabilizes_local_extraction() -> None:
             "num_ctx": 16384,
             "num_predict": 4096,
             "temperature": 0,
-            "extraction_llm_timeout_seconds": 1200,
+            "extraction_llm_timeout_seconds": 1800,
             "extraction_max_async": 1,
         }
     )
@@ -108,8 +108,12 @@ def test_evaluation_runtime_stabilizes_local_extraction() -> None:
         options,
     )
 
-    assert environment["EXTRACT_LLM_TIMEOUT"] == "1200"
+    assert environment["EXTRACT_LLM_TIMEOUT"] == "1800"
     assert environment["EXTRACT_MAX_ASYNC_LLM"] == "1"
+    # Loopback backends must bypass any inherited proxy; a stalled proxy
+    # connection otherwise surfaces as httpx ReadTimeout on fast extractions.
+    assert environment["NO_PROXY"] == "127.0.0.1,localhost"
+    assert environment["no_proxy"] == "127.0.0.1,localhost"
 
 
 def test_comparison_requires_exact_case_set_and_scorer_inventory() -> None:
