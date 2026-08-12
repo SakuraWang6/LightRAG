@@ -56,6 +56,7 @@ def upload_dataset_files(
     access_token: str | None = None,
     confirmed_hashes: set[str] | None = None,
     file_names: list[str] | None = None,
+    process_options: str | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     client = DatasetClient(dataset_source)
@@ -108,6 +109,7 @@ def upload_dataset_files(
             rag_api_url,
             api_key=api_key,
             access_token=access_token,
+            process_options=process_options,
         )
         if wait and upload_result.get("track_id"):
             upload_result["track_status"] = _wait_track_status(
@@ -145,12 +147,14 @@ def _upload_file(
     *,
     api_key: str | None = None,
     access_token: str | None = None,
+    process_options: str | None = None,
 ) -> dict[str, Any]:
     return _http_upload_file(
         path,
         f"{rag_api_url.rstrip('/')}/documents/upload",
         api_key=api_key,
         access_token=access_token,
+        process_options=process_options,
     )
 
 def _wait_track_status(

@@ -542,6 +542,7 @@
     "paramTemperature": "Temperature",
     "paramEngine": "Parse engine",
     "paramKg": "Use KG",
+    "paramVlm": "VLM image analysis",
     "datasets": "Datasets",
     "createDataset": "Generate dataset",
     "datasetJobStarted": "Dataset generation job started",

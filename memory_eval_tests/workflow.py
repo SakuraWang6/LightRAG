@@ -44,6 +44,52 @@ def _int_option(
         return int(default)
 
 
+_FIGURE_FILE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+
+def _effective_vlm(baseline: dict[str, Any], dataset: Path) -> bool:
+    """Resolve whether VLM image analysis should run for this evaluation.
+
+    An explicit run parameter wins; otherwise the dataset manifest decides:
+    datasets that declare ``figures`` modality or ship figure assets are
+    processed with the VLM.  This mirrors what the generator actually embeds
+    in the source documents and keeps ``run.json`` truthful about the run.
+    """
+    explicit = baseline.get("vlm")
+    if explicit is not None:
+        return bool(explicit)
+    try:
+        manifest = json.loads(
+            (dataset / "manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return False
+    if "figures" in (manifest.get("modalities") or []):
+        return True
+    for item in manifest.get("files") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").lower()
+        if name.endswith(tuple(_FIGURE_FILE_EXTENSIONS)):
+            return True
+    return False
+
+
+def _ingestion_process_options(
+    baseline: dict[str, Any], extra: dict[str, Any] | None = None
+) -> str:
+    """Per-file ``process_options`` sent with each source document upload.
+
+    VLM-enabled runs request image analysis (``Fi``); other runs keep plain
+    fixed chunking.  An explicit ``extra.process_options`` override wins so
+    callers can add tables/equations (e.g. ``Fit``) without code changes.
+    """
+    override = (extra or {}).get("process_options")
+    if override:
+        return str(override)
+    return "Fi" if bool(baseline.get("vlm")) else "F"
+
+
 def _runtime_options(
     baseline: dict[str, Any], extra: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -349,6 +395,12 @@ def _runner(context: RunContext) -> dict[str, Any]:
         context.environment["rag_api_url"] = unit["runtime_endpoint"]
         context.runtime_snapshot = unit["runtime_snapshot"]
         baseline = context.baseline
+        # VLM image analysis: an explicit run parameter wins, otherwise
+        # auto-enable for datasets whose manifest declares figures.  Persist
+        # the effective value so run.json / reports reflect what actually ran.
+        baseline["vlm"] = _effective_vlm(baseline, context.dataset)
+        process_options = _ingestion_process_options(baseline, context.extra)
+        baseline["process_options"] = process_options
         context.progress("running", 1, 1, "runtime", "独立运行环境已就绪")
         context.progress(
             "running", 0, len(source_documents), "ingestion", "正在上传、解析并建立文档索引"
@@ -362,6 +414,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             access_token=context.environment.get("access_token"),
             confirmed_hashes=_confirmed_hashes(context.output_dir),
             file_names=source_documents,
+            process_options=process_options,
             progress_callback=lambda completed, total: context.progress(
                 "running",
                 completed,

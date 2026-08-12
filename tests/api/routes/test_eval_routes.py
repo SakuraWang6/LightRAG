@@ -157,6 +157,78 @@ def test_create_job_rejects_infrastructure_parameters(client: TestClient) -> Non
     assert "infrastructure parameters" in response.json()["detail"]
 
 
+def _selectable_model_capability() -> dict[str, object]:
+    return {
+        "provider": "ollama",
+        "default_model": "qwen3:8b",
+        "parser_engines": ["native"],
+        "default_parser_engine": "native",
+        "models": ["qwen3:8b"],
+        "embedding_filtered": [],
+        "selectable_models": ["qwen3:8b"],
+        "model_selection": "selectable",
+        "configuration_error": None,
+    }
+
+
+def test_create_job_accepts_boolean_vlm(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        eval_routes,
+        "_evaluation_model_capability",
+        _selectable_model_capability,
+    )
+    captured: dict[str, object] = {}
+
+    def start_run_job(**kwargs):
+        captured.update(kwargs)
+        return {"id": "run-job", "status": "pending"}
+
+    monkeypatch.setattr(eval_routes.eval_jobs, "start_run_job", start_run_job)
+    response = client.post(
+        "/eval/jobs",
+        json={"kind": "run", "dataset": "sample", "params": {"vlm": True}},
+    )
+    assert response.status_code == 200
+    assert captured["params"].vlm is True
+
+
+def test_create_job_defaults_vlm_to_auto(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        eval_routes,
+        "_evaluation_model_capability",
+        _selectable_model_capability,
+    )
+    captured: dict[str, object] = {}
+
+    def start_run_job(**kwargs):
+        captured.update(kwargs)
+        return {"id": "run-job", "status": "pending"}
+
+    monkeypatch.setattr(eval_routes.eval_jobs, "start_run_job", start_run_job)
+    response = client.post(
+        "/eval/jobs", json={"kind": "run", "dataset": "sample"}
+    )
+    assert response.status_code == 200
+    assert captured["params"].vlm is None
+
+
+def test_create_job_rejects_non_boolean_vlm(client: TestClient) -> None:
+    response = client.post(
+        "/eval/jobs",
+        json={
+            "kind": "run",
+            "dataset": "sample",
+            "params": {"vlm": "yes"},
+        },
+    )
+    assert response.status_code == 400
+    assert "vlm" in response.json()["detail"]
+
+
 def test_dataset_job_uses_a_business_name_not_a_user_supplied_id(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

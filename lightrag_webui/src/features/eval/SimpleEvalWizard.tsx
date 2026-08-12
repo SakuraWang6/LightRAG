@@ -77,6 +77,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
   const [temperature, setTemperature] = useState(() => numberParam(initial?.params, 'temperature', 0))
   const [engine, setEngine] = useState(() => stringParam(initial?.params, 'engine', 'native'))
   const [kg, setKg] = useState(() => initial?.params?.kg !== false)
+  const [vlm, setVlm] = useState(() => initial?.params?.vlm !== false)
   const [modelOptions, setModelOptions] = useState<string[]>([])
   const [engineOptions, setEngineOptions] = useState<string[]>([])
   const [optionsLoading, setOptionsLoading] = useState(true)
@@ -199,6 +200,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
           temperature: parsedTemperature,
           engine: engine.trim() || 'native',
           kg,
+          vlm,
           question_types: questionTypes.length > 0 ? questionTypes : undefined,
           extra: [
             `extraction_max_async=${parsedExtractionAsync}`,
@@ -213,7 +215,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
     } finally {
       setSubmitting(false)
     }
-  }, [chunkTopK, dataset, datasetInfo, effectiveMode, engine, extractionMaxAsync, kg, maxCases, maxTotalTokens, model, name, numCtx, numPredict, onStarted, optionsError, optionsLoading, queryMaxAsync, questionTypes, t, temperature, topK])
+  }, [chunkTopK, dataset, datasetInfo, effectiveMode, engine, extractionMaxAsync, kg, maxCases, maxTotalTokens, model, name, numCtx, numPredict, onStarted, optionsError, optionsLoading, queryMaxAsync, questionTypes, t, temperature, topK, vlm])
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -290,6 +292,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
                 <span className="text-muted-foreground block text-xs">逐题回答并行数，内存小请用 1</span>
               </label>
               <label className="flex items-center gap-2 self-center rounded-md border px-3 py-2.5"><Checkbox checked={kg} onCheckedChange={(checked) => setKg(checked === true)} /><span className="text-sm font-medium">{t('eval.paramKg')}</span></label>
+              <label className="flex items-center gap-2 self-center rounded-md border px-3 py-2.5"><Checkbox checked={vlm} onCheckedChange={(checked) => setVlm(checked === true)} /><span className="text-sm font-medium">{t('eval.paramVlm')}</span></label>
             </CardContent>
           </Card>
 

@@ -199,6 +199,7 @@ class RunParams:
     max_cases: int = 0
     question_types: list[str] | None = None
     skip_kg: bool = False
+    vlm: bool | None = None
     extra: list[str] = field(default_factory=list)
     heartbeat: bool = False
     restart_count: int = 0
@@ -231,6 +232,7 @@ def params_from_args(args: argparse.Namespace) -> RunParams:
             else None
         ),
         skip_kg=args.skip_kg,
+        vlm=args.vlm,
         extra=list(args.extra),
     )
 
@@ -280,6 +282,8 @@ def build_run_command(params: RunParams) -> list[str]:
             cmd.append(value)
     if params.skip_kg:
         cmd.append("--skip-kg")
+    if params.vlm is not None:
+        cmd.append("--vlm" if params.vlm else "--no-vlm")
     if params.heartbeat:
         cmd.append("--heartbeat")
     if params.restart_count > 0:

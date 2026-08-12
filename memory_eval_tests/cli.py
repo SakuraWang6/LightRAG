@@ -266,6 +266,13 @@ def main() -> None:
         help="Disable KG extraction (isolated storage required)",
     )
     parser.add_argument(
+        "--vlm",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable VLM analysis of document images (default: auto-detect "
+        "from the dataset manifest)",
+    )
+    parser.add_argument(
         "--extra",
         action="append",
         default=[],
@@ -295,6 +302,8 @@ def main() -> None:
             baseline["mode"] = "naive"
         elif args.mode != "naive":
             parser.error("--skip-kg requires --mode naive")
+    if args.vlm is not None:
+        baseline["vlm"] = args.vlm
     baseline["max_cases"] = args.max_cases
     if args.question_types:
         baseline["question_types"] = [

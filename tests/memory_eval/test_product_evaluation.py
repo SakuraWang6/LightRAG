@@ -10,7 +10,7 @@ import pytest
 
 from lightrag.api import eval_comparison
 from memory_eval_tests import artifacts, cli, http
-from memory_eval_tests import execution, workflow
+from memory_eval_tests import execution, ingestion, workflow
 from memory_eval_tests.artifacts import (
     EvaluationDefinition,
     RunContext,
@@ -238,6 +238,150 @@ def test_upload_streams_document_instead_of_reading_the_whole_file(
     ) == {"status": "success"}
     assert b"".join(sent).count(b"document-bytes") == 1
     assert int(headers["Content-Length"]) == sum(len(chunk) for chunk in sent)
+
+
+def test_upload_file_sends_process_options_multipart_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document = tmp_path / "document.docx"
+    document.write_bytes(b"document-bytes")
+    sent: list[bytes] = []
+    headers: dict[str, str] = {}
+
+    class Response:
+        status = 200
+
+        @staticmethod
+        def read() -> bytes:
+            return b'{"status":"success"}'
+
+    class Connection:
+        def __init__(self, host: str, timeout: int) -> None:
+            pass
+
+        @staticmethod
+        def putrequest(method: str, target: str) -> None:
+            pass
+
+        @staticmethod
+        def putheader(name: str, value: str) -> None:
+            headers[name] = value
+
+        @staticmethod
+        def endheaders() -> None:
+            return None
+
+        @staticmethod
+        def send(chunk: bytes) -> None:
+            sent.append(chunk)
+
+        @staticmethod
+        def getresponse() -> Response:
+            return Response()
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    monkeypatch.setattr(http.http.client, "HTTPConnection", Connection)
+    assert http.upload_file(
+        document,
+        "http://127.0.0.1:9621/documents/upload",
+        timeout=12,
+        process_options="Fi",
+    ) == {"status": "success"}
+    body = b"".join(sent)
+    assert b'name="process_options"' in body
+    assert b"\r\nFi\r\n" in body
+    assert int(headers["Content-Length"]) == len(body)
+
+
+def test_upload_dataset_files_forwards_process_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    document = dataset / "document.docx"
+    document.write_bytes(b"document-bytes")
+    (dataset / "manifest.json").write_text(
+        json.dumps(
+            {
+                "dataset_id": "sample",
+                "formats": ["docx"],
+                "files": [
+                    {
+                        "name": "document.docx",
+                        "format": "docx",
+                        "role": "source_document",
+                        "status": "created",
+                        "path": str(document),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    def fake_upload(path, url, **kwargs):
+        captured["path"] = path
+        captured["kwargs"] = kwargs
+        return {"status": "success", "track_id": "track-1"}
+
+    monkeypatch.setattr(ingestion, "_http_upload_file", fake_upload)
+    result = ingestion.upload_dataset_files(
+        dataset_source=str(dataset),
+        rag_api_url="http://127.0.0.1:1",
+        process_options="Fi",
+    )
+    assert result["uploaded"][0]["status"] == "success"
+    assert captured["kwargs"]["process_options"] == "Fi"
+
+
+def test_effective_vlm_auto_detects_figures_from_manifest(
+    tmp_path: Path,
+) -> None:
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    manifest = dataset / "manifest.json"
+
+    manifest.write_text(
+        json.dumps({"modalities": ["text", "figures"]}), encoding="utf-8"
+    )
+    assert workflow._effective_vlm({}, dataset) is True
+
+    manifest.write_text(json.dumps({"modalities": ["text"]}), encoding="utf-8")
+    assert workflow._effective_vlm({}, dataset) is False
+
+    manifest.write_text(
+        json.dumps({"modalities": ["text"]}), encoding="utf-8"
+    )
+    assert workflow._effective_vlm({"vlm": True}, dataset) is True
+    assert workflow._effective_vlm({"vlm": False}, dataset) is False
+
+    # Legacy manifests without a modalities list fall back to figure files.
+    manifest.write_text(
+        json.dumps(
+            {
+                "files": [
+                    {"name": "zh_figure_0004.png", "role": "evaluation_artifact"}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert workflow._effective_vlm({}, dataset) is True
+
+
+def test_ingestion_process_options_reflects_vlm_and_override() -> None:
+    assert workflow._ingestion_process_options({"vlm": True}) == "Fi"
+    assert workflow._ingestion_process_options({"vlm": False}) == "F"
+    assert (
+        workflow._ingestion_process_options(
+            {"vlm": True}, {"process_options": "Fit"}
+        )
+        == "Fit"
+    )
 
 
 def test_disabling_kg_requires_vector_query_mode(

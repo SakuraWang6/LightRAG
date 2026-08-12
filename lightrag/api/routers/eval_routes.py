@@ -103,6 +103,7 @@ _GENERIC_PARAM_KEYS = {
     "max_cases",
     "question_types",
     "kg",
+    "vlm",
     "engine",
     "extra",
 }
@@ -457,6 +458,9 @@ def _build_run_params(
                 f"engine must be one of the configured parser engines: {available_engines}"
             )
     kg_enabled = bool(params.get("kg", True))
+    vlm = params.get("vlm")
+    if vlm is not None and not isinstance(vlm, bool):
+        raise ValueError("vlm must be a boolean")
     mode = params.get("mode")
     if not kg_enabled:
         # With entity/relation extraction skipped, graph-aware modes have no
@@ -514,6 +518,7 @@ def _build_run_params(
             else None
         ),
         skip_kg=not kg_enabled,
+        vlm=vlm,
         extra=extra,
     )
 

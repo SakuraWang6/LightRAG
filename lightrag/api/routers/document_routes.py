@@ -36,6 +36,7 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,
     HTTPException,
     Query,
     Request,
@@ -102,6 +103,7 @@ from lightrag.parser.routing import (
     parse_process_options,
     resolve_chunk_options,
     resolve_parser_directives,
+    validate_process_options,
 )
 from lightrag.tools.source_conflict_repair import (
     refuse_an_unusable_primary,
@@ -2242,6 +2244,7 @@ async def pipeline_enqueue_file(
     from_scan: bool = False,
     admission_token: str | None = None,
     known_file_size: int | None = None,
+    process_options_override: str | None = None,
 ) -> tuple[bool, str]:
     """Add a file to the queue for processing
 
@@ -2261,6 +2264,11 @@ async def pipeline_enqueue_file(
             candidate spool recorded at discovery time; it feeds error reports
             only, so a size that went stale between discovery and enqueue costs
             nothing.
+        process_options_override: Explicit ``process_options`` selector (e.g.
+            ``"Fi"`` to also run VLM image analysis) that replaces the value
+            resolved from the filename hint / ``LIGHTRAG_PARSER`` rules.
+            ``None`` keeps the existing resolution.  Callers are expected to
+            validate the selector before reaching this point.
     Returns:
         tuple: (success: bool, track_id: str)
     """
@@ -2302,7 +2310,11 @@ async def pipeline_enqueue_file(
 
         extraction_engine = directives.engine
         process_options = directives.process_options
-        api_process_options = process_options or PROCESS_OPTION_CHUNK_FIXED
+        api_process_options = (
+            process_options_override
+            or process_options
+            or PROCESS_OPTION_CHUNK_FIXED
+        )
 
         # Overlay any per-file chunk parameters (from the filename hint or a
         # LIGHTRAG_PARSER rule) onto the active strategy's chunk_options so the
@@ -2423,6 +2435,7 @@ async def pipeline_index_file(
     file_path: Path,
     track_id: str = None,
     admission_token: str | None = None,
+    process_options_override: str | None = None,
 ):
     """Index a file with track_id
 
@@ -2433,10 +2446,17 @@ async def pipeline_index_file(
         admission_token: the endpoint's pending-enqueue reservation, forwarded
             so the admission guard re-weights THAT token to the deduped count
             instead of counting this request twice (LR2 §9.2)
+        process_options_override: Explicit ``process_options`` selector that
+            replaces filename-hint / parser-rule resolution.  ``None`` keeps
+            the existing behavior.
     """
     try:
         success, _ = await pipeline_enqueue_file(
-            rag, file_path, track_id, admission_token=admission_token
+            rag,
+            file_path,
+            track_id,
+            admission_token=admission_token,
+            process_options_override=process_options_override,
         )
         if success:
             await rag.apipeline_process_enqueue_documents()
@@ -4918,6 +4938,7 @@ def create_document_routes(
     async def upload_to_input_dir(
         managed_tasks: set = Depends(get_managed_background_tasks),
         file: UploadFile = File(...),
+        process_options: str = Form(""),
         http_request: Request = None,
     ):
         """
@@ -4995,6 +5016,17 @@ def create_document_routes(
                 flight, 413 file too large, 500 other errors.
         """
         from lightrag.kg.shared_storage import start_reserved_background_task
+
+        # FastAPI injects the real form value under TestClient / real requests;
+        # unit tests that call the endpoint coroutine directly leave the
+        # ``Form`` default object in place.  Treat anything non-str as absent
+        # so those call sites keep their existing behavior.
+        raw_process_options = (
+            process_options if isinstance(process_options, str) else ""
+        )
+        option_errors = validate_process_options(raw_process_options)
+        if option_errors:
+            raise HTTPException(status_code=400, detail="; ".join(option_errors))
 
         enqueue_token, admission_adopted = _adopt_or_new_enqueue_token(http_request)
         handed_off = False
@@ -5185,6 +5217,7 @@ def create_document_routes(
                         file_path,
                         track_id,
                         admission_token=enqueue_token,
+                        process_options_override=raw_process_options or None,
                     )
                 finally:
                     await _release_enqueue_slot(rag, enqueue_token)

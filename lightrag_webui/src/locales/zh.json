@@ -542,6 +542,7 @@
     "paramTemperature": "温度",
     "paramEngine": "解析引擎",
     "paramKg": "启用 KG",
+    "paramVlm": "VLM 图片分析",
     "datasets": "数据集",
     "createDataset": "生成数据集",
     "datasetJobStarted": "数据集生成任务已启动",

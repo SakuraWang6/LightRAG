@@ -73,6 +73,7 @@ def upload_file(
     api_key: str | None = None,
     access_token: str | None = None,
     timeout: int = 600,
+    process_options: str | None = None,
 ) -> dict[str, Any]:
     """Upload a document as multipart data without buffering it in memory."""
     parsed = urlsplit(url)
@@ -82,6 +83,14 @@ def upload_file(
     # prevent an unusual local filename from injecting another multipart header.
     filename = path.name.replace("\r", "").replace("\n", "").replace('"', "'")
     boundary = "----lightragMemoryEvalBoundary"
+    extra_field = b""
+    if process_options:
+        extra_field = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="process_options"\r\n'
+            "\r\n"
+            f"{process_options}\r\n"
+        ).encode()
     prefix = (
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
@@ -90,7 +99,9 @@ def upload_file(
     suffix = f"\r\n--{boundary}--\r\n".encode()
     headers = {
         "Content-Type": f"multipart/form-data; boundary={boundary}",
-        "Content-Length": str(len(prefix) + path.stat().st_size + len(suffix)),
+        "Content-Length": str(
+            len(prefix) + path.stat().st_size + len(suffix) + len(extra_field)
+        ),
         **auth_headers(api_key=api_key, access_token=access_token),
     }
     target = parsed.path or "/"
@@ -107,6 +118,8 @@ def upload_file(
         for name, value in headers.items():
             connection.putheader(name, value)
         connection.endheaders()
+        if extra_field:
+            connection.send(extra_field)
         connection.send(prefix)
         with path.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):

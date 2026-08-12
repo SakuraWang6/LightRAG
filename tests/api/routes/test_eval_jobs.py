@@ -22,6 +22,46 @@ def test_run_command_uses_only_the_product_cli(tmp_path: Path) -> None:
     assert "--storage-dir" not in command
 
 
+def test_build_run_command_serializes_vlm(tmp_path: Path) -> None:
+    base = RunParams(dataset=tmp_path / "dataset", output_dir=tmp_path / "output")
+    cmd = build_run_command(base)
+    assert "--vlm" not in cmd
+    assert "--no-vlm" not in cmd
+
+    on = build_run_command(
+        RunParams(
+            dataset=tmp_path / "dataset",
+            output_dir=tmp_path / "output",
+            vlm=True,
+        )
+    )
+    assert "--vlm" in on
+    assert "--no-vlm" not in on
+
+    off = build_run_command(
+        RunParams(
+            dataset=tmp_path / "dataset",
+            output_dir=tmp_path / "output",
+            vlm=False,
+        )
+    )
+    assert "--no-vlm" in off
+    assert "--vlm" not in off
+
+
+def test_job_params_roundtrip_keeps_vlm(tmp_path: Path) -> None:
+    payload = eval_jobs._params_to_json(
+        RunParams(
+            dataset=tmp_path / "dataset",
+            output_dir=tmp_path / "output",
+            vlm=True,
+        )
+    )
+    assert payload["vlm"] is True
+    restored = eval_jobs._params_from_json(payload)
+    assert restored.vlm is True
+
+
 def test_legacy_job_parameters_do_not_block_resumption(tmp_path: Path) -> None:
     params = eval_jobs._params_from_json(
         {
