@@ -149,6 +149,77 @@ def test_dispatch_fills_each_configured_capacity_slot(
     assert started == ["run-a", "run-b"]
 
 
+def test_dataset_generation_uses_a_queue_independent_of_running_evaluations(
+    tmp_path: Path, monkeypatch
+) -> None:
+    jobs = eval_jobs.jobs_root(tmp_path)
+    eval_jobs._write_job(
+        jobs,
+        {
+            "id": "run-active",
+            "kind": "run",
+            "status": "claiming",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "claim": {"lease_expires_at": "2999-01-01T00:00:00+00:00"},
+            "params": {},
+            "output_dir": str(tmp_path / "run-active"),
+        },
+    )
+    eval_jobs._write_job(
+        jobs,
+        {
+            "id": "dataset-pending",
+            "kind": "dataset",
+            "status": "pending",
+            "created_at": "2026-01-01T00:00:01+00:00",
+            "params": {},
+            "output_dir": str(tmp_path / "dataset-pending"),
+        },
+    )
+    started: list[str] = []
+    monkeypatch.setattr(eval_jobs, "_start_dispatch_loop", lambda *_args: None)
+    monkeypatch.setattr(
+        eval_jobs,
+        "_claim_owner",
+        lambda: {"owner_id": "worker", "lease_expires_at": "2999-01-01T00:00:00+00:00"},
+    )
+    monkeypatch.setattr(
+        eval_jobs,
+        "_spawn_dataset_job",
+        lambda *, job_id, **_kwargs: started.append(job_id),
+    )
+
+    eval_jobs._dispatch(tmp_path, tmp_path / "datasets")
+
+    assert started == ["dataset-pending"]
+
+
+def test_queue_positions_are_scoped_to_job_kind(tmp_path: Path) -> None:
+    jobs = eval_jobs.jobs_root(tmp_path)
+    for job_id, kind, created_at in (
+        ("run-first", "run", "2026-01-01T00:00:00+00:00"),
+        ("dataset-only", "dataset", "2026-01-01T00:00:01+00:00"),
+        ("run-second", "run", "2026-01-01T00:00:02+00:00"),
+    ):
+        eval_jobs._write_job(
+            jobs,
+            {
+                "id": job_id,
+                "kind": kind,
+                "status": "pending",
+                "created_at": created_at,
+                "params": {},
+                "output_dir": str(tmp_path / job_id),
+            },
+        )
+
+    listed = {job["id"]: job for job in eval_jobs.list_jobs(runs_root=tmp_path, datasets_root=tmp_path / "datasets")}
+
+    assert listed["run-first"]["queue_position"] == 1
+    assert listed["run-second"]["queue_position"] == 2
+    assert listed["dataset-only"]["queue_position"] == 1
+
+
 def test_dispatch_failure_marks_the_visible_queued_run_as_failed(
     tmp_path: Path, monkeypatch
 ) -> None:

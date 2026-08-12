@@ -72,6 +72,7 @@ def evaluate_answers(
             access_token=access_token,
         )
         answer_text = str(response.get("response") or response.get("content") or "")
+        response_truncated = bool(response.get("response_truncated"))
         references_blob = json.dumps(response.get("references", []), ensure_ascii=False)
         expected = question.get("answer", "")
         evidence_ids = question.get("evidence_fact_ids", [])
@@ -102,6 +103,7 @@ def evaluate_answers(
                 "question": question_text,
                 **scores,
                 "answer": answer_text,
+                "response_truncated": response_truncated,
                 "expected": expected,
                 "question_type": question.get("question_type", ""),
                 "expected_behavior": question.get("expected_behavior", "answer"),
@@ -134,6 +136,7 @@ def evaluate_answers(
         else None,
         "answer_accuracy_denominator": len(decisive),
         "uncertain_answers": total - len(decisive),
+        "generation_truncation_rate": _average(results, "response_truncated"),
         "numeric_unit_accuracy": _average(results, "numeric_unit_correct"),
         "formula_accuracy": _average(results, "formula_correct"),
         "table_cell_accuracy": _average(results, "table_cell_correct"),
@@ -523,6 +526,12 @@ def _metric_definitions() -> dict[str, dict[str, str]]:
             "denominator": "包含稳定 ID 引用的可回答题",
             "scope": "回答层",
             "limitation": "无引用时不可适用，不记为零",
+        },
+        "generation_truncation_rate": {
+            "definition": "模型因输出 token 上限而返回不完整回答的比例",
+            "denominator": "所有回答请求",
+            "scope": "支持 provider 截断信号的非流式 /query 响应",
+            "limitation": "未提供 provider 信号的模型不能据此证明回答完整",
         },
     }
 

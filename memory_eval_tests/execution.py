@@ -167,6 +167,20 @@ def _apply_extraction_safeguards(
             env[env_key] = str(value)
 
 
+def _apply_extraction_execution_options(
+    env: dict[str, str], options: dict[str, Any] | None
+) -> None:
+    """Apply stable, role-scoped execution limits for local KG extraction."""
+    if not options:
+        return
+    timeout = options.get("timeout_seconds")
+    if isinstance(timeout, int) and not isinstance(timeout, bool) and timeout > 0:
+        env["EXTRACT_LLM_TIMEOUT"] = str(timeout)
+    max_async = options.get("max_async")
+    if isinstance(max_async, int) and not isinstance(max_async, bool) and max_async > 0:
+        env["EXTRACT_MAX_ASYNC_LLM"] = str(max_async)
+
+
 def _profile_environment(
     profile: dict[str, Any],
     unit: dict[str, Any],
@@ -228,6 +242,11 @@ def _profile_environment(
     _apply_extraction_safeguards(
         env,
         extraction_safeguards if isinstance(extraction_safeguards, dict) else None,
+    )
+    extraction_execution = (runtime_options or {}).get("extraction_execution")
+    _apply_extraction_execution_options(
+        env,
+        extraction_execution if isinstance(extraction_execution, dict) else None,
     )
     storage_prefixes = {
         "kv": "LIGHTRAG_KV_STORAGE",

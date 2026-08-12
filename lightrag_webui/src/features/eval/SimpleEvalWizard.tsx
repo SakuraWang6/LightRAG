@@ -53,17 +53,6 @@ function numberParam(params: SimpleEvalParams | undefined, key: string, fallback
   return typeof value === 'number' || typeof value === 'string' ? String(value) : String(fallback)
 }
 
-const SCALE_LABELS: Record<string, string> = {
-  smoke: 'eval.scaleSmoke',
-  medium: 'eval.scaleMedium',
-  large: 'eval.scaleLarge',
-  stress: 'eval.scaleStress'
-}
-const COMPLEXITY_LABELS: Record<string, string> = {
-  basic: 'eval.complexityBasic',
-  rich: 'eval.complexityRich'
-}
-
 export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleEvalWizardProps) {
   const { t } = useTranslation()
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
@@ -88,11 +77,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
   const effectiveMode = kg ? mode : 'naive'
   const displayDatasetName = (item: DatasetSummary) => {
     if (item.display_name.trim()) return item.display_name
-    return t('eval.legacyDatasetName', {
-      complexity: t(COMPLEXITY_LABELS[item.profile] ?? item.profile),
-      scale: t(SCALE_LABELS[item.tier] ?? item.tier),
-      pages: item.pages
-    })
+    return item.dataset_id
   }
 
   useEffect(() => {

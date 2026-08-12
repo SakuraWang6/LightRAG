@@ -10,6 +10,7 @@ import pytest
 
 from lightrag.api import eval_comparison
 from memory_eval_tests import artifacts, cli, http
+from memory_eval_tests import execution, workflow
 from memory_eval_tests.artifacts import (
     EvaluationDefinition,
     RunContext,
@@ -79,6 +80,36 @@ def test_environment_snapshot_excludes_obsolete_runtime_coordinates() -> None:
     assert "rag_api_url" not in environment
     assert "ollama_url" not in environment
     assert "storage_dir" not in environment
+
+
+def test_evaluation_runtime_stabilizes_local_extraction() -> None:
+    options = workflow._runtime_options(
+        {
+            "num_ctx": 16384,
+            "num_predict": 4096,
+            "temperature": 0,
+            "extraction_llm_timeout_seconds": 600,
+            "extraction_max_async": 1,
+        }
+    )
+    environment = execution._profile_environment(
+        {
+            "configuration": {
+                "query": {"provider": "ollama", "model": "qwen3:8b"},
+                "embedding": {"provider": "ollama", "model": "bge-m3:latest"},
+                "parser_engine": "native",
+            }
+        },
+        {
+            "storage_dir": "/tmp/test-storage",
+            "input_dir": "/tmp/test-input",
+            "workspace_id": "test-workspace",
+        },
+        options,
+    )
+
+    assert environment["EXTRACT_LLM_TIMEOUT"] == "600"
+    assert environment["EXTRACT_MAX_ASYNC_LLM"] == "1"
 
 
 def test_comparison_requires_exact_case_set_and_scorer_inventory() -> None:

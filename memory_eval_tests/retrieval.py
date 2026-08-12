@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from memory_eval_tests.dataset import DatasetClient
 from memory_eval_tests.evidence import normalize_evidence
@@ -8,7 +9,7 @@ from memory_eval_tests.http import post_json as _http_post_json
 from memory_eval_tests.sampling import sample_evenly
 
 _HIT_EVIDENCE_LIMIT = 5
-_HIT_EVIDENCE_CHARS = 500
+_HIT_EVIDENCE_EXCERPT_CHARS = 700
 _TRACE_CANDIDATE_CHARS = 1200
 
 
@@ -68,24 +69,37 @@ def evaluate_api(
                 rank += 1
                 ranked_chunks.append((rank, ref_index, chunk))
         hits_by_fact: dict[str, int] = {}
-        hit_evidence: dict[str, dict[str, Any]] = {}
+        hit_evidence: list[dict[str, Any]] = []
         hit_chunk_count = 0
         for rank, ref_index, chunk in ranked_chunks:
-            chunk_hit = False
+            chunk_matches: list[dict[str, Any]] = []
             for fact in expected_facts:
-                if _content_contains_fact(chunk, fact):
-                    fact_id = fact["fact_id"]
-                    if fact_id not in hits_by_fact:
-                        hits_by_fact[fact_id] = rank
-                        hit_evidence[fact_id] = {
-                            "fact_id": fact_id,
-                            "rank": rank,
-                            "file_path": references[ref_index].get("file_path", ""),
-                            "text": chunk[:_HIT_EVIDENCE_CHARS],
-                        }
-                    chunk_hit = True
-            if chunk_hit:
+                fact_id = str(fact["fact_id"])
+                # A FACT identifier alone is metadata, not proof that the
+                # answer-bearing evidence was retrieved. This was especially
+                # misleading for long tables: an introductory sentence could
+                # mention FACT-00027 while the 54.99 ms table row appeared in
+                # a later chunk.
+                match = _find_fact_match(chunk, fact)
+                if match is None or fact_id in hits_by_fact:
+                    continue
+                hits_by_fact[fact_id] = rank
+                chunk_matches.append(match)
+            if chunk_matches:
                 hit_chunk_count += 1
+                hit_evidence.append(
+                    {
+                        "rank": rank,
+                        "file_path": references[ref_index].get("file_path", ""),
+                        # Persist the complete retrieved chunk for expandable
+                        # review. The collapsed WebUI view uses each match's
+                        # focused excerpt, so distinct facts in one chunk no
+                        # longer render as duplicated first-N-character text.
+                        "text": chunk,
+                        "chars": len(chunk),
+                        "matches": chunk_matches,
+                    }
+                )
 
         expected_count = len(expected_facts)
         recall = len(hits_by_fact) / expected_count if expected_count else 0.0
@@ -110,12 +124,7 @@ def evaluate_api(
                         hits_by_fact.items(), key=lambda item: item[1]
                     )
                 ],
-                "hit_evidence": [
-                    hit_evidence[fact_id]
-                    for fact_id in sorted(
-                        hit_evidence, key=lambda item: hits_by_fact[item]
-                    )
-                ][:_HIT_EVIDENCE_LIMIT],
+                "hit_evidence": hit_evidence[:_HIT_EVIDENCE_LIMIT],
                 "top_contexts": [
                     {
                         "rank": ref_index + 1,
@@ -199,13 +208,13 @@ def _ranked_references(response: dict[str, Any]) -> list[dict[str, Any]]:
     if references is None:
         references = response.get("references")
     if not isinstance(references, list):
-        raise ValueError(
+        raise TypeError(
             "/query/data response contains no ranked references list; "
             "cannot compute API retrieval metrics."
         )
     for index, ref in enumerate(references):
         if not isinstance(ref, dict) or not isinstance(ref.get("content"), list):
-            raise ValueError(
+            raise TypeError(
                 "Reference item at index "
                 f"{index} has no chunk content array; set "
                 "include_chunk_content=true on the /query/data request."
@@ -214,14 +223,98 @@ def _ranked_references(response: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _content_contains_fact(content: str, fact: dict[str, Any]) -> bool:
-    normalized_content = normalize_evidence(content)
-    return (
-        fact.get("fact_id", "") in content
-        or fact.get("answer", "") in content
-        or fact.get("expected_text", "") in content
-        or normalize_evidence(str(fact.get("answer", ""))) in normalized_content
-        or normalize_evidence(str(fact.get("expected_text", ""))) in normalized_content
-    )
+    """Return whether ``content`` contains answer-bearing evidence for ``fact``.
+
+    A stable fact ID is useful for diagnostics but it is not sufficient
+    evidence: source prose can name the ID without including its value. Keep
+    this helper as the compatibility boundary for callers/tests while making
+    the stricter witness rule explicit.
+    """
+    return _find_fact_match(content, fact) is not None
+
+
+def _find_fact_match(content: str, fact: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a focused proof of a fact match, or ``None`` when it is absent."""
+    for match_type, witness in _fact_witnesses(fact):
+        span = _find_evidence_span(content, witness)
+        if span is None:
+            continue
+        start, end = span
+        excerpt_start, excerpt_end = _excerpt_bounds(len(content), start, end)
+        return {
+            "fact_id": str(fact.get("fact_id") or ""),
+            "match_type": match_type,
+            "matched_text": witness,
+            "start": start,
+            "end": end,
+            "excerpt": content[excerpt_start:excerpt_end],
+            "excerpt_start": excerpt_start,
+            "excerpt_end": excerpt_end,
+            "excerpt_truncated": excerpt_start > 0 or excerpt_end < len(content),
+        }
+    return None
+
+
+def _fact_witnesses(fact: dict[str, Any]) -> list[tuple[str, str]]:
+    """Return unique non-empty answer-bearing strings in priority order."""
+    witnesses: list[tuple[str, str]] = []
+    normalized_seen: set[str] = set()
+    for match_type, key in (("answer", "answer"), ("expected_text", "expected_text")):
+        value = fact.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        witness = value.strip()
+        normalized = normalize_evidence(witness)
+        if not normalized or normalized in normalized_seen:
+            continue
+        normalized_seen.add(normalized)
+        witnesses.append((match_type, witness))
+    return witnesses
+
+
+def _find_evidence_span(content: str, witness: str) -> tuple[int, int] | None:
+    """Locate a literal or normalization-equivalent witness in source text."""
+    literal_start = content.lower().find(witness.lower())
+    if literal_start >= 0:
+        return literal_start, literal_start + len(witness)
+
+    normalized_witness = normalize_evidence(witness)
+    if not normalized_witness:
+        return None
+    normalized_content, offsets = _normalized_content_with_offsets(content)
+    normalized_start = normalized_content.find(normalized_witness)
+    if normalized_start < 0:
+        return None
+    normalized_end = normalized_start + len(normalized_witness) - 1
+    return offsets[normalized_start], offsets[normalized_end] + 1
+
+
+def _normalized_content_with_offsets(content: str) -> tuple[str, list[int]]:
+    """Mirror ``normalize_evidence`` while retaining source character offsets."""
+    normalized_chars: list[str] = []
+    offsets: list[int] = []
+    for index, char in enumerate(content):
+        if char in {"\\", "{", "}", " ", "\n"}:
+            continue
+        normalized_chars.append(char.lower())
+        offsets.append(index)
+    return "".join(normalized_chars), offsets
+
+
+def _excerpt_bounds(content_chars: int, match_start: int, match_end: int) -> tuple[int, int]:
+    """Return a bounded excerpt centred on the answer-bearing evidence."""
+    if content_chars <= _HIT_EVIDENCE_EXCERPT_CHARS:
+        return 0, content_chars
+    prefix_chars = min(220, match_start)
+    start = match_start - prefix_chars
+    end = min(content_chars, start + _HIT_EVIDENCE_EXCERPT_CHARS)
+    if end - start < _HIT_EVIDENCE_EXCERPT_CHARS:
+        start = max(0, end - _HIT_EVIDENCE_EXCERPT_CHARS)
+    # A very long witness is still shown in full whenever it fits the source.
+    if match_end > end:
+        end = min(content_chars, match_end)
+        start = max(0, end - _HIT_EVIDENCE_EXCERPT_CHARS)
+    return start, end
 
 
 def _post_json(

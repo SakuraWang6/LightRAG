@@ -34,6 +34,8 @@ def _runtime_options(baseline: dict[str, Any]) -> dict[str, Any]:
     """Return answer controls plus extraction-specific integrity safeguards."""
     answer_num_predict = int(baseline.get("num_predict") or 4096)
     answer_num_ctx = int(baseline.get("num_ctx") or 16384)
+    extraction_timeout = int(baseline.get("extraction_llm_timeout_seconds") or 600)
+    extraction_max_async = int(baseline.get("extraction_max_async") or 1)
     return {
         "skip_kg": not bool(baseline.get("kg", True)),
         "generation": {
@@ -48,6 +50,10 @@ def _runtime_options(baseline: dict[str, Any]) -> dict[str, Any]:
             "num_ctx": answer_num_ctx,
             "num_predict": max(answer_num_predict, 8192),
             "temperature": float(baseline.get("temperature") or 0),
+        },
+        "extraction_execution": {
+            "timeout_seconds": max(1, extraction_timeout),
+            "max_async": max(1, extraction_max_async),
         },
         "extraction_safeguards": {
             "use_json": True,

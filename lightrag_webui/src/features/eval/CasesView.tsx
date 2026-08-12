@@ -35,6 +35,7 @@ type NormalizedCase = {
   verdict: string
   type: string
   expectedBehavior: string
+  responseTruncated: boolean
   scorer: Detail
   retrieval: Detail
   finalContextEvidence: Detail
@@ -76,6 +77,7 @@ function normalize(row: Record<string, unknown>): NormalizedCase {
     verdict,
     type: String(row.question_type ?? ''),
     expectedBehavior: String(row.expected_behavior ?? 'answer'),
+    responseTruncated: row.response_truncated === true,
     scorer: asRecord(detailValue(row, 'scorer')),
     retrieval: asRecord(detailValue(row, 'retrieval')),
     finalContextEvidence: asRecord(detailValue(row, 'final_context_evidence')),
@@ -112,6 +114,11 @@ function ScoreExplanation({ c }: { c: NormalizedCase }) {
       <p className="text-sm leading-6">{text}</p>
       {reason ? <p className="text-muted-foreground mt-1 text-xs leading-5">{reason}</p> : null}
       {mode ? <p className="text-muted-foreground mt-2 text-xs">评分方式：{mode}</p> : null}
+      {c.responseTruncated ? (
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
+          <TriangleAlertIcon className="size-3.5" /> 模型达到最大输出限制；此回答可能不完整。
+        </p>
+      ) : null}
     </section>
   )
 }
@@ -191,11 +198,38 @@ function RetrievalEvidence({ c }: { c: NormalizedCase }) {
           {evidence.map((item, index) => (
             <blockquote key={`${String(item.fact_id ?? '')}-${index}`} className="border-primary/25 bg-primary/[0.025] rounded-md border-l-2 px-3 py-2.5">
               <p className="text-muted-foreground mb-1 text-xs">
-                {String(item.fact_id ?? '目标事实')} · 第 {String(item.rank ?? '—')} 条
+                第 {String(item.rank ?? '—')} 条
                 {item.file_path ? ` · ${String(item.file_path)}` : ''}
                 {item.kind ? ` · ${String(item.kind)}` : ''}
               </p>
-              <p className="whitespace-pre-wrap break-words text-sm leading-6">{String(item.text ?? '—')}</p>
+              {asList(item.matches).length > 0 ? (
+                <div className="space-y-3">
+                  {asList(item.matches).map((match, matchIndex) => (
+                    <div key={`${String(match.fact_id ?? '')}-${matchIndex}`}>
+                      <p className="text-muted-foreground mb-1 text-xs">
+                        {String(match.fact_id ?? '目标事实')} · {String(match.match_type ?? 'evidence')}
+                        {typeof match.start === 'number' && typeof item.chars === 'number'
+                          ? ` · 位置 ${match.start + 1}/${item.chars}`
+                          : ''}
+                      </p>
+                      <p className="whitespace-pre-wrap break-words text-sm leading-6">{String(match.excerpt ?? item.text ?? '—')}</p>
+                    </div>
+                  ))}
+                  {typeof item.text === 'string' && item.text.length > 0 ? (
+                    <details className="text-sm">
+                      <summary className="text-primary cursor-pointer select-none">
+                        查看完整检索 chunk{typeof item.chars === 'number' ? `（${item.chars} 字符）` : ''}
+                      </summary>
+                      <p className="mt-2 whitespace-pre-wrap break-words leading-6">{item.text}</p>
+                    </details>
+                  ) : null}
+                </div>
+              ) : (
+                <>
+                  <p className="text-muted-foreground mb-1 text-xs">{String(item.fact_id ?? '目标事实')}</p>
+                  <p className="whitespace-pre-wrap break-words text-sm leading-6">{String(item.text ?? '—')}</p>
+                </>
+              )}
             </blockquote>
           ))}
         </div>

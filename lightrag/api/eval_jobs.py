@@ -51,7 +51,23 @@ def _now_iso() -> str:
 
 
 def _max_active_jobs() -> int:
+    """Return the execution capacity for model-backed evaluation runs only."""
     raw = os.getenv("MEMORY_EVAL_MAX_ACTIVE_JOBS")
+    if raw and raw.strip().isdigit():
+        return max(1, int(raw.strip()))
+    return 1
+
+
+def _max_active_dataset_jobs() -> int:
+    """Return the independent capacity for local dataset-generation jobs.
+
+    Dataset generation writes deterministic files and does not call the local
+    Ollama model.  It must therefore never be held behind a model-backed run.
+    A conservative default still avoids several DOCX writers contending for
+    the same machine; installations that have CPU and I/O headroom can raise
+    it without changing evaluation-run concurrency.
+    """
+    raw = os.getenv("MEMORY_EVAL_MAX_ACTIVE_DATASET_JOBS")
     if raw and raw.strip().isdigit():
         return max(1, int(raw.strip()))
     return 1
@@ -124,7 +140,7 @@ def _claim_file_lock(runs_root: Path):
 
 
 def _hold_blocks(runs_root: Path) -> bool:
-    """True while MEMORY_EVAL_WAIT_FOR_RUN has not reached status complete."""
+    """True while the optional *run* queue hold has not reached completion."""
     hold = os.getenv("MEMORY_EVAL_WAIT_FOR_RUN")
     if not hold:
         return False
@@ -671,16 +687,21 @@ def _spawn_dataset_job(
 
 
 def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
-    """Start the oldest pending job when a slot is free (FIFO queue)."""
+    """Dispatch independent FIFO queues for runs and dataset generation.
+
+    A ``run`` owns a local LightRAG/Ollama execution unit and is intentionally
+    capacity-limited.  A ``dataset`` job only generates deterministic source
+    files, so it has a separate capacity and can run while a model evaluation
+    is active.  The job records remain in one directory for audit and cancel
+    operations; scheduling is separated by ``kind``.
+    """
     _start_dispatch_loop(runs_root, datasets_root)
     with _DISPATCH_LOCK:
         datasets_root = datasets_root or _default_datasets_root(runs_root)
-        if _hold_blocks(runs_root):
-            return
         jobs = jobs_root(runs_root)
         with _claim_file_lock(runs_root):
-            # Re-scan after each launch so MEMORY_EVAL_MAX_ACTIVE_JOBS is a
-            # real capacity rather than a misleading one-job-per-dispatch cap.
+            # Re-scan after each launch so both per-kind capacities are real,
+            # rather than a misleading one-job-per-dispatch cap.
             while True:
                 raw = [
                     _refresh_job(
@@ -691,14 +712,54 @@ def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
                     )
                     for j in _raw_jobs(runs_root)
                 ]
-                active = [j for j in raw if j.get("status") in _ACTIVE_STATUSES]
-                if len(active) >= _max_active_jobs():
+                active = {
+                    kind: [
+                        job
+                        for job in raw
+                        if job.get("kind") == kind
+                        and job.get("status") in _ACTIVE_STATUSES
+                    ]
+                    for kind in ("run", "dataset")
+                }
+                pending = {
+                    kind: sorted(
+                        (
+                            job
+                            for job in raw
+                            if job.get("kind") == kind
+                            and job.get("status") == "pending"
+                        ),
+                        key=lambda job: (
+                            job.get("created_at") or "",
+                            job.get("id") or "",
+                        ),
+                    )
+                    for kind in ("run", "dataset")
+                }
+                launchable: list[dict[str, Any]] = []
+                if (
+                    not _hold_blocks(runs_root)
+                    and len(active["run"]) < _max_active_jobs()
+                    and pending["run"]
+                ):
+                    launchable.append(pending["run"][0])
+                if (
+                    len(active["dataset"]) < _max_active_dataset_jobs()
+                    and pending["dataset"]
+                ):
+                    launchable.append(pending["dataset"][0])
+                if not launchable:
                     return
-                pending = [j for j in raw if j.get("status") == "pending"]
-                if not pending:
-                    return
-                pending.sort(key=lambda j: (j.get("created_at") or "", j.get("id") or ""))
-                job = pending[0]
+                # Keep chronological fairness when both independent queues
+                # have capacity, while never allowing one kind to consume the
+                # other kind's slot.
+                job = min(
+                    launchable,
+                    key=lambda candidate: (
+                        candidate.get("created_at") or "",
+                        candidate.get("id") or "",
+                    ),
+                )
                 claim = _claim_owner()
                 job.update(
                     {
@@ -909,14 +970,29 @@ def list_jobs(*, runs_root: Path, datasets_root: Path) -> list[dict[str, Any]]:
         key=lambda job: (job.get("created_at") or "", job.get("id") or ""),
         reverse=True,
     )
-    active_count = sum(1 for job in jobs if job.get("status") == "running")
-    pending = sorted(
-        (job for job in jobs if job.get("status") == "pending"),
-        key=lambda job: (job.get("created_at") or "", job.get("id") or ""),
-    )
-    positions = {job["id"]: index for index, job in enumerate(pending, start=1)}
+    active_counts = {
+        kind: sum(
+            1
+            for job in jobs
+            if job.get("kind") == kind and job.get("status") == "running"
+        )
+        for kind in ("run", "dataset")
+    }
+    positions: dict[str, int] = {}
+    for kind in ("run", "dataset"):
+        pending = sorted(
+            (
+                job
+                for job in jobs
+                if job.get("kind") == kind and job.get("status") == "pending"
+            ),
+            key=lambda job: (job.get("created_at") or "", job.get("id") or ""),
+        )
+        positions.update(
+            {job["id"]: index for index, job in enumerate(pending, start=1)}
+        )
     for job in jobs:
-        job["active_count"] = active_count
+        job["active_count"] = active_counts.get(job.get("kind"), 0)
         job["queue_position"] = positions.get(job["id"])
     return jobs
 

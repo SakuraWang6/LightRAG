@@ -52,6 +52,12 @@ BASELINE_DEFAULTS: dict[str, Any] = {
     "num_predict": 4096,
     "max_total_tokens": 8192,
     "temperature": 0,
+    # Local 8B models can take several minutes to produce a structured KG
+    # extraction. Keep the isolated evaluation runner reliable and
+    # deterministic instead of issuing four competing GPU requests against a
+    # 240-second generic service timeout.
+    "extraction_llm_timeout_seconds": 600,
+    "extraction_max_async": 1,
     "kg": True,
     "vlm": False,
     "engine": "native",
@@ -87,6 +93,8 @@ _CONDITION_LABELS = {
     "num_predict": "最大输出",
     "max_total_tokens": "最大上下文 Token",
     "temperature": "温度",
+    "extraction_llm_timeout_seconds": "抽取超时",
+    "extraction_max_async": "抽取并发",
     "kg": "KG",
     "vlm": "VLM 抽取",
     "embedding_model": "Embedding",

@@ -188,6 +188,7 @@ from lightrag.utils import (
     run_in_chunking_executor,
     TokenLimitTruncationTally,
     LLM_TRUNCATION_METADATA_KEY,
+    is_truncated_response,
     merge_truncation_metadata,
 )
 from lightrag.types import KnowledgeGraph
@@ -4204,6 +4205,7 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                             "content": response,
                             "response_iterator": None,
                             "is_streaming": False,
+                            "truncated": is_truncated_response(response),
                         },
                     }
                 else:
@@ -4250,6 +4252,15 @@ class LightRAG(_RoleLLMMixin, _StorageMigrationMixin, _PipelineMixin):
                 if query_result.is_streaming
                 else None,
                 "is_streaming": query_result.is_streaming,
+                # Keep the provider's token-limit signal until the API layer
+                # has serialized it. Pydantic converts str subclasses to
+                # plain strings, so detecting it after response serialization
+                # would be too late.
+                "truncated": (
+                    is_truncated_response(query_result.content)
+                    if not query_result.is_streaming
+                    else False
+                ),
             }
 
             return raw_data

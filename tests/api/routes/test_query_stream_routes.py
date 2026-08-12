@@ -15,7 +15,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-
 _ENV_VARS_TO_ISOLATE = (
     "LLM_BINDING",
     "EMBEDDING_BINDING",
@@ -132,6 +131,27 @@ class TestQueryRouteJsonOnly:
         )
         assert traced.status_code == 200
         assert traced.json()["evaluation_trace"]["final_context"] == "controlled"
+
+    def test_query_returns_provider_token_limit_truncation_signal(self):
+        from lightrag.api.routers.query_routes import create_query_routes
+
+        class TruncatedRag:
+            async def aquery_llm(self, *_args, **_kwargs):
+                return {
+                    "llm_response": {
+                        "content": "partial answer",
+                        "is_streaming": False,
+                        "truncated": True,
+                    },
+                    "data": {"references": []},
+                }
+
+        app = FastAPI()
+        app.include_router(create_query_routes(TruncatedRag()))
+        response = TestClient(app).post("/query", json={"query": "test", "mode": "mix"})
+
+        assert response.status_code == 200
+        assert response.json()["response_truncated"] is True
 
 
 class TestQueryStreamRoute:

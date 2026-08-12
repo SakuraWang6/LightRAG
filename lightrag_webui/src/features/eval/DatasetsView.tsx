@@ -150,11 +150,7 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
 
   const displayDatasetName = (item: DatasetSummary) => {
     if (item.display_name.trim()) return item.display_name
-    return t('eval.legacyDatasetName', {
-      complexity: t(COMPLEXITY_LABELS[item.profile] ?? item.profile),
-      scale: t(SCALE_LABELS[item.tier] ?? item.tier),
-      pages: item.pages
-    })
+    return item.dataset_id
   }
 
   const remove = useCallback(

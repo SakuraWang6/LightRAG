@@ -263,6 +263,10 @@ class QueryResponse(BaseModel):
         default=None,
         description="Total server-side processing time in seconds (retrieval + LLM generation)",
     )
+    response_truncated: bool = Field(
+        default=False,
+        description="True when the model stopped at its output token limit; response may be incomplete.",
+    )
     evaluation_trace: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Final prompt/context trace. Present only when evaluation_trace=true.",
@@ -583,6 +587,7 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
             response_content = llm_response.get("content", "")
             if not response_content:
                 response_content = "No relevant context found for the query."
+            response_truncated = bool(llm_response.get("truncated"))
 
             # Enrich references with chunk content if requested
             if request.include_references and request.include_chunk_content:
@@ -596,6 +601,7 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
                     response=response_content,
                     references=references,
                     response_time=response_time,
+                    response_truncated=response_truncated,
                     evaluation_trace=(
                         result.get("evaluation_trace") if request.evaluation_trace else None
                     ),
@@ -605,6 +611,7 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
                     response=response_content,
                     references=None,
                     response_time=response_time,
+                    response_truncated=response_truncated,
                     evaluation_trace=(
                         result.get("evaluation_trace") if request.evaluation_trace else None
                     ),
