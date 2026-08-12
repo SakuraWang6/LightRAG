@@ -442,7 +442,7 @@ def _write_docx(
                 questions.append(
                     QuestionRecord(
                         id=f"Q-RELEASE-GATE-{page:04d}",
-                        question="依据最近的交付里程碑和风险控制要求，涉及退款或隐私信息的单元在满足里程碑后还需要什么才能上线？",
+                        question=f"依据第 {page} 页附近的交付里程碑和风险控制要求，涉及退款或隐私信息的单元在满足里程碑后还需要什么才能上线？",
                         answer="周衡完成来源复核且顾澄完成安全签核",
                         question_type="multi_hop",
                         evidence_fact_ids=[last_delivery_fact, last_risk_fact],
@@ -578,7 +578,7 @@ def _write_docx(
                 questions.append(
                     QuestionRecord(
                         id=f"Q-MULTIHOP-{page:04d}",
-                        question="结合本页公式和最近的标准表格行，应引用哪两个事实编号？",
+                        question=f"结合第 {page} 页公式和最近的标准表格行，应引用哪两个事实编号？",
                         answer=f"{previous_table_fact}；{equation_fact_id}",
                         question_type="multi_hop",
                         evidence_fact_ids=[previous_table_fact, equation_fact_id],

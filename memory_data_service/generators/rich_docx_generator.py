@@ -388,7 +388,7 @@ class RichDocxBuilder:
                 question_id=f"Q-RELEASE-GATE-{page:04d}",
                 fact_ids=[self.last_delivery_fact, self.last_risk_fact],
                 question=(
-                    "After the most recent business-acceptance gate is met, what additional "
+                    f"After the most recent business-acceptance gate for retrieval cell {page:04d} is met, what additional "
                     "approvals are required before a refund or personal-data change can enter production?"
                 ),
                 answer="Darius Holt source approval and Priya Shah security sign-off",

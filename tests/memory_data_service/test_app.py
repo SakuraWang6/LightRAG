@@ -142,6 +142,19 @@ def test_chinese_rich_dataset_contains_chinese_oracle_and_provenance(tmp_path) -
     assert any(fact.fact_type == "governance_owner" for fact in oracle.facts)
     assert any(question.id == "Q-RELEASE-GATE-0004" for question in oracle.questions)
     assert any(question.question_type == "cross_document" for question in oracle.questions)
+    # Regression: repeated multi-hop questions must anchor the page in the
+    # question text, otherwise identical queries collapse to one retrieval
+    # context and one cached answer (observed as 4 identical wrong answers).
+    multihop = [q for q in oracle.questions if q.id.startswith("Q-MULTIHOP-")]
+    assert multihop and all(
+        f"第 {int(q.id.rsplit('-', 1)[1])} 页" in q.question for q in multihop
+    )
+    release_gates = [q for q in oracle.questions if q.id.startswith("Q-RELEASE-GATE-")]
+    assert release_gates and all(
+        f"第 {int(q.id.rsplit('-', 1)[1])} 页" in q.question for q in release_gates
+    )
+    texts = [q.question for q in oracle.questions]
+    assert len(texts) == len(set(texts))
     assert oracle.objects
     assert (tmp_path / manifest.dataset_id / "zh-rich-smoke.docx").exists()
 
@@ -166,3 +179,10 @@ def test_english_rich_dataset_contains_operational_dependencies(tmp_path) -> Non
     assert manifest.generation_provenance.template_version == "rich-docx-v2"
     assert any(fact.fact_type == "governance_owner" for fact in oracle.facts)
     assert any(question.id == "Q-RELEASE-GATE-0004" for question in oracle.questions)
+    release_gates = [q for q in oracle.questions if q.id.startswith("Q-RELEASE-GATE-")]
+    assert release_gates and all(
+        f"retrieval cell {int(q.id.rsplit('-', 1)[1]):04d}" in q.question.lower()
+        for q in release_gates
+    )
+    texts = [q.question for q in oracle.questions]
+    assert len(texts) == len(set(texts))
