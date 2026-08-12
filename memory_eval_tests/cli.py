@@ -8,10 +8,11 @@ import signal
 import sys
 import threading
 import traceback
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from memory_eval_tests.artifacts import (
     BASELINE_DEFAULTS,

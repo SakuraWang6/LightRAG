@@ -21,7 +21,7 @@ import urllib.request
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
@@ -519,9 +519,9 @@ def _build_run_params(
 
 
 def create_eval_routes(
-    api_key: Optional[str] = None,
-    runs_root: Optional[Path] = None,
-    datasets_root: Optional[Path] = None,
+    api_key: str | None = None,
+    runs_root: Path | None = None,
+    datasets_root: Path | None = None,
 ) -> APIRouter:
     """Create the eval-console router.
 
@@ -570,10 +570,10 @@ def create_eval_routes(
 
     @router.get("/runs", dependencies=[Depends(combined_auth)])
     async def list_runs(
-        dataset: Optional[str] = Query(
+        dataset: str | None = Query(
             default=None, description="Filter by dataset id"
         ),
-        q: Optional[str] = Query(
+        q: str | None = Query(
             default=None, description="Search label / dataset / artifact titles"
         ),
         limit: int = Query(

@@ -9,11 +9,13 @@ The LLM part uses the same local Ollama backend as the evaluation to explain
 
 from __future__ import annotations
 
-import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _string(value: Any) -> str:
@@ -104,7 +106,6 @@ def build_stage_matrix(case_traces: list[dict[str, Any]]) -> dict[str, Any]:
 def render_stage_matrix(matrix: dict[str, Any]) -> str:
     cells = matrix["cells"]
     rows = matrix["rows"]
-    total = len(rows)
     lines = [
         "## 流程级归因（检索 × 回答）",
         "",
@@ -202,14 +203,16 @@ async def _ollama_chat(
         try:
             await client._client.aclose()
         except Exception:
-            pass
+            logger.debug("failed to close Ollama client after analysis call", exc_info=True)
 
 
 def _overview_prompt(matrix: dict[str, Any], run_summary: dict[str, Any]) -> str:
     cells = matrix["cells"]
     lines = [
-        "你是 LightRAG 检索增强问答系统的评测分析员。下面是一次中文文档记忆测评的逐题流程状态汇总，"
-        "请用中文给出简洁的总体分析，不超过 500 字：",
+        (
+            "你是 LightRAG 检索增强问答系统的评测分析员。下面是一次中文文档记忆测评的逐题流程状态汇总，"
+            "请用中文给出简洁的总体分析，不超过 500 字："
+        ),
         "",
         "运行概要：",
         f"- 正确题数 / 总题数：{run_summary.get('correct')} / {run_summary.get('total')}",
@@ -238,9 +241,11 @@ def _overview_prompt(matrix: dict[str, Any], run_summary: dict[str, Any]) -> str
 
 def _case_prompt(rows: list[dict[str, Any]]) -> str:
     lines = [
-        "你是 LightRAG 检索增强问答系统的评测分析员。下面列出若干道未通过评测的题目，"
-        "请逐题指出失败发生在哪个流程（检索 / 上下文选择与截断 / 生成与提示词 / 拒答），并给出原因与改进建议。"
-        "每题用三行以内，格式：`题号：流程 → 原因 → 建议`。不要猜测不存在的信息。",
+        (
+            "你是 LightRAG 检索增强问答系统的评测分析员。下面列出若干道未通过评测的题目，"
+            "请逐题指出失败发生在哪个流程（检索 / 上下文选择与截断 / 生成与提示词 / 拒答），并给出原因与改进建议。"
+            "每题用三行以内，格式：`题号：流程 → 原因 → 建议`。不要猜测不存在的信息。"
+        ),
         "",
     ]
     for row in rows:
@@ -255,15 +260,10 @@ def _case_prompt(rows: list[dict[str, Any]]) -> str:
 
 
 def _case_analysis_markdown(output: str) -> str:
-    return "\n".join(
-        [
-            "### 未通过题目分析（本地 LLM）",
-            "",
-            "以下分析由本地模型生成，仅供定位问题参考：",
-            "",
-            output.strip(),
-            "",
-        ]
+    return (
+        "### 未通过题目分析（本地 LLM）\n\n"
+        "以下分析由本地模型生成，仅供定位问题参考：\n\n"
+        f"{output.strip()}\n"
     )
 
 

@@ -133,7 +133,7 @@ class RichDocxBuilder:
             else:
                 section_id = section_ids[section_title]
 
-            text_fact_id, paragraph_id = self._add_gold_paragraph(
+            text_fact_id, _paragraph_id = self._add_gold_paragraph(
                 doc, page, section_path, section_id
             )
             last_text_fact = text_fact_id

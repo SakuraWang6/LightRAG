@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from lightrag.utils import logger
 from memory_eval_tests.artifacts import build_failure, mark_envelope_failed
 from memory_eval_tests.runner import (
     RunParams,
@@ -164,7 +165,7 @@ def _default_datasets_root(runs_root: Path) -> Path:
 
 
 def _job_id(kind: str) -> str:
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return f"{kind}-{ts}-{uuid.uuid4().hex[:4]}"
 
 
@@ -184,9 +185,12 @@ def _probe_process_start(pid: int) -> int | None:
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         ).stdout.strip()
         if out:
-            started = datetime.strptime(out, "%a %b %d %H:%M:%S %Y")
+            started = datetime.strptime(
+                out, "%a %b %d %H:%M:%S %Y"
+            ).replace(tzinfo=timezone.utc)
             return int(started.timestamp())
     except (OSError, subprocess.SubprocessError, ValueError):
         pass
@@ -390,7 +394,7 @@ def _renew_job_lease(
 
 def _unique_run_dir(runs_root: Path) -> Path:
     while True:
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         candidate = runs_root / f"evaluation-{ts}-{uuid.uuid4().hex[:4]}"
         if not candidate.exists():
             return candidate
@@ -651,16 +655,15 @@ def _spawn_dataset_job(
         cmd.append("--force")
     if params.get("allow_oversized_generation"):
         cmd.append("--allow-oversized-generation")
-    log_handle = open(job_dir / "run.log", "a", encoding="utf-8")
-    proc = subprocess.Popen(
-        cmd,
-        cwd=_REPO_ROOT,
-        env=dict(os.environ),
-        start_new_session=True,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-    )
-    log_handle.close()
+    with open(job_dir / "run.log", "a", encoding="utf-8") as log_handle:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=_REPO_ROOT,
+            env=dict(os.environ),
+            start_new_session=True,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+        )
     job.update(
         {
             "pid": proc.pid,
@@ -826,8 +829,8 @@ def _start_dispatch_loop(runs_root: Path, datasets_root: Path | None = None) -> 
             time.sleep(60)
             try:
                 _dispatch(runs_root, datasets_root)
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 - keep the loop alive
+                logger.error("eval job dispatch loop failed: %s", exc)
 
     threading.Thread(target=_loop, daemon=True).start()
 

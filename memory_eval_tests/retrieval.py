@@ -10,7 +10,6 @@ from memory_eval_tests.sampling import sample_evenly
 
 _HIT_EVIDENCE_LIMIT = 5
 _HIT_EVIDENCE_EXCERPT_CHARS = 700
-_TRACE_CANDIDATE_CHARS = 1200
 
 
 def evaluate_api(
@@ -175,20 +174,6 @@ def evaluate_api(
                         ],
                     }
                     for ref_index, ref in enumerate(references)
-                ],
-                "top_k_candidates": [
-                    {
-                        "rank": candidate_rank,
-                        "reference_rank": ref_index + 1,
-                        "file_path": references[ref_index].get("file_path", ""),
-                        "score": {
-                            "value": "unknown",
-                            "reason": "query/data response does not expose a candidate score",
-                        },
-                        "text": chunk[:_TRACE_CANDIDATE_CHARS],
-                        "truncated": len(chunk) > _TRACE_CANDIDATE_CHARS,
-                    }
-                    for candidate_rank, ref_index, chunk in ranked_chunks
                 ],
             }
         )

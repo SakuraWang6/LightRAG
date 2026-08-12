@@ -109,10 +109,14 @@ def _process_start_identity(pid: int) -> int | None:
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         )
         value = result.stdout.strip()
         if value:
-            return int(datetime.strptime(value, "%a %b %d %H:%M:%S %Y").timestamp())
+            started = datetime.strptime(
+                value, "%a %b %d %H:%M:%S %Y"
+            ).replace(tzinfo=timezone.utc)
+            return int(started.timestamp())
     except (OSError, subprocess.SubprocessError, ValueError):
         pass
     return None
@@ -392,7 +396,9 @@ def _terminate_tree(proc: subprocess.Popen) -> None:
 def _acquire_lock(output_dir: Path):
     """Fail fast when another supervise process monitors the same output dir."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    handle = open(output_dir / ".supervise.lock", "a+", encoding="utf-8")
+    # The lock handle must stay open for the whole supervision lifetime, so a
+    # context manager would close it too early.
+    handle = open(output_dir / ".supervise.lock", "a+", encoding="utf-8")  # noqa: SIM115
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:

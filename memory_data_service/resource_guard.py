@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tracemalloc
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Self
 
 from memory_data_service.schemas import DatasetCreateRequest
 
@@ -66,7 +66,7 @@ class GenerationResourceMonitor:
     peak_memory_mb: float | None = None
     _started_tracing: bool = False
 
-    def __enter__(self) -> "GenerationResourceMonitor":
+    def __enter__(self) -> Self:
         self._started_tracing = not tracemalloc.is_tracing()
         if self._started_tracing:
             tracemalloc.start()

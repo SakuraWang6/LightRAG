@@ -352,8 +352,7 @@ def _convert_pdf(docx_path: Path, dataset_path: Path) -> GeneratedFile:
                 str(docx_path),
             ],
             check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=180,
         )

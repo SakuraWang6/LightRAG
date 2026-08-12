@@ -631,7 +631,7 @@
     "kgDisabledHint": "关闭 KG 时自动使用 Naive，确保只评测向量检索。",
     "maxCasesHint": "填 0 表示运行数据集中的全部题目。",
     "maxTotalTokens": "最大上下文 Token",
-    "numPredictHint": "用于回答生成。知识图谱抽取被截断时会使运行失败，不会索引残缺结果。",
+    "numPredictHint": "用于回答生成。",
     "enginePick": "选择已配置的解析引擎",
     "engineHint": "仅显示当前服务器已安装并配置完成的解析引擎。",
     "statusComplete": "已完成",

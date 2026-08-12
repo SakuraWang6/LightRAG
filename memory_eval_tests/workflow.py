@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from lightrag.utils import logger
 from memory_eval_tests.answer import evaluate_answers
 from memory_eval_tests.artifacts import EvaluationDefinition, RunContext
 from memory_eval_tests.diagnosis import build_case_traces, build_diagnosis
@@ -26,8 +27,6 @@ from memory_eval_tests.ingestion import (
 from memory_eval_tests.llm_analysis import analyze_run
 from memory_eval_tests.metrics import normalize_summary
 from memory_eval_tests.retrieval import evaluate_api
-
-from lightrag.utils import logger
 
 
 class IngestionFailure(RuntimeError):
@@ -218,15 +217,6 @@ def _rerank_enabled(profile: dict[str, Any]) -> bool:
         "null",
         "none",
     }
-
-
-def _product_retrieval_results(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep actionable evidence, not repeated raw candidate payloads, in run.json."""
-    return [
-        {key: value for key, value in row.items() if key != "top_k_candidates"}
-        for row in rows
-        if isinstance(row, dict)
-    ]
 
 
 def _format_rate(value: Any) -> str:
@@ -511,7 +501,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
                     "chunk_top_k": chunk_top_k,
                 },
                 "summary": normalize_summary(retrieval, "retrieval"),
-                "results": _product_retrieval_results(retrieval.get("results", [])),
+                "results": retrieval.get("results", []),
             },
             {
                 "method": "answer",

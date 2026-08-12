@@ -10,10 +10,11 @@ import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from memory_eval_tests.sampling import sample_evenly
 
@@ -114,12 +115,12 @@ class EvaluationDefinition:
     id: str
     label: str
     description: str
-    runner: Callable[["RunContext"], dict[str, Any]]
+    runner: Callable[[RunContext], dict[str, Any]]
     default_baseline: dict[str, Any] = field(
         default_factory=lambda: dict(BASELINE_DEFAULTS)
     )
     extra_schema: dict[str, str] = field(default_factory=dict)
-    prepare: Callable[["RunContext"], None] | None = None
+    prepare: Callable[[RunContext], None] | None = None
 
 
 @dataclass
@@ -552,7 +553,7 @@ def redact_launch_extra(extra: list[str]) -> list[str]:
     """
     redacted: list[str] = []
     for item in extra:
-        key, _, value = item.partition("=")
+        key, _, _ = item.partition("=")
         if _SENSITIVE_EXTRA_RE.search(key.strip()):
             redacted.append(f"{key.strip()}=configured")
         else:

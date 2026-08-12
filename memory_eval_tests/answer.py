@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from memory_eval_tests.dataset import DatasetClient
 from memory_eval_tests.http import post_json as _http_post_json
@@ -471,7 +472,7 @@ def _citation_metrics(
     function intentionally avoids treating a matching answer value as a
     citation; otherwise numeric answers would make citation presence vacuous.
     """
-    cited_ids = {item.upper() for item in re.findall(r"\b(?:FACT|OBJ)-\d{5}\b", answer_text, re.I)}
+    cited_ids = {item.upper() for item in re.findall(r"\b(?:FACT|OBJ)-\d{5}\b", answer_text, re.IGNORECASE)}
     if not cited_ids:
         return False, None
     expected_ids = {str(fact.get("fact_id", "")).upper() for fact in evidence_facts}

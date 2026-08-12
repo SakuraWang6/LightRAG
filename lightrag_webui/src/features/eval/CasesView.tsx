@@ -47,7 +47,6 @@ type NormalizedCase = {
   type: string
   expectedBehavior: string
   responseTruncated: boolean
-  scorer: Detail
   retrieval: Detail
   finalContextEvidence: Detail
   evidenceFacts: Detail[]
@@ -90,7 +89,6 @@ function normalize(row: Record<string, unknown>): NormalizedCase {
     type: String(row.question_type ?? ''),
     expectedBehavior: String(row.expected_behavior ?? 'answer'),
     responseTruncated: row.response_truncated === true,
-    scorer: asRecord(detailValue(row, 'scorer')),
     retrieval: asRecord(detailValue(row, 'retrieval')),
     finalContextEvidence: asRecord(detailValue(row, 'final_context_evidence')),
     evidenceFacts: asList(detailValue(row, 'evidence_facts')),

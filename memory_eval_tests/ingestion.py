@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from memory_eval_tests.dataset import DatasetClient
 from memory_eval_tests.http import get_json as _http_get_json

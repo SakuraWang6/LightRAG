@@ -11,6 +11,7 @@ consumes them unchanged.
 from __future__ import annotations
 
 import hashlib
+import logging
 import random
 import time
 from pathlib import Path
@@ -42,6 +43,8 @@ from memory_data_service.schemas import (
     QuestionRecord,
 )
 from memory_data_service.storage import DEFAULT_GENERATED_ROOT, ensure_root, write_json
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_ENGLISH_TITLE = "LightRAG Synthetic Rich Memory Document"
 _DEFAULT_CHINESE_TITLE = "LightRAG 合成中文记忆测评文档"
@@ -113,25 +116,41 @@ _PARAMETER_PROFILES = (
 )
 
 _SPEC_TEMPLATES = (
-    "{fact_id}：第 {page} 页{workstream}的{param}为 {value} {unit}。"
-    "该值由上一发布周期的回归结果校准，纳入版本审计后作为本页基线。",
-    "{fact_id}：第 {page} 页{workstream}将{param}核定在 {value} {unit}。"
-    "基线记录已归档，任何偏离该基线的数值都须重新评审。",
-    "{fact_id}：第 {page} 页{workstream}的{param}最终确定为 {value} {unit}，"
-    "并在验收报告中标注为生效版本。",
-    "{fact_id}：第 {page} 页{workstream}的{param}为 {value} {unit}，"
-    "该数值与上期基线一致，保留完整追溯链。",
+    (
+        "{fact_id}：第 {page} 页{workstream}的{param}为 {value} {unit}。"
+        "该值由上一发布周期的回归结果校准，纳入版本审计后作为本页基线。"
+    ),
+    (
+        "{fact_id}：第 {page} 页{workstream}将{param}核定在 {value} {unit}。"
+        "基线记录已归档，任何偏离该基线的数值都须重新评审。"
+    ),
+    (
+        "{fact_id}：第 {page} 页{workstream}的{param}最终确定为 {value} {unit}，"
+        "并在验收报告中标注为生效版本。"
+    ),
+    (
+        "{fact_id}：第 {page} 页{workstream}的{param}为 {value} {unit}，"
+        "该数值与上期基线一致，保留完整追溯链。"
+    ),
 )
 
 _NARRATIVE_TEMPLATES = (
-    "围绕{workstream}，本页把{param}落实到 {value} {unit}，并同步更新了运行基线。"
-    "配套的评审记录与来源编号一并归档，后续页面引用时直接回查本页。",
-    "{workstream}的{param}按 {value} {unit} 执行后，线上指标进入观察窗口。"
-    "观察期内任何偏离都会触发告警并生成事件工单。",
-    "本页把{workstream}的{param}设定为 {value} {unit}。"
-    "该决定与第 {prev_page} 页的基线一起构成连续审计链。",
-    "{workstream}将{param}维持在 {value} {unit}，配合容量预留与降级队列，"
-    "确保高峰时段仍满足服务目标。",
+    (
+        "围绕{workstream}，本页把{param}落实到 {value} {unit}，并同步更新了运行基线。"
+        "配套的评审记录与来源编号一并归档，后续页面引用时直接回查本页。"
+    ),
+    (
+        "{workstream}的{param}按 {value} {unit} 执行后，线上指标进入观察窗口。"
+        "观察期内任何偏离都会触发告警并生成事件工单。"
+    ),
+    (
+        "本页把{workstream}的{param}设定为 {value} {unit}。"
+        "该决定与第 {prev_page} 页的基线一起构成连续审计链。"
+    ),
+    (
+        "{workstream}将{param}维持在 {value} {unit}，配合容量预留与降级队列，"
+        "确保高峰时段仍满足服务目标。"
+    ),
 )
 
 _CONTROL_TEMPLATES = (
@@ -430,7 +449,7 @@ def _write_docx(
     for page in range(1, pages + 1):
         chapter = (page - 1) // 10 + 1
         unit = (page - 1) // 2 + 1
-        workstream_title, workstream_narrative = _WORKSTREAMS[
+        workstream_title, _ = _WORKSTREAMS[
             (page - 1) % len(_WORKSTREAMS)
         ]
         chapter_title = f"第 {chapter} 章：星桥项目——{workstream_title}"
@@ -562,12 +581,18 @@ def _write_docx(
                 fact_counter += 1
                 control = "周衡完成来源复核且顾澄完成安全签核"
                 risk_variants = (
-                    f"{risk_fact_id}：实施单元 {unit:04d} 涉及退款或隐私变更时，"
-                    f"即使业务里程碑已达成，发布前仍必须由{control}。",
-                    f"{risk_fact_id}：若实施单元 {unit:04d} 触及退款或隐私信息，"
-                    f"达到业务里程碑后还需满足“{control}”的双重控制条件，方可进入生产。",
-                    f"{risk_fact_id}：实施单元 {unit:04d} 的退款或隐私相关变更在里程碑达成后，"
-                    f"仍须通过“{control}”的发布门禁。",
+                    (
+                        f"{risk_fact_id}：实施单元 {unit:04d} 涉及退款或隐私变更时，"
+                        f"即使业务里程碑已达成，发布前仍必须由{control}。"
+                    ),
+                    (
+                        f"{risk_fact_id}：若实施单元 {unit:04d} 触及退款或隐私信息，"
+                        f"达到业务里程碑后还需满足“{control}”的双重控制条件，方可进入生产。"
+                    ),
+                    (
+                        f"{risk_fact_id}：实施单元 {unit:04d} 的退款或隐私相关变更在里程碑达成后，"
+                        f"仍须通过“{control}”的发布门禁。"
+                    ),
                 )
                 risk_text = risk_variants[(page // 4) % len(risk_variants)]
                 document.add_paragraph(risk_text)
@@ -855,7 +880,8 @@ def _load_cjk_font(size: int):
     for path in candidates:
         try:
             return ImageFont.truetype(path, size)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - try the next font candidate
+            logger.debug("CJK font %s unavailable: %s", path, exc)
             continue
     return ImageFont.load_default()
 
