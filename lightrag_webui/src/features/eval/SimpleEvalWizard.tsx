@@ -11,7 +11,7 @@ import {
   listEvalModels,
   type DatasetSummary
 } from '@/api/eval'
-import { hasRunningJobs } from '@/features/eval/utils'
+import { hasRunningJobs, questionTypeLabel } from '@/features/eval/utils'
 import Button from '@/components/ui/Button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import Checkbox from '@/components/ui/Checkbox'
@@ -254,7 +254,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
                 {datasets.length === 0 ? <span className="text-muted-foreground block text-xs">{t('eval.wizardNoDatasets')}</span> : null}
                 {datasetInfo && datasetInfo.question_count > 0 ? (
                   <span className="text-muted-foreground block text-xs">
-                    数据集共 {datasetInfo.question_count} 题{datasetInfo.question_types.length > 0 ? ` · 题型：${datasetInfo.question_types.join('、')}` : ''}
+                    数据集共 {datasetInfo.question_count} 题{datasetInfo.question_types.length > 0 ? ` · 题型：${datasetInfo.question_types.map(questionTypeLabel).join('、')}` : ''}
                   </span>
                 ) : null}
               </label>
@@ -297,7 +297,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-sm">题目类型</CardTitle></CardHeader>
               <CardContent>
-                <p className="text-muted-foreground mb-2 text-xs">选择要运行的题型；留空表示全部（重跑部分题型时很有用）</p>
+                <p className="text-muted-foreground mb-2 text-xs">选择要运行的题型；留空表示全部</p>
                 <div className="flex flex-wrap gap-3">
                   {datasetInfo.question_types.map((type) => (
                     <label key={type} className="flex items-center gap-1.5 text-sm">
@@ -311,7 +311,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
                           )
                         }}
                       />
-                      <span>{type}</span>
+                      <span>{questionTypeLabel(type)}</span>
                     </label>
                   ))}
                 </div>

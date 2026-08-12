@@ -39,9 +39,7 @@ import JobsView from '@/features/eval/JobsView'
 import {
   buildReproduceDraft,
   compareCompatible,
-  evalStatusLabel,
   formatDate,
-  statusBadgeClass,
 } from '@/features/eval/utils'
 
 type SimpleEvalDraft = {
@@ -388,6 +386,21 @@ export default function EvalConsole() {
                               <span className="bg-amber-500 size-1.5 rounded-full" />
                               {t('eval.queued')}
                             </span>
+                          ) : run.status === 'complete' || run.status === 'succeeded' ? (
+                            <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                              <span className="bg-emerald-500 size-1.5 rounded-full" />
+                              {t('eval.statusComplete')}
+                            </span>
+                          ) : run.status === 'failed' ? (
+                            <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-red-600 dark:text-red-400">
+                              <span className="bg-red-500 size-1.5 rounded-full" />
+                              {t('eval.statusFailed')}
+                            </span>
+                          ) : run.status === 'cancelled' ? (
+                            <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                              <span className="bg-muted-foreground size-1.5 rounded-full" />
+                              {t('eval.statusCancelled')}
+                            </span>
                           ) : null}
                           {(run.restarts ?? 0) > 0 ? (
                             <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
@@ -402,11 +415,6 @@ export default function EvalConsole() {
                         </div>
                         <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-1 text-[11px]">
                           {run.dataset ? <span className="truncate">{run.dataset_display_name ?? run.dataset}</span> : null}
-                          {run.status ? (
-                            <Badge variant="outline" className={`text-[10px] ${statusBadgeClass(run.status)}`}>
-                              {t(evalStatusLabel(run.status))}
-                            </Badge>
-                          ) : null}
                           <span>{formatDate(run.updated_at)}</span>
                         </div>
                         <div className="mt-1.5">

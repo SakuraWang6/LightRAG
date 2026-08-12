@@ -636,6 +636,7 @@
     "engineHint": "Only installed, configured parsing engines on this server are shown.",
     "statusComplete": "Complete",
     "statusQueued": "Queued",
+    "statusFailed": "Failed",
     "statusPending": "Pending",
     "statusClaiming": "Starting",
     "statusCancelling": "Cancelling",

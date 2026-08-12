@@ -636,6 +636,7 @@
     "engineHint": "仅显示当前服务器已安装并配置完成的解析引擎。",
     "statusComplete": "已完成",
     "statusQueued": "排队中",
+    "statusFailed": "失败",
     "statusPending": "等待中",
     "statusClaiming": "正在启动",
     "statusCancelling": "正在取消",
