@@ -202,6 +202,11 @@ def _profile_environment(
     # External traffic (e.g. tiktoken first-use download) keeps the proxy.
     env["NO_PROXY"] = "127.0.0.1,localhost"
     env["no_proxy"] = "127.0.0.1,localhost"
+    # The isolated server only serves one evaluation run.  It must never run
+    # the eval job-manager dispatch loop: every eval child would otherwise
+    # claim and spawn queued jobs, breaking the serial queue and spawning
+    # children of children (observed as concurrent runs after a restart).
+    env["LIGHTRAG_DISABLE_EVAL_JOBS"] = "1"
     _set_role_environment(env, primary, prefix="LLM")
     for name, prefix in (("extraction", "EXTRACT_LLM"), ("query", "QUERY_LLM"), ("vlm", "VLM_LLM")):
         role = config.get(name)

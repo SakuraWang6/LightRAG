@@ -698,6 +698,10 @@ def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
     is active.  The job records remain in one directory for audit and cancel
     operations; scheduling is separated by ``kind``.
     """
+    if os.getenv("LIGHTRAG_DISABLE_EVAL_JOBS"):
+        # Isolated evaluation child servers must not claim or spawn jobs;
+        # only the main API server owns the queue.
+        return
     _start_dispatch_loop(runs_root, datasets_root)
     with _DISPATCH_LOCK:
         datasets_root = datasets_root or _default_datasets_root(runs_root)
@@ -818,6 +822,8 @@ def _dispatch(runs_root: Path, datasets_root: Path | None = None) -> None:
 
 def _start_dispatch_loop(runs_root: Path, datasets_root: Path | None = None) -> None:
     """Daemon poller so queued jobs auto-start when a hold gate clears."""
+    if os.getenv("LIGHTRAG_DISABLE_EVAL_JOBS"):
+        return
     global _DISPATCH_LOOP_STARTED
     if _DISPATCH_LOOP_STARTED:
         return
