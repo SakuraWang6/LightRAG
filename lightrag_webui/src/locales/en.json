@@ -611,6 +611,7 @@
     "condition": "Condition",
     "toc": "Table of contents",
     "running": "Running",
+    "queued": "Queued",
     "failed": "Failed",
     "caseAll": "All results",
     "casePass": "Passed",

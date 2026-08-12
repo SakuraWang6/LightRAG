@@ -193,6 +193,7 @@ class RunParams:
     runs_root: Path | None = None
     engine: str | None = None
     max_cases: int = 0
+    question_types: list[str] | None = None
     skip_kg: bool = False
     extra: list[str] = field(default_factory=list)
     heartbeat: bool = False
@@ -220,6 +221,11 @@ def params_from_args(args: argparse.Namespace) -> RunParams:
         runs_root=args.runs_root,
         engine=args.engine,
         max_cases=args.max_cases,
+        question_types=(
+            [item.strip() for item in args.question_types.split(",") if item.strip()]
+            if args.question_types
+            else None
+        ),
         skip_kg=args.skip_kg,
         extra=list(args.extra),
     )
@@ -252,6 +258,9 @@ def build_run_command(params: RunParams) -> list[str]:
         if value is not None:
             cmd.append(f"--{key.replace('_', '-')}")
             cmd.append(str(value))
+    if params.question_types:
+        cmd.append("--question-types")
+        cmd.append(",".join(params.question_types))
     for flag, value in (
         ("--api-key", params.api_key),
         ("--access-token", params.access_token),
@@ -325,6 +334,9 @@ def build_supervise_command(
         if value is not None:
             cmd.append(f"--{key.replace('_', '-')}")
             cmd.append(str(value))
+    if params.question_types:
+        cmd.append("--question-types")
+        cmd.append(",".join(params.question_types))
     for flag, value in (
         ("--api-key", params.api_key),
         ("--access-token", params.access_token),
@@ -457,6 +469,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--engine", default=None)
     parser.add_argument("--max-cases", type=int, default=0)
+    parser.add_argument(
+        "--question-types",
+        default=None,
+        help="Comma-separated question types to evaluate (e.g. direct_numeric,table_cell).",
+    )
     parser.add_argument("--skip-kg", action="store_true")
     parser.add_argument("--extra", action="append", default=[], metavar="KEY=VALUE")
     parser.add_argument("--max-restarts", type=int, default=3)

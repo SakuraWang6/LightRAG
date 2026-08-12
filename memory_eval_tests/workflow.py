@@ -328,10 +328,18 @@ def _runner(context: RunContext) -> dict[str, Any]:
         oracle = json.loads((context.dataset / "oracle.json").read_text(encoding="utf-8"))
         max_cases = int(context.baseline.get("max_cases") or 0) or None
         all_questions = list(oracle.get("questions") or [])
+        selected_types = context.baseline.get("question_types") or []
+        if selected_types:
+            all_questions = [
+                question
+                for question in all_questions
+                if question.get("question_type") in selected_types
+            ]
         if max_cases is not None:
             from memory_eval_tests.sampling import sample_evenly
 
             all_questions = sample_evenly(all_questions, max_cases)
+        selected_types_value = list(selected_types) or None
         retrieval_question_count = sum(
             question.get("expected_behavior") != "abstain"
             for question in all_questions
@@ -411,6 +419,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
             enable_rerank=enable_rerank,
+            question_types=selected_types_value,
             progress_callback=lambda completed, total: context.progress(
                 "running",
                 completed,
@@ -435,6 +444,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             access_token=context.environment.get("access_token"),
             evaluation_trace=True,
             enable_rerank=enable_rerank,
+            question_types=selected_types_value,
             max_concurrency=_int_option(
                 context.extra,
                 "query_max_async",

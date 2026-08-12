@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 
 import {
   createEvalJob,
+  getEvalDataset,
   listDatasets,
   listEvalJobs,
   listEvalModels,
@@ -63,6 +64,13 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
   const [topK, setTopK] = useState(() => numberParam(initial?.params, 'top_k', 5))
   const [chunkTopK, setChunkTopK] = useState(() => numberParam(initial?.params, 'chunk_top_k', 5))
   const [maxCases, setMaxCases] = useState(() => numberParam(initial?.params, 'max_cases', 0))
+  const [datasetInfo, setDatasetInfo] = useState<{ question_count: number; question_types: string[] } | null>(null)
+  const [questionTypes, setQuestionTypes] = useState<string[]>(() => {
+    const value = initial?.params?.question_types
+    return Array.isArray(value) ? value.map(String) : []
+  })
+  const [extractionMaxAsync, setExtractionMaxAsync] = useState(() => numberParam(initial?.params, 'extraction_max_async', 2))
+  const [queryMaxAsync, setQueryMaxAsync] = useState(() => numberParam(initial?.params, 'query_max_async', 2))
   const [numCtx, setNumCtx] = useState(() => numberParam(initial?.params, 'num_ctx', 16384))
   const [maxTotalTokens, setMaxTotalTokens] = useState(() => numberParam(initial?.params, 'max_total_tokens', 8192))
   const [numPredict, setNumPredict] = useState(() => numberParam(initial?.params, 'num_predict', 4096))
@@ -83,6 +91,26 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
   useEffect(() => {
     void listDatasets().then((data) => setDatasets(data.datasets)).catch(() => undefined)
   }, [])
+
+  useEffect(() => {
+    if (!dataset) return
+    let cancelled = false
+    void getEvalDataset(dataset)
+      .then((data) => {
+        if (cancelled) return
+        setDatasetInfo({
+          question_count: typeof data.question_count === 'number' ? data.question_count : 0,
+          question_types: Array.isArray(data.question_types) ? data.question_types.map(String) : []
+        })
+        setQuestionTypes([])
+      })
+      .catch(() => {
+        if (!cancelled) setDatasetInfo(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [dataset])
 
   useEffect(() => {
     void listEvalModels()
@@ -130,6 +158,12 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
       max_total_tokens: number
       num_predict: number
     }
+    if (datasetInfo && datasetInfo.question_count > 0 && Number(maxCases) > datasetInfo.question_count) {
+      toast.error(`题数上限不能超过数据集题数（${datasetInfo.question_count}）`)
+      return
+    }
+    const parsedExtractionAsync = integerParam(extractionMaxAsync, '抽取并发', 1)
+    const parsedQueryAsync = integerParam(queryMaxAsync, '回答并发', 1)
     try {
       numericParams = {
         top_k: integerParam(topK, t('eval.paramTopK'), 1),
@@ -164,7 +198,12 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
           ...numericParams,
           temperature: parsedTemperature,
           engine: engine.trim() || 'native',
-          kg
+          kg,
+          question_types: questionTypes.length > 0 ? questionTypes : undefined,
+          extra: [
+            `extraction_max_async=${parsedExtractionAsync}`,
+            `query_max_async=${parsedQueryAsync}`
+          ]
         }
       })
       toast.success(t('eval.jobStarted'))
@@ -174,7 +213,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
     } finally {
       setSubmitting(false)
     }
-  }, [chunkTopK, dataset, effectiveMode, engine, kg, maxCases, maxTotalTokens, model, name, numCtx, numPredict, onStarted, optionsError, optionsLoading, t, temperature, topK])
+  }, [chunkTopK, dataset, datasetInfo, effectiveMode, engine, extractionMaxAsync, kg, maxCases, maxTotalTokens, model, name, numCtx, numPredict, onStarted, optionsError, optionsLoading, queryMaxAsync, questionTypes, t, temperature, topK])
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -198,7 +237,11 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
               </label>
               <label className="space-y-1.5 md:col-span-2">
                 <span className="text-sm font-medium">{t('eval.wizardDataset')}</span>
-                <Select value={dataset} onValueChange={setDataset}>
+                <Select value={dataset} onValueChange={(value) => {
+                  setDataset(value)
+                  setDatasetInfo(null)
+                  setQuestionTypes([])
+                }}>
                   <SelectTrigger className="h-9"><SelectValue placeholder={t('eval.wizardPickDataset')} /></SelectTrigger>
                   <SelectContent>
                     {datasets.map((item) => (
@@ -209,6 +252,11 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
                   </SelectContent>
                 </Select>
                 {datasets.length === 0 ? <span className="text-muted-foreground block text-xs">{t('eval.wizardNoDatasets')}</span> : null}
+                {datasetInfo && datasetInfo.question_count > 0 ? (
+                  <span className="text-muted-foreground block text-xs">
+                    数据集共 {datasetInfo.question_count} 题{datasetInfo.question_types.length > 0 ? ` · 题型：${datasetInfo.question_types.join('、')}` : ''}
+                  </span>
+                ) : null}
               </label>
             </CardContent>
           </Card>
@@ -220,10 +268,56 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
               <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramMode')}</span><Select value={effectiveMode} onValueChange={setMode} disabled={!kg}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="naive">Naive</SelectItem><SelectItem value="mix">Mix</SelectItem><SelectItem value="local">Local</SelectItem><SelectItem value="global">Global</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select>{!kg ? <span className="text-muted-foreground block text-xs">{t('eval.kgDisabledHint')}</span> : null}</label>
               <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramTopK')}</span><Input type="number" min="1" value={topK} onChange={(event) => setTopK(event.target.value)} /></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramChunkTopK')}</span><Input type="number" min="1" value={chunkTopK} onChange={(event) => setChunkTopK(event.target.value)} /></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramMaxCases')}</span><Input type="number" min="0" value={maxCases} onChange={(event) => setMaxCases(event.target.value)} /><span className="text-muted-foreground block text-xs">{t('eval.maxCasesHint')}</span></label>
+              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramMaxCases')}</span><Input type="number" min="0" value={maxCases} onChange={(event) => setMaxCases(event.target.value)} /><span className="text-muted-foreground block text-xs">{t('eval.maxCasesHint')}{datasetInfo && datasetInfo.question_count > 0 ? `（上限 ${datasetInfo.question_count} 题）` : ''}</span></label>
+              <label className="space-y-1.5">
+                <span className="text-sm font-medium">抽取并发</span>
+                <Select value={extractionMaxAsync} onValueChange={setExtractionMaxAsync}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[1, 2, 3, 4].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <span className="text-muted-foreground block text-xs">KG 抽取并行数，本地内存小请用 1</span>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-sm font-medium">回答并发</span>
+                <Select value={queryMaxAsync} onValueChange={setQueryMaxAsync}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[1, 2, 3, 4].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <span className="text-muted-foreground block text-xs">逐题回答并行数，内存小请用 1</span>
+              </label>
               <label className="flex items-center gap-2 self-center rounded-md border px-3 py-2.5"><Checkbox checked={kg} onCheckedChange={(checked) => setKg(checked === true)} /><span className="text-sm font-medium">{t('eval.paramKg')}</span></label>
             </CardContent>
           </Card>
+
+          {datasetInfo && datasetInfo.question_types.length > 0 ? (
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">题目类型</CardTitle></CardHeader>
+              <CardContent>
+                <p className="text-muted-foreground mb-2 text-xs">选择要运行的题型；留空表示全部（重跑部分题型时很有用）</p>
+                <div className="flex flex-wrap gap-3">
+                  {datasetInfo.question_types.map((type) => (
+                    <label key={type} className="flex items-center gap-1.5 text-sm">
+                      <Checkbox
+                        checked={questionTypes.includes(type)}
+                        onCheckedChange={(checked) => {
+                          setQuestionTypes((current) =>
+                            checked === true
+                              ? Array.from(new Set([...current, type]))
+                              : current.filter((item) => item !== type)
+                          )
+                        }}
+                      />
+                      <span>{type}</span>
+                    </label>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
 
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-sm">{t('eval.wizardParams')}</CardTitle></CardHeader>

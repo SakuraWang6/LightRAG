@@ -36,6 +36,7 @@ def evaluate_answers(
     chunk_top_k: int | None = None,
     max_total_tokens: int | None = None,
     max_cases: int | None = None,
+    question_types: list[str] | None = None,
     api_key: str | None = None,
     access_token: str | None = None,
     evaluation_trace: bool = False,
@@ -48,6 +49,12 @@ def evaluate_answers(
     oracle = DatasetClient(dataset_source).oracle()
     facts_by_id = {fact["fact_id"]: fact for fact in oracle.get("facts", [])}
     questions = sample_evenly(oracle.get("questions", []), max_cases)
+    if question_types:
+        questions = [
+            question
+            for question in questions
+            if question.get("question_type") in question_types
+        ]
     total_questions = len(questions)
 
     def _evaluate_one(position: int, question: dict[str, Any]) -> dict[str, Any]:

@@ -255,6 +255,11 @@ def main() -> None:
     parser.add_argument("--engine", default=None)
     parser.add_argument("--max-cases", type=int, default=0)
     parser.add_argument(
+        "--question-types",
+        default=None,
+        help="Comma-separated question types to evaluate (e.g. direct_numeric,table_cell).",
+    )
+    parser.add_argument(
         "--skip-kg",
         action="store_true",
         help="Disable KG extraction (isolated storage required)",
@@ -290,6 +295,10 @@ def main() -> None:
         elif args.mode != "naive":
             parser.error("--skip-kg requires --mode naive")
     baseline["max_cases"] = args.max_cases
+    if args.question_types:
+        baseline["question_types"] = [
+            item.strip() for item in args.question_types.split(",") if item.strip()
+        ]
 
     extra: dict[str, str] = {}
     for item in args.extra:

@@ -101,6 +101,7 @@ _GENERIC_PARAM_KEYS = {
     "max_total_tokens",
     "temperature",
     "max_cases",
+    "question_types",
     "kg",
     "engine",
     "extra",
@@ -507,6 +508,11 @@ def _build_run_params(
         runs_root=runs_root,
         engine=engine,
         max_cases=max_cases,
+        question_types=(
+            [str(item) for item in params["question_types"]]
+            if isinstance(params.get("question_types"), list)
+            else None
+        ),
         skip_kg=not kg_enabled,
         extra=extra,
     )
@@ -982,7 +988,22 @@ def create_eval_routes(
             path = datasets / dataset_id
             if not path.is_dir() or not (path / "manifest.json").exists():
                 raise HTTPException(status_code=404, detail="dataset not found")
-            return load_manifest(path).model_dump()
+            payload = load_manifest(path).model_dump()
+            try:
+                oracle = load_oracle(path)
+                questions = oracle.questions or []
+                payload["question_count"] = len(questions)
+                payload["question_types"] = sorted(
+                    {
+                        str(question.question_type or "")
+                        for question in questions
+                        if question.question_type
+                    }
+                )
+            except (OSError, ValueError):
+                payload["question_count"] = 0
+                payload["question_types"] = []
+            return payload
         except HTTPException:
             raise
         except Exception as exc:

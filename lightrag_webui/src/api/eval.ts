@@ -291,6 +291,13 @@ export async function getEvalRun(runId: string): Promise<EvalRunDetail> {
   return response.data
 }
 
+export async function getEvalDataset(
+  datasetId: string
+): Promise<{ question_count?: number; question_types?: string[] } & Record<string, unknown>> {
+  const response = await evalApiClient.get(`/eval/datasets/${encodeURIComponent(datasetId)}`)
+  return response.data
+}
+
 export async function getCaseContext(
   runId: string,
   caseId: string

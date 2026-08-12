@@ -21,6 +21,7 @@ def evaluate_api(
     top_k: int = 10,
     chunk_top_k: int | None = None,
     max_cases: int | None = None,
+    question_types: list[str] | None = None,
     api_key: str | None = None,
     access_token: str | None = None,
     enable_rerank: bool = False,
@@ -28,6 +29,12 @@ def evaluate_api(
 ) -> dict[str, Any]:
     oracle = DatasetClient(dataset_source).oracle()
     questions = sample_evenly(list(oracle.get("questions", [])), max_cases)
+    if question_types:
+        questions = [
+            question
+            for question in questions
+            if question.get("question_type") in question_types
+        ]
     questions = [
         question
         for question in questions

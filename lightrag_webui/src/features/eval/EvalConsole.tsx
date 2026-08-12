@@ -377,6 +377,18 @@ export default function EvalConsole() {
                           <span className="truncate text-sm font-medium" title={run.id}>
                             {run.label}
                           </span>
+                          {run.progress?.status === 'running' ? (
+                            <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                              <span className="bg-emerald-500 size-1.5 animate-pulse rounded-full" />
+                              {t('eval.running')}
+                              <span className="tabular-nums">{run.progress.done ?? 0}/{run.progress.total ?? '?'}</span>
+                            </span>
+                          ) : run.progress?.status === 'queued' ? (
+                            <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                              <span className="bg-amber-500 size-1.5 rounded-full" />
+                              {t('eval.queued')}
+                            </span>
+                          ) : null}
                           {(run.restarts ?? 0) > 0 ? (
                             <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
                               {t('eval.restarts', { count: run.restarts ?? 0 })}
@@ -397,11 +409,6 @@ export default function EvalConsole() {
                           ) : null}
                           <span>{formatDate(run.updated_at)}</span>
                         </div>
-                        {['running', 'queued'].includes(run.progress?.status ?? '') ? (
-                          <div className="text-emerald-600 dark:text-emerald-400 mt-1 text-[11px] font-medium">
-                            ● {t('eval.running')} {run.progress.done ?? 0}/{run.progress.total ?? '?'}
-                          </div>
-                        ) : null}
                         <div className="mt-1.5">
                           <ConditionChips conditions={run.conditions} limit={3} />
                         </div>

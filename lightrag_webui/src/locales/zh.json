@@ -611,6 +611,7 @@
     "condition": "条件",
     "toc": "目录",
     "running": "运行中",
+    "queued": "排队中",
     "failed": "未通过",
     "caseAll": "全部结果",
     "casePass": "通过",
