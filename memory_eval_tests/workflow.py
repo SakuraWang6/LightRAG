@@ -35,19 +35,40 @@ class IngestionFailure(RuntimeError):
     retryable = True
 
 
-def _runtime_options(baseline: dict[str, Any]) -> dict[str, Any]:
+def _int_option(
+    extra: dict[str, Any] | None, key: str, default: int
+) -> int:
+    raw = (extra or {}).get(key)
+    try:
+        return int(raw) if raw is not None else int(default)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _runtime_options(
+    baseline: dict[str, Any], extra: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Return answer controls plus extraction-specific integrity safeguards."""
     answer_num_predict = int(baseline.get("num_predict") or 4096)
     answer_num_ctx = int(baseline.get("num_ctx") or 16384)
-    extraction_timeout = int(baseline.get("extraction_llm_timeout_seconds") or 600)
-    extraction_max_async = int(baseline.get("extraction_max_async") or 1)
+    extraction_timeout = int(
+        baseline.get("extraction_llm_timeout_seconds") or 1800
+    )
+    extraction_max_async = _int_option(
+        extra, "extraction_max_async", int(baseline.get("extraction_max_async") or 2)
+    )
+    query_max_async = _int_option(
+        extra, "query_max_async", int(baseline.get("query_max_async") or 2)
+    )
+    generation = {
+        key: baseline[key]
+        for key in ("num_ctx", "num_predict", "temperature")
+        if key in baseline and baseline[key] is not None
+    }
+    generation["max_async"] = max(1, query_max_async)
     return {
         "skip_kg": not bool(baseline.get("kg", True)),
-        "generation": {
-            key: baseline[key]
-            for key in ("num_ctx", "num_predict", "temperature")
-            if key in baseline and baseline[key] is not None
-        },
+        "generation": generation,
         # A KG extraction response contains many structured rows and must not
         # inherit a smaller answer-output budget.  JSON removes the fragile
         # delimiter parser, while the record cap keeps the response bounded.
@@ -324,7 +345,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             unit=unit,
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
-            runtime_options=_runtime_options(context.baseline),
+        runtime_options=_runtime_options(context.baseline, context.extra),
         )
         context.execution_unit = unit
         context.environment["rag_api_url"] = unit["runtime_endpoint"]
@@ -414,6 +435,11 @@ def _runner(context: RunContext) -> dict[str, Any]:
             access_token=context.environment.get("access_token"),
             evaluation_trace=True,
             enable_rerank=enable_rerank,
+            max_concurrency=_int_option(
+                context.extra,
+                "query_max_async",
+                int(baseline.get("query_max_async") or 2),
+            ),
             progress_callback=lambda completed, total: context.progress(
                 "running",
                 completed,

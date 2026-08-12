@@ -60,7 +60,11 @@ BASELINE_DEFAULTS: dict[str, Any] = {
     # queueing), still far below the 240-second generic service timeout it
     # replaces.
     "extraction_llm_timeout_seconds": 1800,
-    "extraction_max_async": 1,
+    # Two concurrent extractions/answers use the local GPU better than one
+    # serial stream; both stay configurable per run (--extra
+    # extraction_max_async=N / query_max_async=N).
+    "extraction_max_async": 2,
+    "query_max_async": 2,
     "kg": True,
     "vlm": False,
     "engine": "native",

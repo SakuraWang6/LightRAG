@@ -142,6 +142,10 @@ def _apply_generation_options(
     ):
         env[f"{role_prefix}{prefix}_NUM_CTX"] = str(num_ctx)
 
+    max_async = options.get("max_async")
+    if isinstance(max_async, int) and not isinstance(max_async, bool) and max_async > 0:
+        env[f"{role_prefix}MAX_ASYNC_LLM"] = str(max_async)
+
 
 def _apply_extraction_safeguards(
     env: dict[str, str], options: dict[str, Any] | None

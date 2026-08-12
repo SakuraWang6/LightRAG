@@ -116,6 +116,38 @@ def test_evaluation_runtime_stabilizes_local_extraction() -> None:
     assert environment["no_proxy"] == "127.0.0.1,localhost"
 
 
+def test_evaluation_runtime_concurrency_controls_apply() -> None:
+    """Per-run concurrency must reach the child server and honour --extra."""
+    options = workflow._runtime_options(
+        {
+            "num_ctx": 16384,
+            "num_predict": 4096,
+            "temperature": 0,
+            "extraction_llm_timeout_seconds": 1800,
+            "extraction_max_async": 3,
+            "query_max_async": 4,
+        },
+        {"extraction_max_async": "2", "query_max_async": "3"},
+    )
+    environment = execution._profile_environment(
+        {
+            "configuration": {
+                "query": {"provider": "ollama", "model": "qwen3:8b"},
+                "embedding": {"provider": "ollama", "model": "bge-m3:latest"},
+                "parser_engine": "native",
+            }
+        },
+        {
+            "storage_dir": "/tmp/test-storage",
+            "input_dir": "/tmp/test-input",
+            "workspace_id": "test-workspace",
+        },
+        options,
+    )
+    assert environment["QUERY_MAX_ASYNC_LLM"] == "3"
+    assert environment["EXTRACT_MAX_ASYNC_LLM"] == "2"
+
+
 def test_comparison_requires_exact_case_set_and_scorer_inventory() -> None:
     base = {
         "status": "complete",

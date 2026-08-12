@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Protocol
 
 from memory_eval_tests.dataset import DatasetClient
@@ -41,14 +42,15 @@ def evaluate_answers(
     enable_rerank: bool = False,
     semantic_scorer: SemanticAnswerScorer | None = None,
     question_variant: str = "canonical",
+    max_concurrency: int = 1,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     oracle = DatasetClient(dataset_source).oracle()
     facts_by_id = {fact["fact_id"]: fact for fact in oracle.get("facts", [])}
-    results = []
     questions = sample_evenly(oracle.get("questions", []), max_cases)
     total_questions = len(questions)
-    for position, question in enumerate(questions, start=1):
+
+    def _evaluate_one(position: int, question: dict[str, Any]) -> dict[str, Any]:
         question_text = _question_variant(question, question_variant)
         payload = {
             "query": question_text,
@@ -94,32 +96,51 @@ def evaluate_answers(
             evidence_available_override=final_context_evidence["available"],
             semantic_scorer=semantic_scorer,
         )
-        results.append(
-            {
-                "question_id": question["id"],
-                # Persist the rendered question with its result so the WebUI
-                # can present a self-contained review sheet without joining
-                # back to the source dataset at display time.
-                "question": question_text,
-                **scores,
-                "answer": answer_text,
-                "response_truncated": response_truncated,
-                "expected": expected,
-                "question_type": question.get("question_type", ""),
-                "expected_behavior": question.get("expected_behavior", "answer"),
-                "question_variant": question_variant,
-                "scenario_labels": question.get("scenario_labels", []),
-                # Raw candidate references are used only by the deterministic
-                # scorer above.  They are intentionally not persisted: they
-                # can be megabytes of repeated chunk text and are not proof of
-                # model-visible final context.
-                "response_reference_count": len(response.get("references", []) or []),
-                "final_context_trace": final_context_trace,
-                "final_context_evidence": final_context_evidence,
-            }
-        )
+        row = {
+            "question_id": question["id"],
+            # Persist the rendered question with its result so the WebUI
+            # can present a self-contained review sheet without joining
+            # back to the source dataset at display time.
+            "question": question_text,
+            **scores,
+            "answer": answer_text,
+            "response_truncated": response_truncated,
+            "expected": expected,
+            "question_type": question.get("question_type", ""),
+            "expected_behavior": question.get("expected_behavior", "answer"),
+            "question_variant": question_variant,
+            "scenario_labels": question.get("scenario_labels", []),
+            # Raw candidate references are used only by the deterministic
+            # scorer above.  They are intentionally not persisted: they
+            # can be megabytes of repeated chunk text and are not proof of
+            # model-visible final context.
+            "response_reference_count": len(response.get("references", []) or []),
+            "final_context_trace": final_context_trace,
+            "final_context_evidence": final_context_evidence,
+        }
         if progress_callback:
             progress_callback(position, total_questions)
+        return row
+
+    concurrency = max(1, max_concurrency)
+    if concurrency == 1:
+        results = [
+            _evaluate_one(position, question)
+            for position, question in enumerate(questions, start=1)
+        ]
+    else:
+        # /query is I/O-bound against the child server, so a small thread pool
+        # keeps the local GPU busy across questions instead of waiting on each
+        # answer serially.  Order is preserved for deterministic envelopes.
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            future_to_position = {
+                pool.submit(_evaluate_one, position, question): position
+                for position, question in enumerate(questions, start=1)
+            }
+            ordered: dict[int, dict[str, Any]] = {}
+            for future in as_completed(future_to_position):
+                ordered[future_to_position[future]] = future.result()
+            results = [ordered[position] for position in sorted(ordered)]
     total = len(results)
     decisive = [row for row in results if row.get("answer_verdict") != "uncertain"]
     return {

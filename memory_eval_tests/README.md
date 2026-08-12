@@ -177,6 +177,21 @@ conda run -n lightrag-memory-eval python -m memory_eval_tests.runner \
 
 只有需要终止长期无活动的挂起进程时才使用 `heartbeat`，短暂模型停顿不应被误判为故障。
 
+### 5.5 运行效率
+
+单个运行的主要耗时在 KG 抽取与逐题回答，两者默认并发为 2（`extraction_max_async` / `query_max_async`），
+可针对单次运行调高：
+
+```bash
+--extra extraction_max_async=3 --extra query_max_async=4
+```
+
+并发受本机内存约束（24GB 建议抽取 ≤3、回答 ≤4）；过高反而因内存压力变慢。无图数据集可关闭 VLM 分析提速：
+`VLM_PROCESS_ENABLE=false`。
+
+多个运行默认串行（`MEMORY_EVAL_MAX_ACTIVE_JOBS=1`，保护本地 Ollama）。同一 GPU 上并行多个运行会互相争抢，
+单个运行反而更慢，历史上还导致过抽取超时；如确需并行，可设 `MEMORY_EVAL_MAX_ACTIVE_JOBS=2` 并同步调低单运行并发。
+
 ## 6. WebUI 使用方式
 
 启动 LightRAG API 后，在 WebUI 打开“测评”页面：
