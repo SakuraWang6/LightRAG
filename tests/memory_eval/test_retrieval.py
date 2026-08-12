@@ -160,3 +160,48 @@ def test_repeated_answer_attributed_to_expected_text_instance(monkeypatch) -> No
     assert evidence["rank"] == 2
     assert evidence["text"] == anchored_chunk
     assert evidence["matches"][0]["match_type"] == "expected_text"
+
+
+def test_markup_rendered_table_matches_expected_text() -> None:
+    """A table row rendered as JSON must still anchor on the FACT sentence.
+
+    The parser serialises tables as ``["FACT-00007", "标准行标记", "200 次/秒"]``;
+    normalisation drops JSON and Chinese punctuation so the FACT-ID-anchored
+    expected_text matches the rendered artifact precisely instead of falling
+    back to a loose bare-answer match.
+    """
+    fact = {
+        "fact_id": "FACT-00007",
+        "answer": "200 次/秒",
+        "expected_text": "FACT-00007 标准行标记 200 次/秒",
+    }
+    chunk = (
+        '<table format="json">[["参数", "标称值", "配额 (次/秒)"],'
+        '["FACT-00007", "标准行标记", "200 次/秒"]]</table>'
+    )
+    match = retrieval._find_expected_text_match(chunk, fact)
+    assert match is not None
+    assert match["match_type"] == "expected_text"
+    assert "200 次/秒" in match["excerpt"]
+
+
+def test_fullwidth_punctuation_does_not_break_evidence_match() -> None:
+    fact = {
+        "fact_id": "FACT-00011",
+        "answer": "M-103",
+        "expected_text": "FACT-00011：实施单元 0003 的交付里程碑为 M-103，由林岚在第 7 页确认。",
+    }
+    chunk = "FACT-00011：实施单元 0003 的交付里程碑为 M-103，由林岚在第 7 页确认。"
+    assert retrieval._find_expected_text_match(chunk, fact) is not None
+
+
+def test_value_without_unit_is_not_evidence_of_united_answer() -> None:
+    """The matcher must not guess units: '200' is not evidence for '200 次/秒'."""
+    fact = {
+        "fact_id": "FACT-00007",
+        "answer": "200 次/秒",
+        "expected_text": "FACT-00007 标准行标记 200 次/秒",
+    }
+    chunk = '["FACT-00007", "标准行标记", "200"]'
+    assert retrieval._find_expected_text_match(chunk, fact) is None
+    assert retrieval._find_answer_match(chunk, fact) is None

@@ -54,64 +54,55 @@ export default function ReportDocument({ artifact }: ReportDocumentProps) {
   const toc = artifact.toc ?? []
 
   return (
-    <div className="flex gap-4">
-      {toc.length > 0 ? (
-        <nav
-          className="sticky top-0 hidden max-h-[calc(100vh-8rem)] shrink-0 lg:block"
-          onMouseEnter={() => setTocHover(true)}
-          onMouseLeave={() => setTocHover(false)}
-        >
-          <div className={`flex h-full overflow-hidden rounded-lg border bg-card shadow-sm transition-[width] duration-200 ease-out ${tocHover ? 'w-60' : 'w-10'}`}>
+    <div className="min-w-0 flex-1">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <FileTextIcon className="text-muted-foreground size-4" />
+        <h2 className="text-base font-semibold">{artifact.title}</h2>
+        <Badge variant="outline" className="text-muted-foreground text-[10px]">
+          {t('eval.updatedAt')}: {formatDate(artifact.updated_at)}
+        </Badge>
+      </div>
+      <Card className="relative">
+        {toc.length > 0 ? (
+          <div
+            className="absolute top-3 left-3 z-20"
+            onMouseEnter={() => setTocHover(true)}
+            onMouseLeave={() => setTocHover(false)}
+          >
             {tocHover ? (
-              <Card className="w-60 shrink-0 border-0 shadow-none">
-                <CardContent className="p-3">
-                  <p className="text-muted-foreground mb-2 text-xs font-medium">{t('eval.toc')}</p>
-                  <ul className="space-y-1">
-                    {toc.map((entry, index) => (
-                      <li key={index}>
-                        <button
-                          type="button"
-                          className="text-muted-foreground hover:text-foreground block w-full truncate rounded px-2 py-0.5 text-left text-xs transition-colors hover:bg-accent"
-                          style={{ paddingLeft: `${0.5 + (entry.level - 1) * 0.75}rem` }}
-                          title={entry.title}
-                          onClick={() => {
-                            document
-                              .getElementById(headingId(entry.title))
-                              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                          }}
-                        >
-                          {entry.title}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="flex w-10 shrink-0 cursor-pointer items-center justify-center">
-                <span className="text-muted-foreground rotate-180 text-[11px] font-medium tracking-[0.3em] [writing-mode:vertical-rl]">
-                  {t('eval.toc')}
-                </span>
+              <div className="bg-card max-h-[70vh] w-64 overflow-auto rounded-lg border p-3 shadow-lg">
+                <p className="text-muted-foreground mb-2 text-xs font-medium">{t('eval.toc')}</p>
+                <ul className="space-y-1">
+                  {toc.map((entry, index) => (
+                    <li key={index}>
+                      <button
+                        type="button"
+                        className="text-muted-foreground hover:text-foreground block w-full truncate rounded px-2 py-0.5 text-left text-xs transition-colors hover:bg-accent"
+                        style={{ paddingLeft: `${0.5 + (entry.level - 1) * 0.75}rem` }}
+                        title={entry.title}
+                        onClick={() => {
+                          document
+                            .getElementById(headingId(entry.title))
+                            ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                        }}
+                      >
+                        {entry.title}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               </div>
+            ) : (
+              <span className="text-muted-foreground/80 cursor-pointer rounded-md border border-dashed bg-muted/40 px-2 py-1 text-xs transition-colors hover:bg-muted/70 hover:text-foreground">
+                {t('eval.toc')}
+              </span>
             )}
           </div>
-        </nav>
-      ) : null}
-
-      <div className="min-w-0 flex-1">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <FileTextIcon className="text-muted-foreground size-4" />
-          <h2 className="text-base font-semibold">{artifact.title}</h2>
-          <Badge variant="outline" className="text-muted-foreground text-[10px]">
-            {t('eval.updatedAt')}: {formatDate(artifact.updated_at)}
-          </Badge>
-        </div>
-        <Card>
-          <CardContent className="p-5">
-            <MarkdownReport content={artifact.report_md} components={components} />
-          </CardContent>
-        </Card>
-      </div>
+        ) : null}
+        <CardContent className="p-5">
+          <MarkdownReport content={artifact.report_md} components={components} />
+        </CardContent>
+      </Card>
     </div>
   )
 }

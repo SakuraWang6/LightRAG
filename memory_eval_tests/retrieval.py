@@ -4,7 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 from memory_eval_tests.dataset import DatasetClient
-from memory_eval_tests.evidence import normalize_evidence
+from memory_eval_tests.evidence import normalize_evidence, normalize_evidence_offsets
 from memory_eval_tests.http import post_json as _http_post_json
 from memory_eval_tests.sampling import sample_evenly
 
@@ -313,23 +313,6 @@ def _match_witness(
     }
 
 
-def _fact_witnesses(fact: dict[str, Any]) -> list[tuple[str, str]]:
-    """Return unique non-empty answer-bearing strings in priority order."""
-    witnesses: list[tuple[str, str]] = []
-    normalized_seen: set[str] = set()
-    for match_type, key in (("answer", "answer"), ("expected_text", "expected_text")):
-        value = fact.get(key)
-        if not isinstance(value, str) or not value.strip():
-            continue
-        witness = value.strip()
-        normalized = normalize_evidence(witness)
-        if not normalized or normalized in normalized_seen:
-            continue
-        normalized_seen.add(normalized)
-        witnesses.append((match_type, witness))
-    return witnesses
-
-
 def _find_evidence_span(content: str, witness: str) -> tuple[int, int] | None:
     """Locate a literal or normalization-equivalent witness in source text."""
     literal_start = content.lower().find(witness.lower())
@@ -339,24 +322,12 @@ def _find_evidence_span(content: str, witness: str) -> tuple[int, int] | None:
     normalized_witness = normalize_evidence(witness)
     if not normalized_witness:
         return None
-    normalized_content, offsets = _normalized_content_with_offsets(content)
+    normalized_content, offsets = normalize_evidence_offsets(content)
     normalized_start = normalized_content.find(normalized_witness)
     if normalized_start < 0:
         return None
     normalized_end = normalized_start + len(normalized_witness) - 1
     return offsets[normalized_start], offsets[normalized_end] + 1
-
-
-def _normalized_content_with_offsets(content: str) -> tuple[str, list[int]]:
-    """Mirror ``normalize_evidence`` while retaining source character offsets."""
-    normalized_chars: list[str] = []
-    offsets: list[int] = []
-    for index, char in enumerate(content):
-        if char in {"\\", "{", "}", " ", "\n"}:
-            continue
-        normalized_chars.append(char.lower())
-        offsets.append(index)
-    return "".join(normalized_chars), offsets
 
 
 def _excerpt_bounds(content_chars: int, match_start: int, match_end: int) -> tuple[int, int]:

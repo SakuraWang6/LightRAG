@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from memory_eval_tests.evidence import normalize_evidence
+
 CASE_TRACE_SCHEMA_VERSION = "1.0"
 DIAGNOSIS_SCHEMA_VERSION = "1.0"
 DIAGNOSIS_RULE_VERSION = "1.0"
@@ -241,12 +243,22 @@ def _final_context(
 
 
 def _contains_oracle_evidence(context: str, evidence_facts: list[dict[str, Any]]) -> bool:
-    # answer_row may not carry full facts in older callers. The joiner below
-    # replaces this with oracle facts when constructing the trace.
-    return all(
-        str(fact.get("fact_id") or "") in context or str(fact.get("answer") or "") in context
-        for fact in evidence_facts
-    )
+    # A bare FACT identifier is metadata, not proof that the answer-bearing
+    # evidence reached the context, and punctuation/JSON markup must not break
+    # a match.  Normalise both sides and prefer the FACT-ID-anchored sentence
+    # before falling back to the bare answer value.
+    if not evidence_facts:
+        return True
+    normalized_context = normalize_evidence(context)
+    for fact in evidence_facts:
+        expected = normalize_evidence(str(fact.get("expected_text") or ""))
+        if expected and expected in normalized_context:
+            continue
+        answer = normalize_evidence(str(fact.get("answer") or ""))
+        if answer and answer in normalized_context:
+            continue
+        return False
+    return True
 
 
 def _group_distribution(cases: list[dict[str, Any]], key: str) -> dict[str, dict[str, Any]]:
