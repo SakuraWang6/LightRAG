@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 
 import { getEvalRunLog, type EvalRunEvent } from '@/api/eval'
 import EmptyCard from '@/components/ui/EmptyCard'
-import { compactRunStages } from '@/features/eval/utils'
+import { compactRunStages, formatDate } from '@/features/eval/utils'
 
 interface RunLogProps {
   runId: string
@@ -85,7 +85,7 @@ export default function RunLog({ runId, events = [], active = false }: RunLogPro
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-baseline gap-x-2">
                     <span className="font-medium">{event.phase || '运行'}</span>
-                    <time className="text-muted-foreground text-xs">{event.timestamp}</time>
+                    <time className="text-muted-foreground text-xs">{formatDate(event.timestamp)}</time>
                   </div>
                   <p className="text-muted-foreground break-words text-sm">{event.message}</p>
                 </div>

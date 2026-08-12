@@ -19,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import Checkbox from '@/components/ui/Checkbox'
 import Input from '@/components/ui/Input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/Popover'
+import { formatDate } from '@/features/eval/utils'
 import {
   Select,
   SelectContent,
@@ -443,7 +444,7 @@ export default function DatasetsView({ onBack }: DatasetsViewProps) {
                             .map((format) => (format === 'docx' ? t('eval.formatDocx') : 'PDF'))
                             .join(' + ')}
                         </TableCell>
-                        <TableCell className="px-3 py-2">{item.created_at.slice(0, 19)}</TableCell>
+                        <TableCell className="px-3 py-2">{formatDate(item.created_at)}</TableCell>
                         <TableCell className="px-3 py-2 text-right">
                           <Button
                             size="sm"
