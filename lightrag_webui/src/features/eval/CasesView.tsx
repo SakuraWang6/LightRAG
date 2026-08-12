@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CheckIcon,
@@ -6,11 +6,22 @@ import {
   FileSearchIcon,
   MinusIcon,
   ScanSearchIcon,
+  TextSearchIcon,
   TriangleAlertIcon,
   XIcon
 } from 'lucide-react'
 
 import Button from '@/components/ui/Button'
+import { getCaseContext } from '@/api/eval'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger
+} from '@/components/ui/Dialog'
+import { ScrollArea } from '@/components/ui/ScrollArea'
 import {
   Select,
   SelectContent,
@@ -100,57 +111,274 @@ function Verdict({ c }: { c: NormalizedCase }) {
   )
 }
 
-function ScoreExplanation({ c }: { c: NormalizedCase }) {
-  const reason = typeof c.scorer.reason === 'string' ? c.scorer.reason : ''
-  const mode = typeof c.scorer.mode === 'string' ? c.scorer.mode : ''
-  const text = c.verdict === 'uncertain'
-    ? '此题需要语义评分，但当前运行没有配置语义评分器，因此不计入回答准确率分母。'
-    : c.passed === true
-      ? '模型回答满足本题的评分规则。'
-      : '模型回答未满足本题的评分规则。'
-  return (
-    <section className="rounded-md border bg-muted/20 px-4 py-3">
-      <p className="text-muted-foreground mb-1 text-[11px] font-semibold tracking-[0.14em]">评分结论</p>
-      <p className="text-sm leading-6">{text}</p>
-      {reason ? <p className="text-muted-foreground mt-1 text-xs leading-5">{reason}</p> : null}
-      {mode ? <p className="text-muted-foreground mt-2 text-xs">评分方式：{mode}</p> : null}
-      {c.responseTruncated ? (
-        <p className="mt-2 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
-          <TriangleAlertIcon className="size-3.5" /> 模型达到最大输出限制；此回答可能不完整。
-        </p>
-      ) : null}
-    </section>
-  )
+const FACT_HIGHLIGHT_CLASSES = [
+  'bg-amber-200/80 text-amber-950 dark:bg-amber-400/30 dark:text-amber-100',
+  'bg-sky-200/80 text-sky-950 dark:bg-sky-400/30 dark:text-sky-100',
+  'bg-emerald-200/80 text-emerald-950 dark:bg-emerald-400/30 dark:text-emerald-100',
+  'bg-fuchsia-200/80 text-fuchsia-950 dark:bg-fuchsia-400/30 dark:text-fuchsia-100',
+  'bg-rose-200/80 text-rose-950 dark:bg-rose-400/30 dark:text-rose-100'
+]
+
+function factColorIndex(factId: string): number {
+  let hash = 0
+  for (let i = 0; i < factId.length; i += 1) hash = (hash * 31 + factId.charCodeAt(i)) >>> 0
+  return hash % FACT_HIGHLIGHT_CLASSES.length
 }
 
-function ContextObservation({ c }: { c: NormalizedCase }) {
-  const observation = c.finalContextEvidence
-  const status = observation.status
-  if (!status) return null
-  if (status === 'not_applicable') return null
-  if (status !== 'observed') {
-    return (
-      <p className="text-muted-foreground mt-3 text-xs leading-5">
-        最终回答上下文未记录，不能据此判断证据是否真正提供给模型。
-      </p>
-    )
+type MatchRange = { start: number; end: number; factId: string }
+
+function matchRanges(matches: Detail[]): MatchRange[] {
+  const ranges = matches
+    .map((match) => ({
+      start: typeof match.start === 'number' ? match.start : -1,
+      end: typeof match.end === 'number' ? match.end : -1,
+      factId: String(match.fact_id ?? '')
+    }))
+    .filter((range) => range.start >= 0 && range.end > range.start)
+    .sort((a, b) => a.start - b.start)
+  const merged: MatchRange[] = []
+  for (const range of ranges) {
+    const last = merged[merged.length - 1]
+    if (last && range.start <= last.end) {
+      if (range.end > last.end) last.end = range.end
+    } else {
+      merged.push({ ...range })
+    }
   }
-  const expected = Array.isArray(observation.expected_fact_ids) ? observation.expected_fact_ids.length : 0
-  const hit = Array.isArray(observation.hit_fact_ids) ? observation.hit_fact_ids.length : 0
-  const missing = Array.isArray(observation.missing_fact_ids) ? observation.missing_fact_ids.map(String) : []
+  return merged
+}
+
+function HighlightedChunk({ text, ranges }: { text: string; ranges: MatchRange[] }) {
+  const segments: { text: string; range?: MatchRange }[] = []
+  let cursor = 0
+  for (const range of ranges) {
+    if (range.start > cursor) segments.push({ text: text.slice(cursor, range.start) })
+    segments.push({ text: text.slice(range.start, range.end), range })
+    cursor = range.end
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor) })
   return (
-    <div className="mt-3 border-t pt-3 text-xs">
-      <p className="font-medium">最终回答上下文：{hit} / {expected} 条目标事实已进入上下文</p>
-      <p className="text-muted-foreground mt-1">
-        证据覆盖：{compactNumber(observation.coverage)}
-        {typeof observation.context_chars === 'number' ? ` · 上下文 ${observation.context_chars} 字符` : ''}
-      </p>
-      {missing.length > 0 ? <p className="text-amber-700 dark:text-amber-300 mt-1">未进入上下文：{missing.join('、')}</p> : null}
-    </div>
+    <p className="whitespace-pre-wrap break-words text-sm leading-6">
+      {segments.map((segment, index) =>
+        segment.range ? (
+          <mark
+            key={index}
+            className={`rounded px-0.5 ${FACT_HIGHLIGHT_CLASSES[factColorIndex(segment.range.factId)]}`}
+            title={segment.range.factId}
+          >
+            {segment.text}
+          </mark>
+        ) : (
+          <span key={index}>{segment.text}</span>
+        )
+      )}
+    </p>
   )
 }
 
-function RetrievalEvidence({ c }: { c: NormalizedCase }) {
+function ChunkDialog({ item }: { item: Detail }) {
+  const text = typeof item.text === 'string' ? item.text : ''
+  const ranges = matchRanges(asList(item.matches))
+  const facts = Array.from(new Set(ranges.map((range) => range.factId).filter(Boolean)))
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs">
+          <FileSearchIcon className="mr-1 size-3.5" />
+          查看完整 chunk{typeof item.chars === 'number' ? `（${item.chars} 字符）` : ''}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-2 text-sm">
+            第 {String(item.rank ?? '—')} 条检索 chunk
+            {item.file_path ? <span className="text-muted-foreground font-normal">{String(item.file_path)}</span> : null}
+          </DialogTitle>
+          {facts.length > 0 ? (
+            <DialogDescription asChild>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {facts.map((factId) => (
+                  <span
+                    key={factId}
+                    className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] ${FACT_HIGHLIGHT_CLASSES[factColorIndex(factId)]}`}
+                  >
+                    <span className="size-1.5 rounded-full bg-current" />
+                    {factId}
+                  </span>
+                ))}
+              </div>
+            </DialogDescription>
+          ) : (
+            <DialogDescription className="text-xs">完整检索 chunk 内容。</DialogDescription>
+          )}
+        </DialogHeader>
+        <ScrollArea className="max-h-[70vh] rounded-md border bg-muted/10 p-3">
+          {ranges.length > 0 ? (
+            <HighlightedChunk text={text} ranges={ranges} />
+          ) : (
+            <p className="whitespace-pre-wrap break-words text-sm leading-6">{text || '—'}</p>
+          )}
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function FinalContextDialog({ runId, c }: { runId: string; c: NormalizedCase }) {
+  const [tab, setTab] = useState<'context' | 'prompt'>('context')
+  const [open, setOpen] = useState(false)
+  const [trace, setTrace] = useState<Detail | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    getCaseContext(runId, c.id)
+      .then((data) => {
+        if (cancelled) return
+        setTrace(data)
+        setError(data ? null : '该运行没有记录此题的最终上下文。')
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : '加载最终上下文失败。')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, runId, c.id])
+  const finalContext = typeof trace?.final_context === 'string' ? trace.final_context : ''
+  const finalPrompt = typeof trace?.final_prompt === 'string' ? trace.final_prompt : ''
+  const chars = typeof trace?.final_context_chars === 'number'
+    ? trace.final_context_chars
+    : finalContext ? finalContext.length : 0
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs">
+          <TextSearchIcon className="mr-1 size-3.5" />
+          查看检索上下文
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="text-sm">检索上下文（进入 LLM 前）{typeof chars === 'number' ? `（${chars} 字符）` : ''}</DialogTitle>
+          <DialogDescription className="text-xs">
+            这是检索召回 chunk 与知识图谱实体拼装后的上下文，随问题一起发送给 LLM；「完整 Prompt」包含系统提示词与用户问题。
+          </DialogDescription>
+        </DialogHeader>
+        {error ? (
+          <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>
+        ) : !trace ? (
+          <p className="text-muted-foreground text-sm">正在加载…</p>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant={tab === 'context' ? 'default' : 'outline'} onClick={() => setTab('context')}>
+                检索上下文（KG + Chunks）
+              </Button>
+              {finalPrompt ? (
+                <Button size="sm" variant={tab === 'prompt' ? 'default' : 'outline'} onClick={() => setTab('prompt')}>
+                  完整 Prompt
+                </Button>
+              ) : null}
+            </div>
+            <ScrollArea className="max-h-[70vh] rounded-md border bg-muted/10 p-3">
+              <pre className="font-sans text-xs leading-5 whitespace-pre-wrap break-words">
+                {tab === 'context' ? (finalContext || '—') : finalPrompt}
+              </pre>
+            </ScrollArea>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+type TopKChunk = {
+  rank: number
+  filePath: string
+  text: string
+  hit: Detail | null
+}
+
+function TopKDialog({ retrieval }: { retrieval: Detail }) {
+  const references = asList(retrieval.top_contexts)
+  if (references.length === 0) return null
+  const hitByText = new Map<string, Detail>()
+  for (const item of asList(retrieval.hit_evidence)) {
+    if (typeof item.text === 'string' && item.text.length > 0) {
+      hitByText.set(item.text, item)
+    }
+  }
+  let globalRank = 0
+  const chunks: TopKChunk[] = []
+  for (const ref of references) {
+    const refChunks = asList(ref.chunks)
+    for (const chunk of refChunks) {
+      globalRank += 1
+      const text = typeof chunk.text === 'string' ? chunk.text : ''
+      chunks.push({
+        rank: globalRank,
+        filePath: typeof ref.file_path === 'string' ? ref.file_path : '',
+        text,
+        hit: hitByText.get(text) ?? null
+      })
+    }
+    if (refChunks.length === 0 && typeof ref.chunk_count === 'number' && ref.chunk_count > 0) {
+      // Older runs recorded only counts; keep the reference row visible.
+      globalRank += ref.chunk_count
+    }
+  }
+  const totalCandidates = references.reduce((sum, ref) => {
+    const refChunks = asList(ref.chunks)
+    return sum + (refChunks.length > 0 ? refChunks.length : (typeof ref.chunk_count === 'number' ? ref.chunk_count : 0))
+  }, 0)
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs">
+          <FileSearchIcon className="mr-1 size-3.5" />
+          查看 Top-K 检索结果（{totalCandidates}）
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader>
+          <DialogTitle className="text-sm">Top-K 检索结果（{totalCandidates} 个候选 chunk）</DialogTitle>
+          <DialogDescription className="text-xs">
+            按检索排名展示全部候选 chunk；命中的 chunk 以彩色高亮标出目标事实所在位置。
+          </DialogDescription>
+        </DialogHeader>
+        <ScrollArea className="max-h-[70vh] rounded-md border">
+          <div className="space-y-3 p-3">
+            {chunks.length === 0 ? (
+              <p className="text-muted-foreground text-sm">该运行未保存 Top-K chunk 内容，仅记录了候选数量。</p>
+            ) : null}
+            {chunks.map((chunk) => (
+              <div key={`${chunk.rank}-${chunk.filePath}`} className="rounded-md border bg-muted/[0.06] px-3 py-2.5">
+                <p className="text-muted-foreground mb-1.5 flex items-center gap-2 text-xs">
+                  <span className="font-mono">第 {chunk.rank} 条</span>
+                  {chunk.filePath ? <span className="truncate">{chunk.filePath}</span> : null}
+                  {chunk.hit ? (
+                    <span className="ml-auto inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                      <CheckIcon className="size-3.5" /> 已命中
+                    </span>
+                  ) : null}
+                </p>
+                {chunk.hit ? (
+                  <HighlightedChunk text={chunk.text} ranges={matchRanges(asList(chunk.hit.matches))} />
+                ) : (
+                  <p className="whitespace-pre-wrap break-words text-sm leading-6">{chunk.text || '—'}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function RetrievalEvidence({ runId, c }: { runId: string; c: NormalizedCase }) {
   const retrieval = c.retrieval
   const status = retrieval.status
   if (status === 'not_applicable') {
@@ -166,6 +394,9 @@ function RetrievalEvidence({ c }: { c: NormalizedCase }) {
   const expectedIds = Array.isArray(retrieval.expected_fact_ids) ? retrieval.expected_fact_ids.map(String) : []
   const hitIds = Array.isArray(retrieval.hit_fact_ids) ? retrieval.hit_fact_ids.map(String) : []
   const evidence = asList(retrieval.hit_evidence)
+  const missingInContext = Array.isArray(c.finalContextEvidence.missing_fact_ids)
+    ? c.finalContextEvidence.missing_fact_ids.map(String)
+    : []
   return (
     <div className="space-y-3">
       <div className="grid gap-2 sm:grid-cols-3">
@@ -182,12 +413,29 @@ function RetrievalEvidence({ c }: { c: NormalizedCase }) {
           <p className="mt-1 text-sm font-semibold tabular-nums">{retrieval.first_evidence_rank ? `第 ${retrieval.first_evidence_rank} 条` : '未命中'}</p>
         </div>
       </div>
+
       {expectedIds.length > 0 ? (
-        <p className="text-muted-foreground text-xs leading-5">
-          目标：{expectedIds.join('、')}<br />
-          命中：{hitIds.length ? hitIds.join('、') : '无'}
-        </p>
+        <div className="rounded-md border bg-background px-3 py-2">
+          <p className="text-muted-foreground mb-2 text-xs font-medium">
+            目标证据清单（命中 {hitIds.length}/{expectedIds.length}）
+          </p>
+          <ul className="space-y-1">
+            {expectedIds.map((factId) => {
+              const hit = hitIds.includes(factId)
+              return (
+                <li key={factId} className="flex items-center gap-2 text-xs leading-5">
+                  <span className={`size-1.5 shrink-0 rounded-full ${hit ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                  <span className="font-mono">{factId}</span>
+                  <span className={`ml-auto ${hit ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                    {hit ? '已命中' : '未命中'}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
       ) : null}
+
       {evidence.length === 0 ? (
         <p className="text-amber-700 dark:text-amber-300 flex items-center gap-1.5 text-sm">
           <TriangleAlertIcon className="size-4" /> 前 K 条检索结果中没有命中目标事实。
@@ -215,26 +463,29 @@ function RetrievalEvidence({ c }: { c: NormalizedCase }) {
                       <p className="whitespace-pre-wrap break-words text-sm leading-6">{String(match.excerpt ?? item.text ?? '—')}</p>
                     </div>
                   ))}
-                  {typeof item.text === 'string' && item.text.length > 0 ? (
-                    <details className="text-sm">
-                      <summary className="text-primary cursor-pointer select-none">
-                        查看完整检索 chunk{typeof item.chars === 'number' ? `（${item.chars} 字符）` : ''}
-                      </summary>
-                      <p className="mt-2 whitespace-pre-wrap break-words leading-6">{item.text}</p>
-                    </details>
-                  ) : null}
+                  <ChunkDialog item={item} />
                 </div>
               ) : (
                 <>
                   <p className="text-muted-foreground mb-1 text-xs">{String(item.fact_id ?? '目标事实')}</p>
                   <p className="whitespace-pre-wrap break-words text-sm leading-6">{String(item.text ?? '—')}</p>
+                  <ChunkDialog item={item} />
                 </>
               )}
             </blockquote>
           ))}
         </div>
       )}
-      <ContextObservation c={c} />
+
+      <div className="flex flex-wrap items-center gap-2 border-t pt-2">
+        <TopKDialog retrieval={retrieval} />
+        <FinalContextDialog runId={runId} c={c} />
+        {missingInContext.length > 0 ? (
+          <p className="text-amber-700 dark:text-amber-300 text-xs">
+            有 {missingInContext.length} 条目标事实未进入最终上下文：{missingInContext.join('、')}
+          </p>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -246,26 +497,28 @@ function diagnosticHint(c: NormalizedCase): string {
   if (c.expectedBehavior === 'abstain') {
     return c.passed ? '模型按要求拒答。' : '该题应该拒答，但模型给出了不可支持的回答。'
   }
+  if (c.passed) return '回答通过；检索与上下文数据保留作追溯，不再额外归因。'
   const recall = c.retrieval.recall_at_k
   const context = c.finalContextEvidence
-  if (c.passed) return '回答通过；检索数据保留作追溯，不再额外归因。'
+  const missing = Array.isArray(context.missing_fact_ids) ? context.missing_fact_ids : []
   if (typeof recall === 'number' && recall < 1) {
-    return '检索没有取全本题所需证据，应优先检查索引、检索参数或文档解析结果。'
+    return '检索未取全本题所需证据，应优先检查索引、检索参数或文档解析结果。'
   }
-  if (context.status === 'observed' && context.available === false) {
-    return '检索已命中目标证据，但最终回答上下文不完整；请检查上下文选择或截断。'
+  if (context.status === 'observed' && missing.length > 0) {
+    return `证据已检索到，但 ${missing.length} 条目标事实未进入最终上下文；请检查上下文选择或截断。`
   }
-  if (typeof recall === 'number' && recall === 1 && context.available === true) {
-    return '所需证据已被检索且进入最终上下文，但回答仍未通过；请检查生成模型、提示词或评分规则。'
+  if (context.status !== 'observed') {
+    return '检索已取全证据，但最终上下文未记录，无法进一步归因；请检查上下文追踪。'
   }
-  return '回答未通过，但当前 trace 不足以可靠定位具体阶段。'
+  return '所需证据已全部进入最终上下文，但回答仍未通过；请检查生成模型、提示词或评分规则。'
 }
 
 interface CasesViewProps {
   rows: Record<string, unknown>[]
+  runId: string
 }
 
-export default function CasesView({ rows }: CasesViewProps) {
+export default function CasesView({ rows, runId }: CasesViewProps) {
   const { t } = useTranslation()
   const [filter, setFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState('all')
@@ -351,13 +604,17 @@ export default function CasesView({ rows }: CasesViewProps) {
                     <p className="whitespace-pre-wrap break-words text-sm leading-6">{c.expected || '—'}</p>
                   </section>
                 </div>
-                <ScoreExplanation c={c} />
+                {c.responseTruncated ? (
+                  <p className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
+                    <TriangleAlertIcon className="size-3.5" /> 模型达到最大输出限制；此回答可能不完整。
+                  </p>
+                ) : null}
                 <section className="rounded-md border bg-muted/[0.08] p-4">
                   <div className="mb-3 flex items-center gap-2">
                     <ScanSearchIcon className="text-primary size-4" />
                     <h3 className="text-sm font-semibold">检索证据</h3>
                   </div>
-                  <RetrievalEvidence c={c} />
+                  <RetrievalEvidence runId={runId} c={c} />
                 </section>
                 <section className="border-border/70 flex gap-2 rounded-md border border-dashed px-3 py-2.5 text-sm leading-6">
                   <FileSearchIcon className="text-muted-foreground mt-0.5 size-4 shrink-0" />

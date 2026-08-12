@@ -138,7 +138,10 @@ def test_chinese_rich_dataset_contains_chinese_oracle_and_provenance(tmp_path) -
     assert manifest.generation_provenance is not None
     assert manifest.generation_provenance.input_parameters["language"] == "zh"
     assert oracle.language == "zh"
-    assert any("标准标定上限" in question.question for question in oracle.questions)
+    assert any(question.question_type == "direct_numeric" for question in oracle.questions)
+    assert any("是多少" in question.question for question in oracle.questions)
+    assert any(question.question_type == "equation" for question in oracle.questions)
+    assert any(question.question_type == "figure_caption" for question in oracle.questions)
     assert any(fact.fact_type == "governance_owner" for fact in oracle.facts)
     assert any(question.id == "Q-RELEASE-GATE-0004" for question in oracle.questions)
     assert any(question.question_type == "cross_document" for question in oracle.questions)

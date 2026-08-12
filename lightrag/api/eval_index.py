@@ -166,6 +166,31 @@ def _flatten_cases(methods: list[dict[str, Any]]) -> dict[str, Any]:
     return {"columns": columns, "rows": rows}
 
 
+def case_final_context_trace(
+    runs_root: Path, run_id: str, case_id: str
+) -> dict[str, Any] | None:
+    """Return one case's final-context trace without inflating run payloads.
+
+    The full trace (context + full prompt) is large, so it is excluded from
+    the case table and fetched on demand for the detail modal.
+    """
+    try:
+        envelope = _read_json(runs_root / run_id / "run.json")
+    except (OSError, ValueError):
+        return None
+    for method in envelope.get("methods") or []:
+        if method.get("method") != "answer":
+            continue
+        for row in method.get("results") or []:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("question_id")) != str(case_id):
+                continue
+            trace = row.get("final_context_trace")
+            return trace if isinstance(trace, dict) else None
+    return None
+
+
 def _case_methods_for_run(
     evaluation: dict[str, Any], methods: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:

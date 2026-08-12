@@ -279,7 +279,7 @@ function StandardRunView({ run, active }: { run: EvalRunDetail; active: boolean 
           {!caseArtifact ? (
             <EmptyCard title={t('eval.noCases')} description={t('eval.noCasesHint')} />
           ) : (
-            <CasesView rows={caseArtifact.table.rows} />
+            <CasesView rows={caseArtifact.table.rows} runId={run.id} />
           )}
         </TabsContent>
 

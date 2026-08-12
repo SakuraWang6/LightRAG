@@ -42,7 +42,13 @@ try:
     from memory_eval_tests.runner import RunParams
 
     from .. import eval_comparison, eval_jobs
-    from ..eval_index import clear_scan_cache, default_runs_root, load_run, scan_runs
+    from ..eval_index import (
+        case_final_context_trace,
+        clear_scan_cache,
+        default_runs_root,
+        load_run,
+        scan_runs,
+    )
 
     _EVAL_AVAILABLE = True
 except ImportError:
@@ -740,6 +746,30 @@ def create_eval_routes(
             raise
         except Exception as exc:
             logger.error(f"Error exporting eval run diagnosis '{run_id}': {exc}")
+            raise internal_server_error(exc)
+
+    @router.get(
+        "/runs/{run_id:path}/cases/{case_id}/context",
+        dependencies=[Depends(combined_auth)],
+    )
+    async def get_case_context(run_id: str, case_id: str) -> dict[str, Any]:
+        try:
+            require_eval()
+            detail = load_run(root, run_id)
+            if detail is None:
+                raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+            trace = case_final_context_trace(root, run_id, case_id)
+            if trace is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No final-context trace for case {case_id}",
+                )
+            return {"final_context_trace": trace}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Error loading case context '{run_id}/{case_id}': {exc}")
+            logger.error(traceback.format_exc())
             raise internal_server_error(exc)
 
     @router.get("/runs/{run_id:path}", dependencies=[Depends(combined_auth)])

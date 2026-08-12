@@ -291,6 +291,17 @@ export async function getEvalRun(runId: string): Promise<EvalRunDetail> {
   return response.data
 }
 
+export async function getCaseContext(
+  runId: string,
+  caseId: string
+): Promise<Record<string, unknown> | null> {
+  const response = await evalApiClient.get(
+    `/eval/runs/${encodeURIComponent(runId)}/cases/${encodeURIComponent(caseId)}/context`
+  )
+  const trace = response.data?.final_context_trace
+  return trace && typeof trace === 'object' ? trace as Record<string, unknown> : null
+}
+
 export async function refreshEvalIndex(): Promise<{
   indexed_at: string
   file_count: number

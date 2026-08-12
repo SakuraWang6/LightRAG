@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +23,11 @@ from memory_eval_tests.ingestion import (
     source_document_names,
     upload_dataset_files,
 )
+from memory_eval_tests.llm_analysis import analyze_run
 from memory_eval_tests.metrics import normalize_summary
 from memory_eval_tests.retrieval import evaluate_api
+
+from lightrag.utils import logger
 
 
 class IngestionFailure(RuntimeError):
@@ -438,6 +443,27 @@ def _runner(context: RunContext) -> dict[str, Any]:
             json.dumps(diagnosis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
         report = _report_markdown(answer, diagnosis)
+        analysis_extra: dict[str, Any] = {}
+        try:
+            answer_rows = answer.get("results") or []
+            analysis_md, analysis_extra = asyncio.run(
+                analyze_run(
+                    output_dir=context.output_dir,
+                    case_traces=case_traces,
+                    run_summary={
+                        "correct": answer.get("correct_cases")
+                        or sum(bool(row.get("exact_match")) for row in answer_rows),
+                        "total": int(answer.get("cases") or len(answer_rows)),
+                        "accuracy": answer.get("answer_accuracy"),
+                        "groundedness": answer.get("groundedness"),
+                    },
+                    model=str(baseline.get("model") or "qwen3:8b"),
+                    host=os.getenv("LLM_BINDING_HOST") or "http://127.0.0.1:11434",
+                )
+            )
+            report = report + "\n" + analysis_md
+        except Exception as exc:  # noqa: BLE001 - analysis must never fail the run
+            logger.warning(f"LLM run analysis skipped: {type(exc).__name__}: {exc}")
         context.progress("running", 1, 1, "report", "评分结果与报告已生成")
         methods = [
             {
@@ -473,6 +499,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
                 "diagnosis_coverage": diagnosis["diagnosis_coverage"],
                 "cause_distribution": diagnosis["cause_distribution"],
                 "trace_availability": diagnosis["trace_availability"],
+                **analysis_extra,
             },
         }
     except Exception:

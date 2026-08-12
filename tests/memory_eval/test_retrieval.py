@@ -97,3 +97,66 @@ def test_fact_identifier_alone_is_not_retrieval_evidence() -> None:
     assert retrieval._content_contains_fact(
         "The table row is [\"A-089\", \"54.99 ms\", \"FACT-00027\"].", fact
     ) is True
+
+
+def test_repeated_answer_attributed_to_expected_text_instance(monkeypatch) -> None:
+    """A repeated answer sentence must not steal the FACT attribution.
+
+    Generated documents repeat the same control sentence on several pages.
+    The bare answer matches every occurrence; only the FACT-ID-anchored
+    expected_text identifies the actual instance, so the first ranked chunk
+    with that sentence (not the earlier repeated phrase) owns the hit.
+    """
+    fact = {
+        "fact_id": "FACT-0016",
+        "answer": "周衡完成来源复核且顾澄完成安全签核",
+        "expected_text": (
+            "FACT-0016：实施单元 0004 涉及退款或隐私变更时，"
+            "发布前必须由周衡完成来源复核且顾澄完成安全签核。"
+        ),
+    }
+    questions = [
+        {
+            "id": "Q-GATE",
+            "question": "发布前还需要什么？",
+            "evidence_fact_ids": ["FACT-0016"],
+        }
+    ]
+    repeated_chunk = "第 15 页：该单元同样要求周衡完成来源复核且顾澄完成安全签核。"
+    anchored_chunk = fact["expected_text"]
+    responses = iter(
+        [
+            {
+                "data": {
+                    "references": [
+                        {
+                            "file_path": "source.docx",
+                            "content": [repeated_chunk, anchored_chunk],
+                        }
+                    ]
+                }
+            }
+        ]
+    )
+
+    class FakeDatasetClient:
+        def __init__(self, _source: str) -> None:
+            pass
+
+        @staticmethod
+        def oracle() -> dict[str, Any]:
+            return {"facts": [fact], "questions": questions}
+
+    monkeypatch.setattr(retrieval, "DatasetClient", FakeDatasetClient)
+    monkeypatch.setattr(retrieval, "_post_json", lambda *_args, **_kwargs: next(responses))
+
+    report = retrieval.evaluate_api(dataset_source="dataset", rag_api_url="http://rag")
+    row = report["results"][0]
+    assert row["recall_at_k"] == 1.0
+    assert row["first_evidence_rank"] == 2
+    assert row["hit_fact_ids"] == ["FACT-0016"]
+    assert len(row["hit_evidence"]) == 1
+    evidence = row["hit_evidence"][0]
+    assert evidence["rank"] == 2
+    assert evidence["text"] == anchored_chunk
+    assert evidence["matches"][0]["match_type"] == "expected_text"

@@ -69,32 +69,62 @@ def evaluate_api(
                 rank += 1
                 ranked_chunks.append((rank, ref_index, chunk))
         hits_by_fact: dict[str, int] = {}
+        match_by_fact: dict[str, dict[str, Any]] = {}
+        # Pass 1: precise FACT-ID-anchored matching.  Generated documents
+        # repeat the same answer sentence on several pages (e.g. a release
+        # constraint), so the bare answer alone cannot tell which instance was
+        # retrieved.  The expected_text carries the FACT ID and wins.
+        remaining_facts: list[dict[str, Any]] = []
+        for fact in expected_facts:
+            fact_id = str(fact["fact_id"])
+            hit = next(
+                (
+                    (rank, match)
+                    for rank, _ref_index, chunk in ranked_chunks
+                    if (match := _find_expected_text_match(chunk, fact)) is not None
+                ),
+                None,
+            )
+            if hit is None:
+                remaining_facts.append(fact)
+                continue
+            rank, match = hit
+            hits_by_fact[fact_id] = rank
+            match_by_fact[fact_id] = match
+        # Pass 2: loose answer-content fallback for facts whose full sentence
+        # is not verbatim in any chunk (tables/equations render as markup or
+        # JSON, and older runs only carry the answer value).
+        for fact in remaining_facts:
+            fact_id = str(fact["fact_id"])
+            hit = next(
+                (
+                    (rank, match)
+                    for rank, _ref_index, chunk in ranked_chunks
+                    if (match := _find_answer_match(chunk, fact)) is not None
+                ),
+                None,
+            )
+            if hit is None:
+                continue
+            rank, match = hit
+            hits_by_fact[fact_id] = rank
+            match_by_fact[fact_id] = match
+
         hit_evidence: list[dict[str, Any]] = []
         hit_chunk_count = 0
         for rank, ref_index, chunk in ranked_chunks:
-            chunk_matches: list[dict[str, Any]] = []
-            for fact in expected_facts:
-                fact_id = str(fact["fact_id"])
-                # A FACT identifier alone is metadata, not proof that the
-                # answer-bearing evidence was retrieved. This was especially
-                # misleading for long tables: an introductory sentence could
-                # mention FACT-00027 while the 54.99 ms table row appeared in
-                # a later chunk.
-                match = _find_fact_match(chunk, fact)
-                if match is None or fact_id in hits_by_fact:
-                    continue
-                hits_by_fact[fact_id] = rank
-                chunk_matches.append(match)
+            chunk_matches: list[dict[str, Any]] = [
+                match_by_fact[str(fact["fact_id"])]
+                for fact in expected_facts
+                if hits_by_fact.get(str(fact["fact_id"])) == rank
+                and str(fact["fact_id"]) in match_by_fact
+            ]
             if chunk_matches:
                 hit_chunk_count += 1
                 hit_evidence.append(
                     {
                         "rank": rank,
                         "file_path": references[ref_index].get("file_path", ""),
-                        # Persist the complete retrieved chunk for expandable
-                        # review. The collapsed WebUI view uses each match's
-                        # focused excerpt, so distinct facts in one chunk no
-                        # longer render as duplicated first-N-character text.
                         "text": chunk,
                         "chars": len(chunk),
                         "matches": chunk_matches,
@@ -130,6 +160,12 @@ def evaluate_api(
                         "rank": ref_index + 1,
                         "file_path": ref.get("file_path", ""),
                         "chunk_count": len(ref.get("content") or []),
+                        # Full ranked chunk text so the WebUI can present every
+                        # Top-K candidate in a review modal, not only the hits.
+                        "chunks": [
+                            {"index": index, "text": chunk}
+                            for index, chunk in enumerate(ref.get("content") or [])
+                        ],
                     }
                     for ref_index, ref in enumerate(references)
                 ],
@@ -235,24 +271,46 @@ def _content_contains_fact(content: str, fact: dict[str, Any]) -> bool:
 
 def _find_fact_match(content: str, fact: dict[str, Any]) -> dict[str, Any] | None:
     """Return a focused proof of a fact match, or ``None`` when it is absent."""
-    for match_type, witness in _fact_witnesses(fact):
-        span = _find_evidence_span(content, witness)
-        if span is None:
-            continue
-        start, end = span
-        excerpt_start, excerpt_end = _excerpt_bounds(len(content), start, end)
-        return {
-            "fact_id": str(fact.get("fact_id") or ""),
-            "match_type": match_type,
-            "matched_text": witness,
-            "start": start,
-            "end": end,
-            "excerpt": content[excerpt_start:excerpt_end],
-            "excerpt_start": excerpt_start,
-            "excerpt_end": excerpt_end,
-            "excerpt_truncated": excerpt_start > 0 or excerpt_end < len(content),
-        }
-    return None
+    return _find_expected_text_match(content, fact) or _find_answer_match(content, fact)
+
+
+def _find_expected_text_match(
+    content: str, fact: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Match the FACT-ID-anchored sentence, the most specific witness."""
+    value = fact.get("expected_text")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return _match_witness(content, value.strip(), fact, match_type="expected_text")
+
+
+def _find_answer_match(content: str, fact: dict[str, Any]) -> dict[str, Any] | None:
+    """Match the bare answer value, used as a fallback for artifacts."""
+    value = fact.get("answer")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return _match_witness(content, value.strip(), fact, match_type="answer")
+
+
+def _match_witness(
+    content: str, witness: str, fact: dict[str, Any], *, match_type: str
+) -> dict[str, Any] | None:
+    span = _find_evidence_span(content, witness)
+    if span is None:
+        return None
+    start, end = span
+    excerpt_start, excerpt_end = _excerpt_bounds(len(content), start, end)
+    return {
+        "fact_id": str(fact.get("fact_id") or ""),
+        "match_type": match_type,
+        "matched_text": witness,
+        "start": start,
+        "end": end,
+        "excerpt": content[excerpt_start:excerpt_end],
+        "excerpt_start": excerpt_start,
+        "excerpt_end": excerpt_end,
+        "excerpt_truncated": excerpt_start > 0 or excerpt_end < len(content),
+    }
 
 
 def _fact_witnesses(fact: dict[str, Any]) -> list[tuple[str, str]]:
