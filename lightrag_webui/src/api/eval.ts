@@ -99,6 +99,7 @@ export type EvalRunDetail = EvalRun & {
 export type EvalJob = {
   id: string
   kind: 'run' | 'dataset'
+  label?: string | null
   evaluation?: string | null
   dataset?: string | null
   dataset_id?: string | null

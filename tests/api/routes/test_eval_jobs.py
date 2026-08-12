@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from lightrag.api import eval_jobs
+from memory_data_service.schemas import DatasetSummary
 from lightrag.api.eval_index import scan_runs
 from memory_eval_tests.runner import RunParams, build_run_command
 
@@ -218,6 +219,65 @@ def test_queue_positions_are_scoped_to_job_kind(tmp_path: Path) -> None:
     assert listed["run-first"]["queue_position"] == 1
     assert listed["run-second"]["queue_position"] == 2
     assert listed["dataset-only"]["queue_position"] == 1
+
+
+def test_dataset_force_overwrite_resolves_same_display_name(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Force + same display name must overwrite the existing dataset.
+
+    The WebUI creates datasets by name without a dataset_id, so without this
+    resolution every forced regeneration silently created a new directory.
+    """
+    fake = [
+        DatasetSummary(
+            dataset_id="existing-ds",
+            display_name="同名数据集",
+            title="同名数据集",
+            tier="smoke",
+            profile="rich",
+            language="zh",
+            pages=20,
+            formats=["docx"],
+            modalities=["text"],
+            path=str(tmp_path / "datasets" / "existing-ds"),
+            created_at="2026-01-01T00:00:00+00:00",
+            files=[],
+        )
+    ]
+    monkeypatch.setattr(eval_jobs, "list_datasets", lambda _root: fake)
+    runs_root = tmp_path / "runs"
+    datasets_root = tmp_path / "datasets"
+
+    job = eval_jobs.start_dataset_job(
+        runs_root=runs_root,
+        datasets_root=datasets_root,
+        dataset_id=None,
+        tier="smoke",
+        profile="rich",
+        pages=20,
+        formats=["docx"],
+        modalities=["text"],
+        display_name="同名数据集",
+        language="zh",
+        force=True,
+    )
+    assert job["dataset_id"] == "existing-ds"
+
+    plain = eval_jobs.start_dataset_job(
+        runs_root=runs_root,
+        datasets_root=datasets_root,
+        dataset_id=None,
+        tier="smoke",
+        profile="rich",
+        pages=20,
+        formats=["docx"],
+        modalities=["text"],
+        display_name="同名数据集",
+        language="zh",
+        force=False,
+    )
+    assert plain["dataset_id"] != "existing-ds"
 
 
 def test_dispatch_failure_marks_the_visible_queued_run_as_failed(

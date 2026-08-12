@@ -92,6 +92,12 @@ function RunHeader({
       Boolean(activeJob),
     [run.progress?.status, run.status, activeJob]
   )
+  // The elapsed timer must only tick once the run has actually started;
+  // queued/pending runs wait in line and should not count queue time.
+  const isStarted = useMemo(
+    () => run.progress?.status === 'running' || run.status === 'running',
+    [run.progress?.status, run.status]
+  )
   const [now, setNow] = useState(0)
   useEffect(() => {
     if (!isRunning) return
@@ -137,7 +143,7 @@ function RunHeader({
       </div>
       <p className="text-muted-foreground mt-1 text-xs">
         {t('eval.updatedAt')}: {formatDate(run.updated_at)}
-        {isRunning && elapsedSeconds != null ? (
+        {isStarted && elapsedSeconds != null ? (
           <>
             {' · '}
             {t('eval.elapsed')}: {formatDuration(elapsedSeconds)}

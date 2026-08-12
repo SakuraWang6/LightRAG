@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from memory_data_service.generators.chinese_docx_generator import (
@@ -29,6 +30,10 @@ def generate_dataset(
             f"dataset already exists: {request.dataset_id} at {dataset_path} "
             "(pass force=True to overwrite)"
         )
+    if force and dataset_path is not None and dataset_path.exists():
+        # A forced overwrite must replace the whole dataset, not leave stale
+        # generated artifacts (old figures/PDFs) behind next to new files.
+        shutil.rmtree(dataset_path)
     display_name = request.display_name.strip()
     if display_name:
         # Generated source documents deliberately inherit the business-facing

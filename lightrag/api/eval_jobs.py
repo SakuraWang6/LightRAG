@@ -35,6 +35,7 @@ from memory_eval_tests.runner import (
     build_run_command,
     build_supervise_command,
 )
+from memory_data_service.storage import list_datasets
 
 _JOBS_DIR = ".jobs"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -937,7 +938,27 @@ def start_dataset_job(
         )
     job_dir = jobs_root(runs_root) / _job_id("dataset")
     job_dir.mkdir(parents=True, exist_ok=True)
-    resolved_dataset_id = dataset_id or job_dir.name
+    resolved_dataset_id = dataset_id
+    if resolved_dataset_id is None:
+        # The WebUI creates datasets by name without a dataset_id.  With force
+        # checked, "same name" must mean "overwrite that dataset", otherwise
+        # every generation silently becomes a new duplicate directory.
+        if force and display_name:
+            datasets_root = datasets_root or _default_datasets_root(runs_root)
+            try:
+                existing = [
+                    summary
+                    for summary in list_datasets(datasets_root)
+                    if (summary.display_name or "").strip()
+                    == display_name.strip()
+                ]
+            except (OSError, ValueError):
+                existing = []
+            if existing:
+                resolved_dataset_id = sorted(
+                    existing, key=lambda summary: summary.created_at
+                )[-1].dataset_id
+        resolved_dataset_id = resolved_dataset_id or job_dir.name
     job = {
         "id": job_dir.name,
         "kind": "dataset",

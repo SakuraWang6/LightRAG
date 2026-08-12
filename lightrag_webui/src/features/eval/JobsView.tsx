@@ -6,7 +6,9 @@ import { toast } from 'sonner'
 import {
   cancelEvalJob,
   getEvalJob,
+  listDatasets,
   listEvalJobs,
+  type DatasetSummary,
   type EvalJob
 } from '@/api/eval'
 import Badge from '@/components/ui/Badge'
@@ -41,13 +43,19 @@ function statusClass(status: string): string {
 export default function JobsView({ onBack }: JobsViewProps) {
   const { t } = useTranslation()
   const [jobs, setJobs] = useState<EvalJob[]>([])
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([])
   const [expanded, setExpanded] = useState<string | null>(null)
   const [log, setLog] = useState<string[]>([])
   const [logLoading, setLogLoading] = useState(false)
 
   const load = useCallback(async () => {
     try {
-      setJobs(await listEvalJobs())
+      const [jobs, datasetsData] = await Promise.all([
+        listEvalJobs(),
+        listDatasets().catch(() => null)
+      ])
+      setJobs(jobs)
+      if (datasetsData) setDatasets(datasetsData.datasets)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
     }
@@ -57,6 +65,23 @@ export default function JobsView({ onBack }: JobsViewProps) {
     const timer = window.setTimeout(() => void load(), 0)
     return () => window.clearTimeout(timer)
   }, [load])
+
+  const datasetNameById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const item of datasets) {
+      const label = item.display_name.trim() || item.title.trim()
+      if (label) map.set(item.dataset_id, label)
+    }
+    return map
+  }, [datasets])
+
+  const readableTarget = (job: EvalJob): string => {
+    if (job.kind === 'dataset') {
+      return job.display_name ?? job.dataset_id ?? '—'
+    }
+    const raw = typeof job.dataset === 'string' ? job.dataset.split('/').pop() ?? job.dataset : job.dataset ?? '—'
+    return datasetNameById.get(raw) ?? raw
+  }
 
   const hasActive = useMemo(
     () => jobs.some((job) => ['claiming', 'running', 'cancelling', 'pending'].includes(job.status)),
@@ -127,7 +152,7 @@ export default function JobsView({ onBack }: JobsViewProps) {
           <Table className="min-w-full text-left text-sm">
             <TableHeader className="sticky top-0 bg-background">
               <TableRow>
-                <TableHead className="px-3 py-2">id</TableHead>
+                <TableHead className="px-3 py-2">{t('eval.jobName')}</TableHead>
                 <TableHead className="px-3 py-2">{t('eval.kind')}</TableHead>
                 <TableHead className="px-3 py-2">{t('eval.jobTarget')}</TableHead>
                 <TableHead className="px-3 py-2">{t('eval.status')}</TableHead>
@@ -140,12 +165,17 @@ export default function JobsView({ onBack }: JobsViewProps) {
               {jobs.map((job) => (
                 <Fragment key={job.id}>
                   <TableRow className="cursor-pointer" onClick={() => void expand(job)}>
-                    <TableCell className="px-3 py-2 font-medium">{job.id}</TableCell>
-                    <TableCell className="px-3 py-2">{job.kind}</TableCell>
+                    <TableCell className="max-w-[260px] px-3 py-2">
+                      <div className="truncate font-medium">
+                        {job.label ?? job.display_name ?? job.id}
+                      </div>
+                      <div className="text-muted-foreground mt-0.5 truncate text-[10px]">{job.id}</div>
+                    </TableCell>
+                    <TableCell className="px-3 py-2">
+                      {job.kind === 'dataset' ? t('eval.jobKindDataset') : t('eval.jobKindRun')}
+                    </TableCell>
                     <TableCell className="max-w-[220px] truncate px-3 py-2">
-                      {job.kind === 'dataset'
-                        ? job.display_name ?? job.dataset_id ?? '—'
-                        : job.evaluation ?? job.dataset ?? '—'}
+                      {readableTarget(job)}
                     </TableCell>
                     <TableCell className="px-3 py-2">
                       <Badge variant="outline" className={`text-[10px] ${statusClass(job.status)}`}>
