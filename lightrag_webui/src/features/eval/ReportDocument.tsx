@@ -65,41 +65,49 @@ export default function ReportDocument({ artifact }: ReportDocumentProps) {
       <Card className="relative">
         {toc.length > 0 ? (
           <div
-            className="absolute top-3 left-3 z-20"
+            className="absolute top-0 bottom-0 left-0 z-20"
             onMouseEnter={() => setTocHover(true)}
             onMouseLeave={() => setTocHover(false)}
           >
-            {tocHover ? (
-              <div className="bg-card max-h-[70vh] w-64 overflow-auto rounded-lg border p-3 shadow-lg">
-                <p className="text-muted-foreground mb-2 text-xs font-medium">{t('eval.toc')}</p>
-                <ul className="space-y-1">
-                  {toc.map((entry, index) => (
-                    <li key={index}>
-                      <button
-                        type="button"
-                        className="text-muted-foreground hover:text-foreground block w-full truncate rounded px-2 py-0.5 text-left text-xs transition-colors hover:bg-accent"
-                        style={{ paddingLeft: `${0.5 + (entry.level - 1) * 0.75}rem` }}
-                        title={entry.title}
-                        onClick={() => {
-                          document
-                            .getElementById(headingId(entry.title))
-                            ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                        }}
-                      >
-                        {entry.title}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : (
-              <span className="text-muted-foreground/80 cursor-pointer rounded-md border border-dashed bg-muted/40 px-2 py-1 text-xs transition-colors hover:bg-muted/70 hover:text-foreground">
-                {t('eval.toc')}
-              </span>
-            )}
+            <div
+              className={`h-full overflow-hidden rounded-l-lg bg-card shadow-sm transition-[width] duration-200 ease-out ${
+                tocHover ? 'w-64' : 'w-11'
+              }`}
+            >
+              {tocHover ? (
+                <div className="h-full overflow-auto p-3">
+                  <p className="text-muted-foreground mb-2 text-xs font-medium">{t('eval.toc')}</p>
+                  <ul className="space-y-1">
+                    {toc.map((entry, index) => (
+                      <li key={index}>
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-foreground block w-full truncate rounded px-2 py-0.5 text-left text-xs transition-colors hover:bg-accent"
+                          style={{ paddingLeft: `${0.5 + (entry.level - 1) * 0.75}rem` }}
+                          title={entry.title}
+                          onClick={() => {
+                            document
+                              .getElementById(headingId(entry.title))
+                              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                          }}
+                        >
+                          {entry.title}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <div className="flex h-full w-11 cursor-pointer items-center justify-center">
+                  <span className="text-muted-foreground text-[11px] font-medium tracking-[0.2em] [writing-mode:vertical-rl]">
+                    {t('eval.toc')}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
         ) : null}
-        <CardContent className="p-5">
+        <CardContent className={`p-5 ${toc.length > 0 ? 'pl-16' : ''}`}>
           <MarkdownReport content={artifact.report_md} components={components} />
         </CardContent>
       </Card>
