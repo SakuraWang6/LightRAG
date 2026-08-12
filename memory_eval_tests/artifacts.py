@@ -53,10 +53,12 @@ BASELINE_DEFAULTS: dict[str, Any] = {
     "max_total_tokens": 8192,
     "temperature": 0,
     # Local 8B models can take several minutes to produce a structured KG
-    # extraction. Keep the isolated evaluation runner reliable and
-    # deterministic instead of issuing four competing GPU requests against a
-    # 240-second generic service timeout.
-    "extraction_llm_timeout_seconds": 600,
+    # extraction, and a dense chunk can occasionally take over ten minutes on
+    # local hardware. Keep the isolated evaluation runner reliable and
+    # deterministic instead of failing a single slow chunk: 1200s is the
+    # function budget (the worker wrapper allows 2x for queueing), still far
+    # below the 240-second generic service timeout it replaces.
+    "extraction_llm_timeout_seconds": 1200,
     "extraction_max_async": 1,
     "kg": True,
     "vlm": False,

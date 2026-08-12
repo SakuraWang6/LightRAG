@@ -45,10 +45,13 @@ def _runtime_options(baseline: dict[str, Any]) -> dict[str, Any]:
         },
         # A KG extraction response contains many structured rows and must not
         # inherit a smaller answer-output budget.  JSON removes the fragile
-        # delimiter parser, while the record cap keeps an 8K response bounded.
+        # delimiter parser, while the record cap keeps the response bounded.
+        # Large documents (e.g. 200-page) routinely exceed a 16K window on a
+        # dense chunk, so extraction gets a 32K window and a 16K output
+        # budget instead of the answer-level 8K cap.
         "extraction_generation": {
-            "num_ctx": answer_num_ctx,
-            "num_predict": max(answer_num_predict, 8192),
+            "num_ctx": max(answer_num_ctx, 32768),
+            "num_predict": max(answer_num_predict, 16384),
             "temperature": float(baseline.get("temperature") or 0),
         },
         "extraction_execution": {
@@ -59,10 +62,10 @@ def _runtime_options(baseline: dict[str, Any]) -> dict[str, Any]:
             "use_json": True,
             "max_records": 40,
             "max_entities": 16,
-            # Do not run a second free-form "glean" pass after a complete
-            # structured extraction. If the bounded first call still reaches
-            # its token limit, the document fails rather than indexing a
-            # partial knowledge graph.
+            # Do not run a continuation pass: a truncated first response is
+            # not recoverable without risking partial/invented rows, so the
+            # document fails closed instead of indexing an incomplete graph.
+            # The 32K window / 16K output budget keeps truncation exceptional.
             "max_gleaning": 0,
         },
     }

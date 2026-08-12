@@ -88,7 +88,7 @@ def test_evaluation_runtime_stabilizes_local_extraction() -> None:
             "num_ctx": 16384,
             "num_predict": 4096,
             "temperature": 0,
-            "extraction_llm_timeout_seconds": 600,
+            "extraction_llm_timeout_seconds": 1200,
             "extraction_max_async": 1,
         }
     )
@@ -108,7 +108,7 @@ def test_evaluation_runtime_stabilizes_local_extraction() -> None:
         options,
     )
 
-    assert environment["EXTRACT_LLM_TIMEOUT"] == "600"
+    assert environment["EXTRACT_LLM_TIMEOUT"] == "1200"
     assert environment["EXTRACT_MAX_ASYNC_LLM"] == "1"
 
 
