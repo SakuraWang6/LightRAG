@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from lightrag.utils import logger
-from memory_eval_tests.answer import evaluate_answers
+from memory_eval_tests.answer import (
+    CONCISE_ANSWER_USER_PROMPT,
+    evaluate_answers,
+)
 from memory_eval_tests.artifacts import EvaluationDefinition, RunContext
 from memory_eval_tests.diagnosis import build_case_traces, build_diagnosis
 from memory_eval_tests.execution import (
@@ -445,6 +448,15 @@ def _runner(context: RunContext) -> dict[str, Any]:
         baseline["vlm"] = _effective_vlm(baseline, context.dataset)
         process_options = _ingestion_process_options(baseline, context.extra)
         baseline["process_options"] = process_options
+        # Keep answers short and grounded: a single concise paragraph with an
+        # explicit no-boilerplate instruction.  Slower local 8B models then
+        # spend their output budget on the answer, not on preamble.
+        baseline["response_type"] = str(
+            baseline.get("response_type") or "Single Paragraph"
+        )
+        baseline["answer_user_prompt"] = str(
+            baseline.get("answer_user_prompt") or CONCISE_ANSWER_USER_PROMPT
+        )
         ingestion_timeout = _ingestion_timeout_seconds(
             baseline, context.extra, context.dataset
         )
@@ -536,6 +548,10 @@ def _runner(context: RunContext) -> dict[str, Any]:
             evaluation_trace=True,
             enable_rerank=enable_rerank,
             question_types=selected_types_value,
+            response_type=str(baseline.get("response_type") or "Single Paragraph"),
+            user_prompt=str(
+                baseline.get("answer_user_prompt") or CONCISE_ANSWER_USER_PROMPT
+            ),
             max_concurrency=_int_option(
                 context.extra,
                 "query_max_async",

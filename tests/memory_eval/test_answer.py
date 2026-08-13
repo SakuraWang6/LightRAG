@@ -24,6 +24,56 @@ def test_numeric_unit_match_accepts_chinese_units_without_spaces() -> None:
     assert answer._numeric_unit_match("1043 QMU", "标准标定上限为 1043 QMU")
 
 
+def test_evaluate_answers_requests_concise_single_paragraph(monkeypatch) -> None:
+    """The eval must ask for a short answer and inject a no-boilerplate
+    instruction, so slow local models do not waste output budget on
+    preamble."""
+    captured: list[dict[str, Any]] = []
+
+    class FakeDatasetClient:
+        def __init__(self, _source: str) -> None:
+            pass
+
+        @staticmethod
+        def oracle() -> dict[str, Any]:
+            return {
+                "facts": [],
+                "questions": [
+                    {
+                        "id": "Q-1",
+                        "question": "What is the value?",
+                        "answer": "42",
+                        "question_type": "direct_numeric",
+                        "evidence_fact_ids": [],
+                    }
+                ],
+            }
+
+    def fake_post_json(url, payload, **kwargs):
+        captured.append(payload)
+        return {"response": "42", "references": []}
+
+    monkeypatch.setattr(answer, "DatasetClient", FakeDatasetClient)
+    monkeypatch.setattr(answer, "_post_json", fake_post_json)
+
+    report = answer.evaluate_answers(
+        dataset_source="dataset", rag_api_url="http://rag"
+    )
+    assert report["results"][0]["response_type"] == "Single Paragraph"
+    assert "不要复述问题" in report["results"][0]["user_prompt"]
+    assert captured[0]["response_type"] == "Single Paragraph"
+    assert "user_prompt" in captured[0]
+
+    # An explicit empty prompt opts out of the concise instruction.
+    captured.clear()
+    answer.evaluate_answers(
+        dataset_source="dataset",
+        rag_api_url="http://rag",
+        user_prompt=None,
+    )
+    assert "user_prompt" not in captured[0]
+
+
 def test_answer_evaluation_persists_provider_truncation_signal(monkeypatch) -> None:
     class FakeDatasetClient:
         def __init__(self, _source: str) -> None:

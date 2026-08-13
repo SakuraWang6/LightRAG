@@ -15,6 +15,13 @@ SCORER_NAME = "deterministic-answer-rules"
 SCORER_VERSION = "1.1"
 _EVIDENCE_UNSET = object()
 
+CONCISE_ANSWER_USER_PROMPT = (
+    "直接、简洁地回答：第一句直接给出答案，只保留必要的依据说明，"
+    "不要复述问题，不要写标题、前言、客套话或结尾总结。"
+    "Answer directly and concisely without restating the question or "
+    "adding headings or preamble."
+)
+
 
 class SemanticAnswerScorer(Protocol):
     """Optional pluggable scorer for valid non-literal answer expressions."""
@@ -45,6 +52,8 @@ def evaluate_answers(
     semantic_scorer: SemanticAnswerScorer | None = None,
     question_variant: str = "canonical",
     max_concurrency: int = 1,
+    response_type: str = "Single Paragraph",
+    user_prompt: str | None = CONCISE_ANSWER_USER_PROMPT,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     oracle = DatasetClient(dataset_source).oracle()
@@ -65,10 +74,12 @@ def evaluate_answers(
             "mode": mode,
             "include_references": True,
             "include_chunk_content": True,
-            "response_type": "Multiple Paragraphs",
+            "response_type": response_type,
             "evaluation_trace": evaluation_trace,
             "enable_rerank": enable_rerank,
         }
+        if user_prompt:
+            payload["user_prompt"] = user_prompt
         if top_k is not None:
             payload["top_k"] = top_k
         if chunk_top_k is not None:
@@ -118,6 +129,8 @@ def evaluate_answers(
             "expected_behavior": question.get("expected_behavior", "answer"),
             "question_variant": question_variant,
             "scenario_labels": question.get("scenario_labels", []),
+            "response_type": response_type,
+            "user_prompt": user_prompt,
             # Raw candidate references are used only by the deterministic
             # scorer above.  They are intentionally not persisted: they
             # can be megabytes of repeated chunk text and are not proof of
