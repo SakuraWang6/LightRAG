@@ -58,6 +58,7 @@ def upload_dataset_files(
     file_names: list[str] | None = None,
     process_options: str | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
+    wait_progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     client = DatasetClient(dataset_source)
     manifest = client.manifest()
@@ -119,6 +120,7 @@ def upload_dataset_files(
                 poll_seconds=poll_seconds,
                 api_key=api_key,
                 access_token=access_token,
+                progress_callback=wait_progress_callback,
             )
         uploaded.append({**receipt, **upload_result})
         if progress_callback:
@@ -165,6 +167,7 @@ def _wait_track_status(
     poll_seconds: float,
     api_key: str | None = None,
     access_token: str | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_seconds
     last_payload: dict[str, Any] = {}
@@ -175,6 +178,8 @@ def _wait_track_status(
             api_key=api_key,
             access_token=access_token,
         )
+        if progress_callback is not None:
+            progress_callback(last_payload)
         documents = last_payload.get("documents") or []
         statuses = {str(doc.get("status", "")).lower() for doc in documents}
         if documents and statuses <= terminal_statuses:

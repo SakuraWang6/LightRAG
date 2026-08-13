@@ -1262,8 +1262,14 @@ def _build_scheduling_status(pipeline_snapshot: dict, ingress_counts: dict) -> d
 
 
 def create_app(args):
-    # Check frontend build first and get status
-    webui_assets_exist, is_frontend_outdated = check_frontend_build()
+    # Check frontend build first and get status.  Evaluation child servers are
+    # API-only and must not mount or verify the WebUI: skipping the build scan
+    # keeps their startup minimal and independent of the frontend toolchain.
+    if os.getenv("LIGHTRAG_DISABLE_WEBUI") in {"1", "true", "True"}:
+        webui_assets_exist = False
+        is_frontend_outdated = False
+    else:
+        webui_assets_exist, is_frontend_outdated = check_frontend_build()
 
     # Create unified API version display with warning symbol if frontend is outdated
     api_version_display = (

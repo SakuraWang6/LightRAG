@@ -165,8 +165,9 @@ class RichDocxBuilder:
                         question_id=f"Q-MULTIHOP-{page:04d}",
                         fact_ids=[last_table_fact, equation_fact_id],
                         question=(
-                            f"Using the latest timing table before page {page} and Equation EQ-{page:04d}, "
-                            f"which latency fact and equation should be cited together?"
+                            f"What are the gold-row maximum latency in the latest timing table "
+                            f"before page {page} and the formula of Equation EQ-{page:04d}? "
+                            "Answer as '<latency>; <equation>'."
                         ),
                         answer=f"{self._fact_answer(last_table_fact)}; {self._fact_answer(equation_fact_id)}",
                     )
@@ -178,8 +179,9 @@ class RichDocxBuilder:
                     question_id=f"Q-CROSS-{page:04d}",
                     fact_ids=[last_text_fact, last_table_fact],
                     question=(
-                        f"For retrieval cell {page:04d}, combine the calibration limit "
-                        "with the nearest preceding table maximum."
+                        f"For retrieval cell {page:04d}, what are the authoritative calibration "
+                        "limit and the gold-row maximum in the nearest preceding table? "
+                        "Answer as '<limit>; <maximum>'."
                     ),
                     answer=f"{self._fact_answer(last_text_fact)}; {self._fact_answer(last_table_fact)}",
                 )

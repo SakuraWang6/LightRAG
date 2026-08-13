@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -135,6 +136,60 @@ def _ingestion_timeout_seconds(
             pass
     pages = _dataset_pages(dataset)
     return min(max(5400, pages * 90), 28800)
+
+
+def _ingestion_wait_progress(
+    context: RunContext, total_documents: int
+) -> Any:
+    """Return a live-progress callback for the ingestion wait loop.
+
+    The upload itself reports per-file progress, but the wait for parsing and
+    KG extraction can run for hours (large datasets, VLM image analysis).  The
+    track-status payload lets us publish a meaningful message during that wait
+    instead of leaving ``progress.json`` frozen at the last upload step.
+    """
+    started = time.monotonic()
+    last_publish = 0.0
+    last_summary: tuple[tuple[str, ...], int] | None = None
+
+    def publish(payload: dict[str, Any]) -> None:
+        documents = payload.get("documents") or []
+        statuses: list[str] = []
+        chunk_counts: list[int] = []
+        for doc in documents:
+            status = str(doc.get("status") or "unknown")
+            if status not in statuses:
+                statuses.append(status)
+            try:
+                chunk_counts.append(int(doc.get("chunks_count") or 0))
+            except (TypeError, ValueError):
+                pass
+        elapsed_minutes = int((time.monotonic() - started) / 60)
+        elapsed = (
+            f"{elapsed_minutes // 60} 小时 {elapsed_minutes % 60} 分"
+            if elapsed_minutes >= 60
+            else f"{elapsed_minutes} 分"
+        )
+        parts = [f"文档状态: {', '.join(statuses)}", f"已等待 {elapsed}"]
+        if chunk_counts and any(chunk_counts):
+            parts.append(f"已生成 {sum(chunk_counts)} 个 chunk")
+        summary = (tuple(statuses), sum(chunk_counts))
+        now = time.monotonic()
+        nonlocal last_publish, last_summary
+        state_changed = summary != last_summary and now - last_publish >= 15
+        heartbeat_due = now - last_publish >= 300
+        if state_changed or heartbeat_due:
+            last_publish = now
+            last_summary = summary
+            context.progress(
+                "running",
+                0,
+                total_documents,
+                "ingestion",
+                "正在上传、解析并建立文档索引（" + "；".join(parts) + "）",
+            )
+
+    return publish
 
 
 def _runtime_options(
@@ -481,6 +536,9 @@ def _runner(context: RunContext) -> dict[str, Any]:
                 total,
                 "ingestion",
                 "正在上传、解析并建立文档索引",
+            ),
+            wait_progress_callback=_ingestion_wait_progress(
+                context, len(source_documents)
             ),
         )
         ingestion, index = _receipt(upload, unit)

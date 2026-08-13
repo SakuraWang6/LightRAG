@@ -207,6 +207,10 @@ def _profile_environment(
     # claim and spawn queued jobs, breaking the serial queue and spawning
     # children of children (observed as concurrent runs after a restart).
     env["LIGHTRAG_DISABLE_EVAL_JOBS"] = "1"
+    # The isolated server only serves one evaluation run.  It needs the API
+    # endpoints (upload/query/track-status), not the WebUI; disabling the
+    # WebUI mount and frontend-build scan keeps each test start minimal.
+    env["LIGHTRAG_DISABLE_WEBUI"] = "1"
     _set_role_environment(env, primary, prefix="LLM")
     for name, prefix in (("extraction", "EXTRACT_LLM"), ("query", "QUERY_LLM"), ("vlm", "VLM_LLM")):
         role = config.get(name)
