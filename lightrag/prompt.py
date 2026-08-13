@@ -222,6 +222,15 @@ You are a Knowledge Graph Specialist responsible for extracting entities and rel
   - Do not extract, infer, or copy entities or relationships from the output format template.
   - Angle-bracket tokens such as `<entity_name>` are placeholders. Replace them with values extracted from the current `---Input Text---` section and never output the placeholders literally.
 
+9. **Numerical & Identifier Fidelity:**
+  - When a description includes numbers, units, equations, or identifiers, quote them **exactly** as they appear in the input text.
+  - Never transfer a value, unit, or identifier from one sentence, paragraph, heading, or table row to a different entity or relationship.
+  - For table rows, every value in a row's description must come from that same row only; do not merge values from neighbouring prose or other rows.
+
+10. **Explicit Fact Identifiers:**
+  - Statements prefixed with an explicit identifier (e.g. `FACT-00007`, `FACT-GOV-00001`, `EQ-0005`, `REF-TABLE-0006`) are high-value entities.
+  - Extract each such identifier as its own entity whose `name` is the identifier and whose `description` preserves the identifier and the value it states.
+
 ---Entity Types---
 {entity_types_guidance}
 

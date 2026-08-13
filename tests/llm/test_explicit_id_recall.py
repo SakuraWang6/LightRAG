@@ -1,0 +1,103 @@
+"""Regression tests for explicit-identifier recall in chunk vector search.
+
+When a query names an explicit fact identifier (e.g. ``FACT-GOV-00001``),
+vector similarity can rank the chunk that contains it below unrelated
+chunks, so the oracle evidence never reaches the model-visible context.
+The chunk vector path now re-queries the store with each explicit
+identifier and prepends the matches.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from lightrag.base import QueryParam
+from lightrag.operate import _get_vector_context, _explicit_id_recall
+
+
+class _FakeChunksVdb:
+    """Records every query text; returns a chunk for FACT-GOV-00001."""
+
+    cosine_better_than_threshold = 0.0
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.normal_chunks = [
+            {
+                "content": "unrelated flowchart chunk",
+                "id": "c-unrelated",
+                "file_path": "doc.docx",
+            },
+            {
+                "content": "FACT-CROSS-00001: companion verification state",
+                "id": "c-companion",
+                "file_path": "companion.docx",
+            },
+        ]
+        self.gov_chunk = {
+            "content": "FACT-GOV-00001: Maya Chen owns business acceptance.",
+            "id": "c-gov",
+            "file_path": "doc.docx",
+        }
+
+    async def query(self, query: str, top_k: int, query_embedding=None):
+        self.calls.append(query)
+        if query == "FACT-GOV-00001":
+            return [self.gov_chunk]
+        return self.normal_chunks[:top_k]
+
+
+def _param(**overrides) -> QueryParam:
+    values = {"top_k": 5, "chunk_top_k": 5}
+    values.update(overrides)
+    return QueryParam(**values)
+
+
+async def test_explicit_id_recall_extracts_identifiers() -> None:
+    assert await _explicit_id_recall("no ids here", _FakeChunksVdb(), 5) == []
+    recalled = await _explicit_id_recall(
+        "what is FACT-GOV-00001 and the companion state?",
+        _FakeChunksVdb(),
+        5,
+    )
+    assert [c["chunk_id"] for c in recalled] == ["c-gov"]
+    assert recalled[0]["source_type"] == "explicit_id"
+
+
+async def test_get_vector_context_prepends_explicit_id_chunks() -> None:
+    vdb = _FakeChunksVdb()
+    chunks = await _get_vector_context(
+        "Using the primary document, what is FACT-GOV-00001?",
+        vdb,
+        _param(),
+    )
+    assert "Using the primary document, what is FACT-GOV-00001?" in vdb.calls
+    assert "FACT-GOV-00001" in vdb.calls
+    # The explicitly-named identifier chunk is prepended to the normal results.
+    assert chunks[0]["chunk_id"] == "c-gov"
+    assert chunks[0]["content"] == vdb.gov_chunk["content"]
+    assert chunks[-1]["chunk_id"] == "c-companion"
+
+
+async def test_get_vector_context_unchanged_without_identifiers() -> None:
+    vdb = _FakeChunksVdb()
+    chunks = await _get_vector_context(
+        "what is the calibration limit?", vdb, _param()
+    )
+    assert vdb.calls == ["what is the calibration limit?"]
+    assert all(c["source_type"] == "vector" for c in chunks)
+
+
+async def test_explicit_id_recall_when_normal_search_is_empty() -> None:
+    class _EmptyNormalVdb(_FakeChunksVdb):
+        async def query(self, query: str, top_k: int, query_embedding=None):
+            self.calls.append(query)
+            if query == "FACT-GOV-00001":
+                return [self.gov_chunk]
+            return []
+
+    vdb = _EmptyNormalVdb()
+    chunks = await _get_vector_context(
+        "what is FACT-GOV-00001?", vdb, _param()
+    )
+    assert [c["chunk_id"] for c in chunks] == ["c-gov"]

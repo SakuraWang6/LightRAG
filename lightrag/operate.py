@@ -4998,6 +4998,10 @@ async def _get_vector_context(
     search_top_k = query_param.chunk_top_k or query_param.top_k
     cosine_threshold = chunks_vdb.cosine_better_than_threshold
 
+    explicit_chunks = await _explicit_id_recall(
+        query, chunks_vdb, search_top_k
+    )
+
     results = await chunks_vdb.query(
         query, top_k=search_top_k, query_embedding=query_embedding
     )
@@ -5005,6 +5009,11 @@ async def _get_vector_context(
         logger.info(
             f"Naive query: 0 chunks (chunk_top_k:{search_top_k} cosine:{cosine_threshold})"
         )
+        if explicit_chunks:
+            logger.info(
+                f"Naive query: {len(explicit_chunks)} explicit-id chunks"
+            )
+            return explicit_chunks
         return []
 
     valid_chunks = []
@@ -5022,7 +5031,67 @@ async def _get_vector_context(
     logger.info(
         f"Naive query: {len(valid_chunks)} chunks (chunk_top_k:{search_top_k} cosine:{cosine_threshold})"
     )
+    if explicit_chunks:
+        logger.info(
+            f"Naive query: prepending {len(explicit_chunks)} explicit-id chunks"
+        )
+        explicit_ids = {
+            chunk.get("chunk_id")
+            for chunk in explicit_chunks
+            if chunk.get("chunk_id")
+        }
+        deduped = [
+            chunk
+            for chunk in valid_chunks
+            if not chunk.get("chunk_id")
+            or chunk["chunk_id"] not in explicit_ids
+        ]
+        return explicit_chunks + deduped
     return valid_chunks
+
+
+_EXPLICIT_ID_RE = re.compile(r"\b[A-Z][A-Z0-9-]*-\d{2,}\b")
+
+
+async def _explicit_id_recall(
+    query: str,
+    chunks_vdb: BaseVectorStorage,
+    top_k: int,
+) -> list[dict]:
+    """Recall chunks containing identifiers explicitly named in the query.
+
+    Vector similarity alone can rank a chunk that merely mentions an
+    identifier below unrelated chunks (observed when a query names
+    ``FACT-GOV-00001`` but the containing chunk missed top-k).  An explicit
+    identifier is a precise retrieval key, so query the chunk vector store
+    with each identifier and prepend the matches.
+    """
+    identifiers = list(dict.fromkeys(_EXPLICIT_ID_RE.findall(query)))[:5]
+    if not identifiers:
+        return []
+    recalled: list[dict] = []
+    seen: set[str] = set()
+    per_id_top_k = max(1, min(3, top_k))
+    for identifier in identifiers:
+        results = await chunks_vdb.query(identifier, top_k=per_id_top_k)
+        for result in results or []:
+            if not isinstance(result, dict) or "content" not in result:
+                continue
+            chunk_id = result.get("id") or result.get("chunk_id")
+            if chunk_id and chunk_id in seen:
+                continue
+            if chunk_id:
+                seen.add(chunk_id)
+            recalled.append(
+                {
+                    "content": result["content"],
+                    "created_at": result.get("created_at", None),
+                    "file_path": result.get("file_path", "unknown_source"),
+                    "source_type": "explicit_id",
+                    "chunk_id": chunk_id,
+                }
+            )
+    return recalled
 
 
 async def _perform_kg_search(
