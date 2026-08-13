@@ -384,6 +384,34 @@ def test_ingestion_process_options_reflects_vlm_and_override() -> None:
     )
 
 
+def test_ingestion_timeout_scales_with_dataset_pages(
+    tmp_path: Path,
+) -> None:
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    manifest = dataset / "manifest.json"
+
+    manifest.write_text(json.dumps({"pages": 200}), encoding="utf-8")
+    assert workflow._ingestion_timeout_seconds({}, None, dataset) == 18000
+
+    manifest.write_text(json.dumps({"pages": 20}), encoding="utf-8")
+    assert workflow._ingestion_timeout_seconds({}, None, dataset) == 5400
+
+    # Explicit override always wins over the page-based default.
+    assert (
+        workflow._ingestion_timeout_seconds(
+            {}, {"ingestion_timeout_seconds": "21600"}, dataset
+        )
+        == 21600
+    )
+    assert (
+        workflow._ingestion_timeout_seconds(
+            {"ingestion_timeout_seconds": 7200}, None, dataset
+        )
+        == 7200
+    )
+
+
 def test_disabling_kg_requires_vector_query_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

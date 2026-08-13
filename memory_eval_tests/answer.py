@@ -313,9 +313,16 @@ def _compact(text: str) -> str:
 
 
 def _numeric_unit_match(expected: str, answer_text: str) -> bool:
-    expected_pairs = re.findall(r"([-+]?\d+(?:\.\d+)?)\s*([A-Za-z%]+)", expected)
+    # Units may be Latin ("ms", "%", "QMU") or Chinese ("次/秒", "小时", "分",
+    # "天").  The previous Latin-only pattern silently dropped Chinese units,
+    # falling back to a whitespace-sensitive substring check that failed on
+    # "114 次/秒" vs the model's "114次/秒".
+    unit = r"[A-Za-z%]+|(?:[\u4e00-\u9fff]+/)*[\u4e00-\u9fff]+"
+    expected_pairs = re.findall(
+        rf"([-+]?\d+(?:\.\d+)?)\s*({unit})", expected
+    )
     if not expected_pairs:
-        return _normalize(expected) in _normalize(answer_text)
+        return _compact(expected) in _compact(answer_text)
     answer_compact = _compact(answer_text)
     for number, unit in expected_pairs:
         if _compact(number + unit) not in answer_compact:
@@ -582,7 +589,8 @@ def _looks_like_abstain(text: str) -> bool:
         r"\b(?:unable to|insufficient information to|not enough information to) (?:determine|answer|address)\b",
         r"\binsufficient information\b",
         r"\b(?:document|context|provided information) (?:does not|do not) contain\b",
-        r"(?:文档|上下文).{0,12}(?:没有|未提供|未提及|无法确定|无法回答)",
+        r"(?:文档|上下文).{0,15}(?:没有|不存在|未提供|未提及|未包含|找不到)",
+        r"(?:无法|不能|难以)(?:提供|给出|确定|回答)",
     )
     return any(re.search(pattern, lowered) is not None for pattern in patterns)
 

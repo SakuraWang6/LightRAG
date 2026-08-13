@@ -90,6 +90,50 @@ def _ingestion_process_options(
     return "Fi" if bool(baseline.get("vlm")) else "F"
 
 
+def _dataset_pages(dataset: Path) -> int:
+    """Return the source-document page count from the dataset manifest."""
+    try:
+        manifest = json.loads(
+            (dataset / "manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return 0
+    pages = manifest.get("pages")
+    try:
+        return int(pages) if pages is not None and int(pages) > 0 else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _ingestion_timeout_seconds(
+    baseline: dict[str, Any],
+    extra: dict[str, Any] | None,
+    dataset: Path,
+) -> int:
+    """Resolve the per-run document ingestion wait budget.
+
+    An explicit ``extra.ingestion_timeout_seconds`` or baseline value wins.
+    Otherwise the default scales with the dataset so large documents are not
+    killed mid-extraction: a 200-page dataset takes several hours of
+    entity/relation extraction on local 8B models, far beyond the old flat
+    5400s ceiling.
+    """
+    override = (extra or {}).get("ingestion_timeout_seconds")
+    if override is not None:
+        try:
+            return max(60, int(override))
+        except (TypeError, ValueError):
+            pass
+    explicit = baseline.get("ingestion_timeout_seconds")
+    if explicit is not None:
+        try:
+            return max(60, int(explicit))
+        except (TypeError, ValueError):
+            pass
+    pages = _dataset_pages(dataset)
+    return min(max(5400, pages * 90), 28800)
+
+
 def _runtime_options(
     baseline: dict[str, Any], extra: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -401,6 +445,10 @@ def _runner(context: RunContext) -> dict[str, Any]:
         baseline["vlm"] = _effective_vlm(baseline, context.dataset)
         process_options = _ingestion_process_options(baseline, context.extra)
         baseline["process_options"] = process_options
+        ingestion_timeout = _ingestion_timeout_seconds(
+            baseline, context.extra, context.dataset
+        )
+        baseline["ingestion_timeout_seconds"] = ingestion_timeout
         context.progress("running", 1, 1, "runtime", "独立运行环境已就绪")
         context.progress(
             "running", 0, len(source_documents), "ingestion", "正在上传、解析并建立文档索引"
@@ -409,7 +457,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             dataset_source=str(context.dataset),
             rag_api_url=unit["runtime_endpoint"],
             wait=True,
-            timeout_seconds=int(baseline.get("ingestion_timeout_seconds") or 5400),
+            timeout_seconds=ingestion_timeout,
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
             confirmed_hashes=_confirmed_hashes(context.output_dir),
@@ -604,6 +652,7 @@ definition = EvaluationDefinition(
     extra_schema={
         "allow_partial_ingestion": "bool",
         "ingestion_success_threshold": "float",
+        "ingestion_timeout_seconds": "int",
     },
     prepare=_prepare,
     runner=_runner,

@@ -7,6 +7,23 @@ from typing import Any
 from memory_eval_tests import answer
 
 
+def test_looks_like_abstain_accepts_missing_information_phrasings() -> None:
+    assert answer._looks_like_abstain(
+        "文档中不存在关于“锆石旁路模块”的任何信息，因此无法提供其审批编号。"
+    )
+    assert answer._looks_like_abstain("根据提供的文档，无法给出该编号。")
+    assert answer._looks_like_abstain("上下文未包含该模块的相关信息。")
+    assert answer._looks_like_abstain("文档中没有关于该模块的信息")
+
+
+def test_numeric_unit_match_accepts_chinese_units_without_spaces() -> None:
+    assert answer._numeric_unit_match("114 次/秒", "吞吐配额为 114次/秒")
+    assert answer._numeric_unit_match("9 小时", "校准窗口为 9小时")
+    assert answer._numeric_unit_match("30 分", "转人工阈值为 30 分")
+    assert answer._numeric_unit_match("0.50 %", "错误率上限为 0.50%")
+    assert answer._numeric_unit_match("1043 QMU", "标准标定上限为 1043 QMU")
+
+
 def test_answer_evaluation_persists_provider_truncation_signal(monkeypatch) -> None:
     class FakeDatasetClient:
         def __init__(self, _source: str) -> None:

@@ -431,7 +431,11 @@ def _build_run_params(
     runs_root: Path,
     datasets_root: Path,
 ) -> RunParams:
-    allowed_extra = {"allow_partial_ingestion", "ingestion_success_threshold"}
+    allowed_extra = {
+        "allow_partial_ingestion",
+        "ingestion_success_threshold",
+        "ingestion_timeout_seconds",
+    }
     unknown = set(params) - _GENERIC_PARAM_KEYS - _INFRA_PARAMS - allowed_extra
     if unknown:
         raise ValueError(f"unknown parameters: {sorted(unknown)}")
@@ -444,6 +448,7 @@ def _build_run_params(
     for key, value_type in {
         "allow_partial_ingestion": "bool",
         "ingestion_success_threshold": "float",
+        "ingestion_timeout_seconds": "int",
     }.items():
         if key in params:
             extra.append(f"{key}={_coerce(params[key], value_type)}")

@@ -229,6 +229,33 @@ def test_create_job_rejects_non_boolean_vlm(client: TestClient) -> None:
     assert "vlm" in response.json()["detail"]
 
 
+def test_create_job_accepts_ingestion_timeout_override(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        eval_routes,
+        "_evaluation_model_capability",
+        _selectable_model_capability,
+    )
+    captured: dict[str, object] = {}
+
+    def start_run_job(**kwargs):
+        captured.update(kwargs)
+        return {"id": "run-job", "status": "pending"}
+
+    monkeypatch.setattr(eval_routes.eval_jobs, "start_run_job", start_run_job)
+    response = client.post(
+        "/eval/jobs",
+        json={
+            "kind": "run",
+            "dataset": "sample",
+            "params": {"ingestion_timeout_seconds": 21600},
+        },
+    )
+    assert response.status_code == 200
+    assert "ingestion_timeout_seconds=21600" in captured["params"].extra
+
+
 def test_dataset_job_uses_a_business_name_not_a_user_supplied_id(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
