@@ -105,11 +105,8 @@ def build_stage_matrix(case_traces: list[dict[str, Any]]) -> dict[str, Any]:
 
 def render_stage_matrix(matrix: dict[str, Any]) -> str:
     cells = matrix["cells"]
-    rows = matrix["rows"]
     lines = [
         "## 流程级归因（检索 × 回答）",
-        "",
-        "把每道题按「检索环节」与「回答环节」交叉归类，快速定位失败发生在哪个流程：",
         "",
         "| 检索 \\ 回答 | 通过 | 未通过 |",
         "| --- | --- | --- |",
@@ -123,55 +120,10 @@ def render_stage_matrix(matrix: dict[str, Any]) -> str:
     if cells.get("not_applicable"):
         lines.append(f"- 拒答/不适用：{cells['not_applicable']} 题")
     lines.append("")
-    lines.append("**解读**：")
-    lines.append("")
-    if cells["full_fail"]:
-        lines.append(
-            f"- **全部命中但回答错误（{cells['full_fail']} 题）**：问题在上下文选择之后——生成、提示词或评分环节，"
-            "优先检查最终上下文是否包含全部证据，再看模型输出。"
-        )
-    if cells["partial_fail"]:
-        lines.append(
-            f"- **部分命中且回答错误（{cells['partial_fail']} 题）**：检索召回不全或上下文截断，"
-            "先看缺失的事实编号，再检查 Top-K 与上下文预算。"
-        )
-    if cells["miss_fail"]:
-        lines.append(
-            f"- **未命中且回答错误（{cells['miss_fail']} 题）**：检索阶段失败，优先检查索引、解析与检索参数。"
-        )
-    if cells["miss_pass"] or cells["partial_pass"]:
-        lines.append(
-            f"- **检索不足但回答正确（{cells['miss_pass'] + cells['partial_pass']} 题）**："
-            "模型可能从其他上下文作答，这类题的证据支撑需要复核。"
-        )
-    if not any(cells[key] for key in ("full_fail", "partial_fail", "miss_fail")):
-        lines.append("- 未发现可归因的失败题。")
-    lines.append("")
-    lines.append("### 逐题流程状态")
-    lines.append("")
-    lines.append("| 题号 | 类型 | 判定 | 检索命中 | 上下文缺失 | 归因 |")
-    lines.append("| --- | --- | --- | --- | --- | --- |")
-    for row in rows:
-        retrieval_label = {
-            "full": "全部",
-            "partial": "部分",
-            "miss": "未命中",
-            "not_applicable": "不适用",
-            "unavailable": "无 trace",
-        }.get(row["retrieval"], row["retrieval"])
-        answer_label = {"pass": "通过", "fail": "未通过", "uncertain": "需复核"}.get(
-            row["answer_outcome"], row["answer_outcome"]
-        )
-        missing = "、".join(row["missing_in_context"]) if row["missing_in_context"] else "—"
-        cause_label = (
-            "—"
-            if not row["cause"] or row["cause"] == "not_applicable"
-            else row["cause"]
-        )
-        lines.append(
-            f"| {row['question_id']} | {row['question_type']} | {answer_label} | "
-            f"{retrieval_label} | {missing} | {cause_label} |"
-        )
+    lines.append(
+        "按「检索环节 × 回答环节」交叉定位失败发生在哪个流程；"
+        "未通过题的逐条归因见上方“失败原因”与“未通过题目”。"
+    )
     lines.append("")
     return "\n".join(lines)
 
@@ -305,7 +257,7 @@ async def generate_run_analysis(
         for row in matrix["rows"]
         if row["answer_outcome"] == "fail" and row["retrieval"] not in {"not_applicable", "unavailable"}
     ]
-    sections = [render_stage_matrix(matrix), "", "## 总体分析（本地 LLM）", "", overview.strip(), ""]
+    sections = ["## 总体分析（本地 LLM）", "", overview.strip(), ""]
     if failed_rows:
         selected = failed_rows[:max_detail_cases]
         try:

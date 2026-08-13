@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FileTextIcon } from 'lucide-react'
 
@@ -36,7 +36,6 @@ function makeHeading(level: number) {
 
 export default function ReportDocument({ artifact }: ReportDocumentProps) {
   const { t } = useTranslation()
-  const [tocHover, setTocHover] = useState(false)
 
   const components = useMemo(
     () => ({
@@ -63,53 +62,35 @@ export default function ReportDocument({ artifact }: ReportDocumentProps) {
         </Badge>
       </div>
       <Card className="relative">
-        {toc.length > 0 ? (
-          <div
-            className="absolute top-0 bottom-0 left-0 z-20"
-            onMouseEnter={() => setTocHover(true)}
-            onMouseLeave={() => setTocHover(false)}
-          >
-            <div
-              className={`h-full overflow-hidden rounded-l-lg bg-card shadow-sm transition-[width] duration-200 ease-out ${
-                tocHover ? 'w-64' : 'w-11'
-              }`}
-            >
-              {tocHover ? (
-                <div className="h-full overflow-auto p-3">
-                  <p className="text-muted-foreground mb-2 text-xs font-medium">{t('eval.toc')}</p>
-                  <ul className="space-y-1">
-                    {toc.map((entry, index) => (
-                      <li key={index}>
-                        <button
-                          type="button"
-                          className="text-muted-foreground hover:text-foreground block w-full truncate rounded px-2 py-0.5 text-left text-xs transition-colors hover:bg-accent"
-                          style={{ paddingLeft: `${0.5 + (entry.level - 1) * 0.75}rem` }}
-                          title={entry.title}
-                          onClick={() => {
-                            document
-                              .getElementById(headingId(entry.title))
-                              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                          }}
-                        >
-                          {entry.title}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : (
-                <div className="flex h-full w-11 cursor-pointer items-center justify-center">
-                  <span className="text-muted-foreground text-[11px] font-medium tracking-[0.2em] [writing-mode:vertical-rl]">
-                    {t('eval.toc')}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        ) : null}
-        <CardContent className={`p-5 ${toc.length > 0 ? 'pl-16' : ''}`}>
-          <MarkdownReport content={artifact.report_md} components={components} />
-        </CardContent>
+        <div className="flex items-start">
+          {toc.length > 0 ? (
+            <aside className="sticky top-0 z-20 max-h-[calc(100vh-11rem)] w-56 shrink-0 self-start overflow-y-auto border-r p-3">
+              <p className="text-muted-foreground mb-2 text-xs font-medium">{t('eval.toc')}</p>
+              <ul className="space-y-1">
+                {toc.map((entry, index) => (
+                  <li key={index}>
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground block w-full truncate rounded px-2 py-0.5 text-left text-xs transition-colors hover:bg-accent"
+                      style={{ paddingLeft: `${0.5 + (entry.level - 1) * 0.75}rem` }}
+                      title={entry.title}
+                      onClick={() => {
+                        document
+                          .getElementById(headingId(entry.title))
+                          ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                      }}
+                    >
+                      {entry.title}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </aside>
+          ) : null}
+          <CardContent className="min-w-0 flex-1 p-5">
+            <MarkdownReport content={artifact.report_md} components={components} />
+          </CardContent>
+        </div>
       </Card>
     </div>
   )

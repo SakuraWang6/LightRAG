@@ -833,7 +833,7 @@ def _start_dispatch_loop(runs_root: Path, datasets_root: Path | None = None) -> 
 
     def _loop() -> None:
         while True:
-            time.sleep(60)
+            time.sleep(15)
             try:
                 _dispatch(runs_root, datasets_root)
             except Exception as exc:  # noqa: BLE001 - keep the loop alive

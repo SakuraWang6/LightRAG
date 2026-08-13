@@ -172,11 +172,14 @@ export default function EvalConsole() {
   )
 
   useEffect(() => {
-    if (!hasActiveRuns) return
+    // Always poll: while a run is active refresh every 5s, otherwise poll at a
+    // low rate so a queued task that starts after the previous one finishes
+    // (or fails) appears without a manual refresh.
+    const intervalMs = hasActiveRuns ? 5000 : 15000
     const timer = window.setInterval(() => {
       void loadRuns()
       if (selectedId) void loadDetail(selectedId, true)
-    }, 5000)
+    }, intervalMs)
     return () => window.clearInterval(timer)
   }, [hasActiveRuns, loadRuns, loadDetail, selectedId])
 

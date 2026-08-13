@@ -93,7 +93,10 @@ export default function JobsView({ onBack }: JobsViewProps) {
   )
 
   useEffect(() => {
-    if (!hasActive) return
+    // Always poll: while a job is active refresh every 5s, otherwise poll at a
+    // low rate so a just-finished job followed by the next queued job shows up
+    // without a manual refresh.
+    const intervalMs = hasActive ? 5000 : 15000
     const timer = window.setInterval(() => {
       void load()
       if (expanded) {
@@ -102,7 +105,7 @@ export default function JobsView({ onBack }: JobsViewProps) {
           setLog(detail.log ?? [])
         })()
       }
-    }, 5000)
+    }, intervalMs)
     return () => window.clearInterval(timer)
   }, [hasActive, load, expanded])
 

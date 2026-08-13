@@ -412,6 +412,66 @@ def test_ingestion_timeout_scales_with_dataset_pages(
     )
 
 
+def test_report_markdown_focuses_on_results_and_failures() -> None:
+    answer = {
+        "cases": 3,
+        "correct_cases": 1,
+        "answer_accuracy": 1 / 3,
+        "groundedness": 1 / 3,
+        "uncertain_answers": 0,
+        "results": [
+            {
+                "question_id": "Q-A",
+                "question_type": "table_cell",
+                "exact_match": True,
+                "question": "q?",
+                "expected": "x",
+                "answer": "x",
+            },
+            {
+                "question_id": "Q-B",
+                "question_type": "multi_hop",
+                "exact_match": False,
+                "question": "q2?",
+                "expected": "42",
+                "answer": "43",
+            },
+            {
+                "question_id": "Q-C",
+                "question_type": "direct_numeric",
+                "exact_match": False,
+                "question": "q3?",
+                "expected": "7",
+                "answer": "8",
+            },
+        ],
+    }
+    diagnosis = {
+        "diagnosis_coverage": 1.0,
+        "cause_distribution": {"retrieval_miss": 1, "generation_or_prompt_failure": 1},
+        "cases": [
+            {"question_id": "Q-B", "primary_cause": "retrieval_miss"},
+            {"question_id": "Q-C", "primary_cause": "generation_or_prompt_failure"},
+        ],
+    }
+    retrieval = {
+        "summary": {
+            "cases": 3,
+            "average_recall": 0.5,
+            "mrr": 0.25,
+            "context_precision": 0.1,
+        }
+    }
+    report = workflow._report_markdown(answer, diagnosis, retrieval)
+    assert "正确题数 / 总题数 | 1 / 3" in report
+    assert "检索未命中（1 题）" in report
+    assert "回答与标准答案不符（1 题）" in report
+    assert "Q-B" in report and "Q-C" in report
+    assert "平均召回@K" in report
+    # The focused report no longer carries the old verbose cross-tab prose.
+    assert "**解读**" not in report
+
+
 def test_disabling_kg_requires_vector_query_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
