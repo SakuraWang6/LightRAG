@@ -5569,6 +5569,60 @@ async def _merge_all_chunks(
     return merged_chunks
 
 
+def _minimum_chunk_budget(max_total_tokens: int) -> int:
+    """Reserve a floor of the token budget for document chunks.
+
+    The KG query context lists entity/relation descriptions that can consume
+    the entire ``max_total_tokens`` budget; without a floor the chunk budget
+    collapses toward zero and answer-bearing evidence chunks are dropped
+    before the model call (observed as rank-3..5 evidence missing from the
+    final context on multi-hop questions).
+    """
+    return min(max(0, max_total_tokens) // 4, 2048)
+
+
+async def _truncate_kg_context_to_budget(
+    *,
+    entities_context: list[dict[str, Any]],
+    relations_context: list[dict[str, Any]],
+    max_kg_tokens: int,
+    tokenizer: Tokenizer,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Shrink the KG context so document chunks keep a token floor.
+
+    Entities carry the answer-bearing descriptions and are kept first; the
+    relations get whatever budget remains.  Both lists are truncated as whole
+    items (never mid-description), matching the render that follows.
+    """
+    if max_kg_tokens <= 0:
+        return [], []
+    key = lambda item: json.dumps(item, ensure_ascii=False)
+    entities = await atruncate_list_by_token_size(
+        entities_context,
+        key=key,
+        separator="\n",
+        max_token_size=max_kg_tokens,
+        tokenizer=tokenizer,
+    )
+    entities_text = "\n".join(key(item) for item in entities)
+    entities_tokens = (
+        await acount_tokens(tokenizer, entities_text) if entities_text else 0
+    )
+    remaining = max(0, max_kg_tokens - entities_tokens)
+    relations = (
+        await atruncate_list_by_token_size(
+            relations_context,
+            key=key,
+            separator="\n",
+            max_token_size=remaining,
+            tokenizer=tokenizer,
+        )
+        if relations_context
+        else []
+    )
+    return entities, relations
+
+
 async def _build_context_str(
     entities_context: list[dict],
     relations_context: list[dict],
@@ -5650,6 +5704,56 @@ async def _build_context_str(
     available_chunk_tokens = max_total_tokens - (
         sys_prompt_tokens + kg_context_tokens + query_tokens + buffer_tokens
     )
+
+    # Reserve a minimum budget for answer-bearing chunks.  A KG-heavy graph
+    # (many entity/relation descriptions) must not starve the chunk budget,
+    # otherwise lower-ranked evidence chunks are silently dropped and the
+    # model answers from a context that lacks the oracle facts.
+    chunk_budget_floor = _minimum_chunk_budget(max_total_tokens)
+    target_kg_tokens = max(
+        0,
+        max_total_tokens
+        - sys_prompt_tokens
+        - query_tokens
+        - buffer_tokens
+        - chunk_budget_floor,
+    )
+    if kg_context_tokens > target_kg_tokens and (entities_context or relations_context):
+        # The rendered KG includes template labels beyond the entity/relation
+        # strings; account for that overhead so the list budget maps exactly
+        # to the final rendered context and chunks keep their floor.
+        entity_str_tokens = (
+            await acount_tokens(tokenizer, entities_str) if entities_str else 0
+        )
+        relation_str_tokens = (
+            await acount_tokens(tokenizer, relations_str) if relations_str else 0
+        )
+        template_overhead = max(
+            0, kg_context_tokens - entity_str_tokens - relation_str_tokens
+        )
+        list_budget = max(0, target_kg_tokens - template_overhead)
+        entities_context, relations_context = await _truncate_kg_context_to_budget(
+            entities_context=entities_context,
+            relations_context=relations_context,
+            max_kg_tokens=list_budget,
+            tokenizer=tokenizer,
+        )
+        entities_str = "\n".join(
+            json.dumps(entity, ensure_ascii=False) for entity in entities_context
+        )
+        relations_str = "\n".join(
+            json.dumps(relation, ensure_ascii=False) for relation in relations_context
+        )
+        pre_kg_context = kg_context_template.format(
+            entities_str=entities_str,
+            relations_str=relations_str,
+            text_chunks_str="",
+            reference_list_str="",
+        )
+        kg_context_tokens = await acount_tokens(tokenizer, pre_kg_context)
+        available_chunk_tokens = max_total_tokens - (
+            sys_prompt_tokens + kg_context_tokens + query_tokens + buffer_tokens
+        )
 
     logger.debug(
         f"Token allocation - Total: {max_total_tokens}, SysPrompt: {sys_prompt_tokens}, Query: {query_tokens}, KG: {kg_context_tokens}, Buffer: {buffer_tokens}, Available for chunks: {available_chunk_tokens}"
