@@ -34,12 +34,14 @@ _TABLE_MARKUP_RE = re.compile(r"<table\b[^>]*>.*?</table>", re.DOTALL)
 _TABLE_BODY_RE = re.compile(r"(<table\b[^>]*>)(.*)(</table>)", re.DOTALL)
 _TABLE_ROW_SEP = "], ["
 _TABLE_ROW_SPLIT_RE = re.compile(r"(?<=\])\,\s*(?=\[)")
+_TABLE_TITLE_RE = re.compile(r"^(Table\s+\S+|表\s*\d+[：:])")
 
 
 def _split_table_pieces(
     table_text: str,
     tokenizer: Tokenizer,
     chunk_token_size: int,
+    title: str = "",
 ) -> list[tuple[str, int]]:
     """Split one oversized ``<table>`` block into row-atomic pieces.
 
@@ -62,7 +64,7 @@ def _split_table_pieces(
         # Rows already carry their own brackets; a plain comma separator
         # rebuilds a valid ``[[row...],[row...]]`` array.
         body = "[" + ", ".join(row_slice) + "]"
-        return open_tag + body + close_tag
+        return title + open_tag + body + close_tag
 
     pieces: list[tuple[str, int]] = []
     current_rows: list[str] = []
@@ -80,6 +82,26 @@ def _split_table_pieces(
     if current_rows:
         pieces.append((wrap(current_rows), current_tokens))
     return pieces
+
+
+def _table_title(prev_text: str) -> str:
+    """Return the caption/title line preceding a table, if any.
+
+    A split table's tail pieces carry only raw JSON rows; without the title
+    (e.g. ``Table LONG-TBL-APP: ...``) they are invisible to retrieval for a
+    query that names the table.  Copying the title into every piece keeps the
+    answer-bearing tail piece retrievable.
+    """
+    if not prev_text:
+        return ""
+    for line in reversed(prev_text.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        if _TABLE_TITLE_RE.match(line):
+            return line + "\n"
+        return ""
+    return ""
 
 
 def _table_aware_segments(content: str) -> list[tuple[bool, str, int, int]]:
@@ -300,7 +322,10 @@ def chunking_by_token_size(
             # Table-aware path: keep parsed tables atomic and split oversized
             # tables at JSON row boundaries instead of arbitrary token windows.
             order = 0
+            prev_text_segment = ""
             for is_table, segment, seg_start, seg_end in _table_aware_segments(content):
+                if not is_table:
+                    prev_text_segment = segment
                 segment_tokens = tokenizer.encode(segment)
                 if len(segment_tokens) <= chunk_token_size:
                     results.append(
@@ -318,8 +343,9 @@ def chunking_by_token_size(
                     )
                     order += 1
                 elif is_table:
+                    title = _table_title(prev_text_segment)
                     for piece_text, piece_tokens in _split_table_pieces(
-                        segment, tokenizer, chunk_token_size
+                        segment, tokenizer, chunk_token_size, title=title
                     ):
                         results.append(
                             _make_chunk(

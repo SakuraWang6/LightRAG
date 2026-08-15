@@ -304,6 +304,11 @@ class JsonKVStorage(BaseKVStorage):
         async with self._storage_lock:
             return set(keys) - set(self._data.keys())
 
+    async def all_keys(self) -> list[str]:
+        """Enumerate all keys in this JSON-backed namespace."""
+        async with self._storage_lock:
+            return list(self._data.keys())
+
     async def upsert(self, data: dict[str, dict[str, Any]]) -> None:
         """Insert or update KV records in shared memory; mark all processes dirty.
 

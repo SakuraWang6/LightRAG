@@ -47,6 +47,30 @@ class _FakeChunksVdb:
         return self.normal_chunks[:top_k]
 
 
+class _FakeTextChunksDb:
+    """Minimal KV facade exposing ``all_keys``/``get_by_ids`` for exact recall."""
+
+    def __init__(self) -> None:
+        self.data = {
+            "c-gov": {
+                "_id": "c-gov",
+                "content": "FACT-GOV-00001: Maya Chen owns business acceptance.",
+                "file_path": "doc.docx",
+            },
+            "c-other": {
+                "_id": "c-other",
+                "content": "unrelated chunk content",
+                "file_path": "doc.docx",
+            },
+        }
+
+    async def all_keys(self) -> list[str]:
+        return list(self.data)
+
+    async def get_by_ids(self, ids: list[str]) -> list[dict]:
+        return [self.data[i] for i in ids if i in self.data]
+
+
 def _param(**overrides) -> QueryParam:
     values = {"top_k": 5, "chunk_top_k": 5}
     values.update(overrides)
@@ -101,3 +125,21 @@ async def test_explicit_id_recall_when_normal_search_is_empty() -> None:
         "what is FACT-GOV-00001?", vdb, _param()
     )
     assert [c["chunk_id"] for c in chunks] == ["c-gov"]
+
+
+async def test_explicit_id_recall_exact_match_fallback() -> None:
+    class _NoHitVdb(_FakeChunksVdb):
+        async def query(self, query: str, top_k: int, query_embedding=None):
+            self.calls.append(query)
+            return []
+
+    vdb = _NoHitVdb()
+    chunks = await _get_vector_context(
+        "what is FACT-GOV-00001 and the companion state?",
+        vdb,
+        _param(),
+        text_chunks_db=_FakeTextChunksDb(),
+    )
+    assert [c["chunk_id"] for c in chunks] == ["c-gov"]
+    assert chunks[0]["source_type"] == "explicit_id_exact"
+    assert "Maya Chen" in chunks[0]["content"]

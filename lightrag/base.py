@@ -439,6 +439,19 @@ class BaseKVStorage(StorageNameSpace, ABC):
     async def get_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
         """Get values by ids"""
 
+    async def all_keys(self) -> list[str]:
+        """Return all keys in this namespace.
+
+        Only backends that can enumerate keys cheaply implement this; the base
+        default raises so callers can degrade gracefully (e.g. exact-match
+        identifier recall falls back to vector similarity when a backend
+        cannot enumerate its chunk keys).
+        """
+        raise StorageCapabilityError(
+            f"{type(self).__name__} does not support key enumeration "
+            "(all_keys); callers must fall back to a different retrieval path."
+        )
+
     @abstractmethod
     async def filter_keys(self, keys: set[str]) -> set[str]:
         """Return keys that do not exist in storage."""

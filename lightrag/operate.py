@@ -4973,6 +4973,7 @@ async def _get_vector_context(
     chunks_vdb: BaseVectorStorage,
     query_param: QueryParam,
     query_embedding: list[float] = None,
+    text_chunks_db: BaseKVStorage = None,
 ) -> list[dict]:
     """
     Retrieve text chunks from the vector database without reranking or truncation.
@@ -4999,7 +5000,7 @@ async def _get_vector_context(
     cosine_threshold = chunks_vdb.cosine_better_than_threshold
 
     explicit_chunks = await _explicit_id_recall(
-        query, chunks_vdb, search_top_k
+        query, chunks_vdb, search_top_k, text_chunks_db=text_chunks_db
     )
 
     results = await chunks_vdb.query(
@@ -5057,6 +5058,7 @@ async def _explicit_id_recall(
     query: str,
     chunks_vdb: BaseVectorStorage,
     top_k: int,
+    text_chunks_db: BaseKVStorage = None,
 ) -> list[dict]:
     """Recall chunks containing identifiers explicitly named in the query.
 
@@ -5091,6 +5093,36 @@ async def _explicit_id_recall(
                     "chunk_id": chunk_id,
                 }
             )
+    # Vector similarity is unreliable for bare identifiers (a chunk containing
+    # "FACT-GOV-00001" can rank below unrelated chunks).  When the KV backend
+    # can enumerate keys, verify by exact text match so an identifier named in
+    # the query is always recalled.
+    if text_chunks_db is not None:
+        try:
+            keys = await text_chunks_db.all_keys()
+        except Exception:  # noqa: BLE001 - backend cannot enumerate; skip
+            keys = []
+        if keys:
+            for chunk in await text_chunks_db.get_by_ids(keys):
+                if not isinstance(chunk, dict):
+                    continue
+                content = str(chunk.get("content") or "")
+                chunk_id = chunk.get("_id") or chunk.get("chunk_id")
+                if not any(identifier in content for identifier in identifiers):
+                    continue
+                if chunk_id and chunk_id in seen:
+                    continue
+                if chunk_id:
+                    seen.add(chunk_id)
+                recalled.append(
+                    {
+                        "content": content,
+                        "created_at": chunk.get("create_time", None),
+                        "file_path": chunk.get("file_path", "unknown_source"),
+                        "source_type": "explicit_id_exact",
+                        "chunk_id": chunk_id,
+                    }
+                )
     return recalled
 
 
@@ -5233,6 +5265,7 @@ async def _perform_kg_search(
                 chunks_vdb,
                 query_param,
                 query_embedding,
+                text_chunks_db=text_chunks_db,
             )
             # Track vector chunks with source metadata
             for i, chunk in enumerate(vector_chunks):
@@ -6687,7 +6720,9 @@ async def naive_query(
 
     if progress_callback:
         await progress_callback(QueryProgress.RETRIEVING_CHUNKS)
-    chunks = await _get_vector_context(query, chunks_vdb, query_param, None)
+    chunks = await _get_vector_context(
+        query, chunks_vdb, query_param, None, text_chunks_db=text_chunks_db
+    )
 
     if chunks is None or len(chunks) == 0:
         logger.info(

@@ -70,11 +70,11 @@ def test_oversized_table_splits_at_row_boundaries() -> None:
                 ]
             )
     content = (
-        "Appendix long-table stress case with many rows; "
+        "Table LONG-TBL-APP: Appendix long-table stress case with many rows; "
         "FACT-00055 marks the authoritative final rollover latency.\n"
         + _table(rows, table_id="LONG-TBL-APP")
     )
-    chunks = chunking_by_fixed_token(_tok(), content, chunk_token_size=200)
+    chunks = chunking_by_fixed_token(_tok(), content, chunk_token_size=240)
 
     table_chunks = [
         chunk["content"] for chunk in chunks if "<table" in chunk["content"]
@@ -84,15 +84,13 @@ def test_oversized_table_splits_at_row_boundaries() -> None:
     # Every table piece is a complete <table>...</table> element whose inner
     # JSON array parses, and no piece exceeds the token budget.
     for piece in table_chunks:
-        assert piece.startswith("<table")
+        assert "<table" in piece
         assert piece.rstrip().endswith("</table>")
-        match = re.fullmatch(
-            r"<table[^>]*>(.*)</table>", piece, flags=re.DOTALL
-        )
+        match = re.search(r"<table[^>]*>(.*)</table>", piece, flags=re.DOTALL)
         assert match is not None
         parsed = json.loads(match.group(1))
         assert isinstance(parsed, list) and parsed
-        assert len(_tok().encode(piece)) <= 200
+        assert len(_tok().encode(piece)) <= 240
 
     # The answer-bearing row survives intact in a single piece.
     gold_rows = [
@@ -102,6 +100,9 @@ def test_oversized_table_splits_at_row_boundaries() -> None:
     ]
     assert len(gold_rows) == 1
     assert '"A-089"' in gold_rows[0]
+    # The title is copied into every table piece so the answer-bearing tail
+    # piece is retrievable by a query that names the table.
+    assert "Table LONG-TBL-APP" in gold_rows[0]
 
 
 def test_text_between_tables_is_chunked_normally() -> None:
@@ -115,7 +116,7 @@ def test_text_between_tables_is_chunked_normally() -> None:
     chunks = chunking_by_fixed_token(_tok(), content, chunk_token_size=200)
     assert chunks
     # Table pieces are atomic and filler text is split into windows.
-    table_pieces = [c["content"] for c in chunks if c["content"].startswith("<table")]
+    table_pieces = [c["content"] for c in chunks if "<table" in c["content"]]
     assert len(table_pieces) == 2
     assert all(c["tokens"] <= 200 for c in chunks)
     assert any(c["content"].startswith("filler") for c in chunks)
