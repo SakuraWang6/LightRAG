@@ -472,11 +472,12 @@ def _not_applicable_final_context_evidence() -> dict[str, Any]:
 
 
 def _fact_in_context(fact: dict[str, Any], context: str, normalized_context: str) -> bool:
-    candidates = (
-        str(fact.get("fact_id") or ""),
-        str(fact.get("answer") or ""),
-        str(fact.get("expected_text") or ""),
-    )
+    # A bare FACT id is metadata, not proof that the answer-bearing value
+    # reached the model.  Prefer the FACT-ID-anchored expected text, then the
+    # answer value; this matches the stricter rule used by diagnosis.py.
+    expected_text = str(fact.get("expected_text") or "")
+    answer = str(fact.get("answer") or "")
+    candidates = (expected_text, answer) if expected_text else (answer,)
     return any(
         candidate and (candidate in context or _compact(candidate) in normalized_context)
         for candidate in candidates

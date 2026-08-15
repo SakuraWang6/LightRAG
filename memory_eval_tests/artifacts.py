@@ -333,17 +333,35 @@ def build_execution_manifest(
             "document_files": document_files
             if manifest
             else _unknown(manifest_error or "document file list is unavailable"),
-            "generator_version": _manifest_value(
-                manifest, "generator_version", "generator_code_version"
-            )
-            if manifest
-            else _unknown(manifest_error or "dataset manifest is unavailable"),
-            "template_version": _manifest_value(manifest, "template_version")
-            if manifest
-            else _unknown(manifest_error or "dataset manifest is unavailable"),
-            "random_seed": _manifest_value(manifest, "random_seed", "seed")
-            if manifest
-            else _unknown(manifest_error or "dataset manifest is unavailable"),
+            "generator_version": (
+                (
+                    (manifest.get("generation_provenance") or {}).get(
+                        "generator_code_version"
+                    )
+                    or _manifest_value(manifest, "generator_version", "generator_code_version")
+                )
+                if manifest
+                else _unknown(manifest_error or "dataset manifest is unavailable")
+            ),
+            "template_version": (
+                (
+                    (manifest.get("generation_provenance") or {}).get(
+                        "template_version"
+                    )
+                    or _manifest_value(manifest, "template_version")
+                )
+                if manifest
+                else _unknown(manifest_error or "dataset manifest is unavailable")
+            ),
+            "random_seed": (
+                (
+                    (manifest.get("generation_provenance") or {}).get("seed")
+                    if (manifest.get("generation_provenance") or {}).get("seed") is not None
+                    else _manifest_value(manifest, "random_seed", "seed")
+                )
+                if manifest
+                else _unknown(manifest_error or "dataset manifest is unavailable")
+            ),
             "pages": manifest.get("pages") if manifest else None,
             "tier": manifest.get("tier") if manifest else None,
             "profile": manifest.get("profile") if manifest else None,

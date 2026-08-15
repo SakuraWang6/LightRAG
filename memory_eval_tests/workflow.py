@@ -276,12 +276,25 @@ def _profile(context: RunContext) -> dict[str, Any]:
 
 def _receipt(upload: dict[str, Any], unit: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     uploaded = upload.get("uploaded") or []
-    succeeded = [item for item in uploaded if item.get("status") == "success"]
     terminal = [item.get("track_status") or {} for item in uploaded]
+    waited = bool(upload.get("waited"))
+
+    def processing_succeeded(item: dict[str, Any]) -> bool:
+        if not waited:
+            return item.get("status") == "success"
+        track = item.get("track_status") or {}
+        return track.get("passed") is True
+
+    succeeded = [item for item in uploaded if processing_succeeded(item)]
     failed = [item for item in uploaded if item not in succeeded]
     documents = []
     for item in uploaded:
         track = item.get("track_status") or {}
+        failure_reason = (
+            track.get("error")
+            or track.get("message")
+            or item.get("message")
+        )
         documents.append(
             {
                 "file_name": item.get("file_name", {"value": "unknown", "reason": "upload response omitted file name"}),
@@ -290,10 +303,17 @@ def _receipt(upload: dict[str, Any], unit: dict[str, Any]) -> tuple[dict[str, An
                 "upload_status": item.get("status"),
                 "processing_status": track,
                 "parse_time": track.get("parse_time") or {"value": "unknown", "reason": "track status omits parse time"},
-                "failure_reason": item.get("message") or track.get("error") or track.get("message"),
+                "failure_reason": failure_reason,
                 "reused": bool(item.get("reused")),
             }
         )
+    chunk_count = 0
+    for track in terminal:
+        for document in track.get("documents") or []:
+            try:
+                chunk_count += int(document.get("chunks_count") or 0)
+            except (TypeError, ValueError):
+                pass
     ingestion = {
         "workspace_id": unit["workspace_id"],
         "storage_id": unit["storage_id"],
@@ -310,7 +330,11 @@ def _receipt(upload: dict[str, Any], unit: dict[str, Any]) -> tuple[dict[str, An
         "successful_documents": len(succeeded),
         "failed_documents": len(failed),
         "processing_statuses": terminal,
-        "chunk_count": {"value": "unknown", "reason": "current API track status omits chunk count"},
+        "chunk_count": (
+            chunk_count
+            if chunk_count
+            else {"value": "unknown", "reason": "current API track status omits chunk count"}
+        ),
         "entity_count": {"value": "unknown", "reason": "current API track status omits entity count"},
         "relation_count": {"value": "unknown", "reason": "current API track status omits relation count"},
     }
