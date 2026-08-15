@@ -24,6 +24,23 @@ def test_numeric_unit_match_accepts_chinese_units_without_spaces() -> None:
     assert answer._numeric_unit_match("1043 QMU", "标准标定上限为 1043 QMU")
 
 
+def test_fact_id_alone_is_not_final_context_evidence() -> None:
+    """Final-context observability must not mistake a bare marker for the
+    answer-bearing evidence, otherwise evidence_available is inflated."""
+    fact = {
+        "fact_id": "FACT-00027",
+        "answer": "54.99 ms",
+        "expected_text": "FACT-00027 authoritative final rollover latency 54.99 ms",
+    }
+    context = "FACT-00027 marks the appendix stress-table row."
+    normalized_context = answer._compact(context)
+    assert answer._fact_in_context(fact, context, normalized_context) is False
+
+    context = "The authoritative final rollover latency is 54.99 ms."
+    normalized_context = answer._compact(context)
+    assert answer._fact_in_context(fact, context, normalized_context) is True
+
+
 def test_evaluate_answers_requests_concise_single_paragraph(monkeypatch) -> None:
     """The eval must ask for a short answer and inject a no-boilerplate
     instruction, so slow local models do not waste output budget on

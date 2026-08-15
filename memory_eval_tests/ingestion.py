@@ -190,6 +190,11 @@ def _wait_track_status(
     last_payload["terminal"] = False
     last_payload["passed"] = False
     last_payload["timeout_seconds"] = timeout_seconds
+    last_payload["timed_out"] = True
+    last_payload["error"] = (
+        f"ingestion wait timed out after {timeout_seconds}s while documents "
+        "were still processing"
+    )
     return last_payload
 
 

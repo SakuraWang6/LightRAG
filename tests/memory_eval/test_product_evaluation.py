@@ -338,6 +338,90 @@ def test_upload_dataset_files_forwards_process_options(
     assert captured["kwargs"]["process_options"] == "Fi"
 
 
+def test_receipt_uses_processing_terminal_state_and_chunk_count() -> None:
+    """Receipts must not call a timed-out upload successful, and they must
+    propagate the chunk_count already present in the track-status payload."""
+    unit = {"workspace_id": "w", "storage_id": "s", "started_at": "now"}
+    upload = {
+        "waited": True,
+        "passed": False,
+        "uploaded": [
+            {
+                "status": "success",
+                "file_name": "a.docx",
+                "content_sha256": "a",
+                "track_id": "t1",
+                "message": "uploaded",
+                "reused": False,
+                "track_status": {
+                    "passed": True,
+                    "documents": [{"chunks_count": 7}],
+                },
+            },
+            {
+                "status": "success",
+                "file_name": "b.docx",
+                "content_sha256": "b",
+                "track_id": "t2",
+                "message": "uploaded",
+                "reused": False,
+                "track_status": {
+                    "passed": False,
+                    "timed_out": True,
+                    "error": "still processing",
+                    "documents": [{"chunks_count": 3}],
+                },
+            },
+        ],
+    }
+    ingestion_receipt, index_receipt = workflow._receipt(upload, unit)
+    assert ingestion_receipt["successful_documents"] == 1
+    assert ingestion_receipt["failed_documents"] == 1
+    assert ingestion_receipt["passed"] is False
+    assert ingestion_receipt["documents"][1]["failure_reason"] == "still processing"
+    assert index_receipt["chunk_count"] == 10
+
+
+def test_execution_manifest_reads_nested_generation_provenance(
+    tmp_path: Path,
+) -> None:
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "manifest.json").write_text(
+        json.dumps(
+            {
+                "dataset_id": "d1",
+                "pages": 1,
+                "tier": "smoke",
+                "profile": "rich",
+                "language": "zh",
+                "formats": ["docx"],
+                "title": "D",
+                "files": [],
+                "oracle_file": "oracle.json",
+                "generation_provenance": {
+                    "generator_code_version": "generator-sha",
+                    "template_version": "template-v9",
+                    "seed": 42,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (dataset / "oracle.json").write_text("{}", encoding="utf-8")
+
+    manifest = artifacts.build_execution_manifest(
+        dataset=dataset,
+        evaluation_id="end_to_end_baseline",
+        evaluation_type="evaluation",
+        parameters={"mode": "mix"},
+        parameter_sources={"mode": "default"},
+    )
+    assert manifest["dataset"]["generator_version"] == "generator-sha"
+    assert manifest["dataset"]["template_version"] == "template-v9"
+    assert manifest["dataset"]["random_seed"] == 42
+
+
 def test_effective_vlm_auto_detects_figures_from_manifest(
     tmp_path: Path,
 ) -> None:

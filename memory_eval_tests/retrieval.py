@@ -68,12 +68,14 @@ def evaluate_api(
             if fact["fact_id"] in question.get("evidence_fact_ids", [])
         ]
         references = _ranked_references(response)
-        ranked_chunks: list[tuple[int, int, str]] = []
-        rank = 0
-        for ref_index, ref in enumerate(references):
-            for chunk in ref.get("content") or []:
-                rank += 1
-                ranked_chunks.append((rank, ref_index, chunk))
+        # ``/query/data`` exposes the original chunk list before the API
+        # groups it into per-file references.  Use that ordered list for
+        # MRR/Recall so multi-file runs do not lose the true cross-file rank.
+        ordered_chunks = _ordered_chunks(response)
+        ranked_chunks: list[tuple[int, int, str]] = [
+            (rank, rank - 1, item["content"])
+            for rank, item in enumerate(ordered_chunks, start=1)
+        ]
         hits_by_fact: dict[str, int] = {}
         match_by_fact: dict[str, dict[str, Any]] = {}
         # Pass 1: precise FACT-ID-anchored matching.  Generated documents
@@ -130,7 +132,7 @@ def evaluate_api(
                 hit_evidence.append(
                     {
                         "rank": rank,
-                        "file_path": references[ref_index].get("file_path", ""),
+                        "file_path": ordered_chunks[ref_index].get("file_path", ""),
                         "text": chunk,
                         "chars": len(chunk),
                         "matches": chunk_matches,
@@ -248,6 +250,56 @@ def _ranked_references(response: dict[str, Any]) -> list[dict[str, Any]]:
                 "include_chunk_content=true on the /query/data request."
             )
     return references
+
+
+def _ordered_chunks(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return chunks in the API's original ranking order.
+
+    The public response only promises ranked ``references``; however
+    ``data.chunks`` is populated by the same retrieval pipeline before the
+    per-file reference grouping, so it preserves the true global order for
+    single- and multi-file datasets.
+    """
+    data = response.get("data") if isinstance(response.get("data"), dict) else {}
+    chunks = data.get("chunks")
+    if not isinstance(chunks, list):
+        # Older/mocked responses only expose the already-grouped reference
+        # content.  Preserve compatibility by flattening those references.
+        references = data.get("references")
+        if isinstance(references, list):
+            flattened: list[dict[str, Any]] = []
+            for ref in references:
+                if not isinstance(ref, dict):
+                    continue
+                for content in ref.get("content") or []:
+                    if isinstance(content, str):
+                        flattened.append(
+                            {
+                                "content": content,
+                                "file_path": ref.get("file_path", ""),
+                                "chunk_id": "",
+                            }
+                        )
+            return flattened
+        raise TypeError(
+            "/query/data response contains no ordered chunk list; "
+            "cannot compute API retrieval metrics."
+        )
+    ordered: list[dict[str, Any]] = []
+    for chunk in chunks:
+        if not isinstance(chunk, dict) or not isinstance(chunk.get("content"), str):
+            raise TypeError(
+                "chunk item has no string content; set include_chunk_content=true "
+                "on the /query/data request."
+            )
+        ordered.append(
+            {
+                "content": chunk["content"],
+                "file_path": chunk.get("file_path", ""),
+                "chunk_id": chunk.get("chunk_id", ""),
+            }
+        )
+    return ordered
 
 
 def _content_contains_fact(content: str, fact: dict[str, Any]) -> bool:

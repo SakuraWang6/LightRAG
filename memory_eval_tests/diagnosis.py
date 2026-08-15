@@ -185,7 +185,10 @@ def build_diagnosis(traces: list[dict[str, Any]]) -> dict[str, Any]:
                 1 for trace in traces if (trace.get("final_context") or {}).get("status") == _OBSERVED
             ),
             "context_unavailable": sum(
-                1 for trace in traces if (trace.get("final_context") or {}).get("status") != _OBSERVED
+                1
+                for trace in traces
+                if (trace.get("final_context") or {}).get("status")
+                not in {_OBSERVED, "not_applicable"}
             ),
         },
         "cause_distribution": dict(sorted(causes.items())),
