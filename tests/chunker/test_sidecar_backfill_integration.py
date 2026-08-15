@@ -176,6 +176,57 @@ def test_real_fixed_token_chunks_get_full_coverage(tmp_path: Path) -> None:
     assert seen == {b for b, _ in blocks}
 
 
+def test_oversized_table_pieces_carry_sidecar_and_do_not_fail_backfill(
+    tmp_path: Path,
+) -> None:
+    """Table-aware chunking synthesises row-atomic pieces whose content is not
+    a contiguous source substring.  Those pieces must carry an explicit table
+    sidecar so backfill skips span validation instead of failing the document.
+    """
+    rows: list[list[str]] = [["Row", "Scenario", "Latency", "Status"]]
+    for index in range(1, 90):
+        rows.append(
+            [
+                f"A-{index:03d}",
+                "appendix rollover stress",
+                "62.99 ms" if index == 89 else f"20.{index:02d} ms",
+                "FACT-00055" if index == 89 else "distractor",
+            ]
+        )
+    table_text = (
+        '<table id="LONG-TBL-APP" format="json">'
+        + json.dumps(rows, ensure_ascii=False)
+        + "</table>"
+    )
+    title = "Table LONG-TBL-APP: Appendix long-table stress case with many rows."
+    blocks_path, merged = _write_blocks(
+        tmp_path,
+        [("b1", "Intro paragraph."), ("b2", title + "\n" + table_text)],
+    )
+    tok = _tokenizer()
+
+    chunks = chunking_by_fixed_token(
+        tok,
+        merged,
+        chunk_token_size=240,
+        chunk_overlap_token_size=0,
+        _emit_source_span=True,
+    )
+
+    backfill_chunk_sidecars(chunks, blocks_path)
+
+    table_chunks = [chunk for chunk in chunks if "<table" in chunk["content"]]
+    assert len(table_chunks) > 1
+    assert all(
+        chunk.get("sidecar", {}).get("type") == "table"
+        for chunk in table_chunks
+    )
+    assert all(
+        chunk.get("sidecar", {}).get("id") == "LONG-TBL-APP"
+        for chunk in table_chunks
+    )
+
+
 @pytest.mark.offline
 def test_hard_split_slices_get_precise_refs(tmp_path: Path) -> None:
     # One large block followed by a small one. A single fixed-token chunk covers
