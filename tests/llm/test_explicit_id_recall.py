@@ -143,3 +143,28 @@ async def test_explicit_id_recall_exact_match_fallback() -> None:
     assert [c["chunk_id"] for c in chunks] == ["c-gov"]
     assert chunks[0]["source_type"] == "explicit_id_exact"
     assert "Maya Chen" in chunks[0]["content"]
+
+
+async def test_explicit_id_recall_prefers_search_values_capability() -> None:
+    class _SearchableChunksDb(_FakeTextChunksDb):
+        async def search_values(self, substrings: list[str]) -> list[dict]:
+            return [
+                value
+                for key, value in self.data.items()
+                if any(substring in value.get("content", "") for substring in substrings)
+            ]
+
+    class _NoHitVdb(_FakeChunksVdb):
+        async def query(self, query: str, top_k: int, query_embedding=None):
+            self.calls.append(query)
+            return []
+
+    vdb = _NoHitVdb()
+    chunks = await _get_vector_context(
+        "what is FACT-GOV-00001?",
+        vdb,
+        _param(),
+        text_chunks_db=_SearchableChunksDb(),
+    )
+    assert [chunk["chunk_id"] for chunk in chunks] == ["c-gov"]
+    assert chunks[0]["source_type"] == "explicit_id_exact"

@@ -452,6 +452,19 @@ class BaseKVStorage(StorageNameSpace, ABC):
             "(all_keys); callers must fall back to a different retrieval path."
         )
 
+    async def search_values(self, substrings: list[str]) -> list[dict[str, Any]]:
+        """Return records whose ``content`` contains one of ``substrings``.
+
+        This is an OPTIONAL exact-match capability used by identifier recall.
+        Backends that can scan locally implement it without materialising the
+        full key/value pair list; other backends raise so callers fall back to
+        vector similarity or a more constrained lookup.
+        """
+        raise StorageCapabilityError(
+            f"{type(self).__name__} does not support content substring search "
+            "(search_values); callers must fall back to a different retrieval path."
+        )
+
     @abstractmethod
     async def filter_keys(self, keys: set[str]) -> set[str]:
         """Return keys that do not exist in storage."""

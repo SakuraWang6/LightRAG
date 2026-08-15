@@ -5099,30 +5099,36 @@ async def _explicit_id_recall(
     # the query is always recalled.
     if text_chunks_db is not None:
         try:
-            keys = await text_chunks_db.all_keys()
-        except Exception:  # noqa: BLE001 - backend cannot enumerate; skip
-            keys = []
-        if keys:
-            for chunk in await text_chunks_db.get_by_ids(keys):
-                if not isinstance(chunk, dict):
-                    continue
-                content = str(chunk.get("content") or "")
-                chunk_id = chunk.get("_id") or chunk.get("chunk_id")
-                if not any(identifier in content for identifier in identifiers):
-                    continue
-                if chunk_id and chunk_id in seen:
-                    continue
-                if chunk_id:
-                    seen.add(chunk_id)
-                recalled.append(
-                    {
-                        "content": content,
-                        "created_at": chunk.get("create_time", None),
-                        "file_path": chunk.get("file_path", "unknown_source"),
-                        "source_type": "explicit_id_exact",
-                        "chunk_id": chunk_id,
-                    }
+            search = getattr(text_chunks_db, "search_values", None)
+            if search is not None:
+                exact_chunks = await search(identifiers)
+            else:
+                keys = await text_chunks_db.all_keys()
+                exact_chunks = (
+                    await text_chunks_db.get_by_ids(keys) if keys else []
                 )
+        except Exception:  # noqa: BLE001 - backend cannot scan; skip exact recall
+            exact_chunks = []
+        for chunk in exact_chunks or []:
+            if not isinstance(chunk, dict):
+                continue
+            content = str(chunk.get("content") or "")
+            chunk_id = chunk.get("_id") or chunk.get("chunk_id")
+            if not any(identifier in content for identifier in identifiers):
+                continue
+            if chunk_id and chunk_id in seen:
+                continue
+            if chunk_id:
+                seen.add(chunk_id)
+            recalled.append(
+                {
+                    "content": content,
+                    "created_at": chunk.get("create_time", None),
+                    "file_path": chunk.get("file_path", "unknown_source"),
+                    "source_type": "explicit_id_exact",
+                    "chunk_id": chunk_id,
+                }
+            )
     return recalled
 
 

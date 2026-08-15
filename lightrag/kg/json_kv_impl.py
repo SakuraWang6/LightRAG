@@ -309,6 +309,20 @@ class JsonKVStorage(BaseKVStorage):
         async with self._storage_lock:
             return list(self._data.keys())
 
+    async def search_values(self, substrings: list[str]) -> list[dict[str, Any]]:
+        """Scan the in-memory namespace without building an intermediate key list."""
+        async with self._storage_lock:
+            results: list[dict[str, Any]] = []
+            for key, data in self._data.items():
+                content = str(data.get("content") or "") if isinstance(data, dict) else ""
+                if content and any(substring in content for substring in substrings):
+                    result = copy.deepcopy(data)
+                    result.setdefault("create_time", 0)
+                    result.setdefault("update_time", 0)
+                    result["_id"] = key
+                    results.append(result)
+            return results
+
     async def upsert(self, data: dict[str, dict[str, Any]]) -> None:
         """Insert or update KV records in shared memory; mark all processes dirty.
 
