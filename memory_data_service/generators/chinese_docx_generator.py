@@ -911,7 +911,7 @@ def _write_docx(
             )
             if previous_table_fact and previous_text_fact:
                 table_anchor = (
-                    f"第 {previous_table_page} 页的表 {previous_table_page}"
+                    f"第 {previous_table_page} 页的表 {previous_table_page} "
                     if previous_table_page
                     else "最近的标准表格行"
                 )
