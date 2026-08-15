@@ -4973,6 +4973,7 @@ async def _get_vector_context(
     chunks_vdb: BaseVectorStorage,
     query_param: QueryParam,
     query_embedding: list[float] = None,
+    text_chunks_db: BaseKVStorage = None,
 ) -> list[dict]:
     """
     Retrieve text chunks from the vector database without reranking or truncation.
@@ -4998,6 +4999,10 @@ async def _get_vector_context(
     search_top_k = query_param.chunk_top_k or query_param.top_k
     cosine_threshold = chunks_vdb.cosine_better_than_threshold
 
+    explicit_chunks = await _explicit_id_recall(
+        query, chunks_vdb, search_top_k, text_chunks_db=text_chunks_db
+    )
+
     results = await chunks_vdb.query(
         query, top_k=search_top_k, query_embedding=query_embedding
     )
@@ -5005,6 +5010,11 @@ async def _get_vector_context(
         logger.info(
             f"Naive query: 0 chunks (chunk_top_k:{search_top_k} cosine:{cosine_threshold})"
         )
+        if explicit_chunks:
+            logger.info(
+                f"Naive query: {len(explicit_chunks)} explicit-id chunks"
+            )
+            return explicit_chunks
         return []
 
     valid_chunks = []
@@ -5022,7 +5032,104 @@ async def _get_vector_context(
     logger.info(
         f"Naive query: {len(valid_chunks)} chunks (chunk_top_k:{search_top_k} cosine:{cosine_threshold})"
     )
+    if explicit_chunks:
+        logger.info(
+            f"Naive query: prepending {len(explicit_chunks)} explicit-id chunks"
+        )
+        explicit_ids = {
+            chunk.get("chunk_id")
+            for chunk in explicit_chunks
+            if chunk.get("chunk_id")
+        }
+        deduped = [
+            chunk
+            for chunk in valid_chunks
+            if not chunk.get("chunk_id")
+            or chunk["chunk_id"] not in explicit_ids
+        ]
+        return explicit_chunks + deduped
     return valid_chunks
+
+
+_EXPLICIT_ID_RE = re.compile(r"\b[A-Z][A-Z0-9-]*-\d{2,}\b")
+
+
+async def _explicit_id_recall(
+    query: str,
+    chunks_vdb: BaseVectorStorage,
+    top_k: int,
+    text_chunks_db: BaseKVStorage = None,
+) -> list[dict]:
+    """Recall chunks containing identifiers explicitly named in the query.
+
+    Vector similarity alone can rank a chunk that merely mentions an
+    identifier below unrelated chunks (observed when a query names
+    ``FACT-GOV-00001`` but the containing chunk missed top-k).  An explicit
+    identifier is a precise retrieval key, so query the chunk vector store
+    with each identifier and prepend the matches.
+    """
+    identifiers = list(dict.fromkeys(_EXPLICIT_ID_RE.findall(query)))[:5]
+    if not identifiers:
+        return []
+    recalled: list[dict] = []
+    seen: set[str] = set()
+    per_id_top_k = max(1, min(3, top_k))
+    for identifier in identifiers:
+        results = await chunks_vdb.query(identifier, top_k=per_id_top_k)
+        for result in results or []:
+            if not isinstance(result, dict) or "content" not in result:
+                continue
+            chunk_id = result.get("id") or result.get("chunk_id")
+            if chunk_id and chunk_id in seen:
+                continue
+            if chunk_id:
+                seen.add(chunk_id)
+            recalled.append(
+                {
+                    "content": result["content"],
+                    "created_at": result.get("created_at", None),
+                    "file_path": result.get("file_path", "unknown_source"),
+                    "source_type": "explicit_id",
+                    "chunk_id": chunk_id,
+                }
+            )
+    # Vector similarity is unreliable for bare identifiers (a chunk containing
+    # "FACT-GOV-00001" can rank below unrelated chunks).  When the KV backend
+    # can enumerate keys, verify by exact text match so an identifier named in
+    # the query is always recalled.
+    if text_chunks_db is not None:
+        try:
+            search = getattr(text_chunks_db, "search_values", None)
+            if search is not None:
+                exact_chunks = await search(identifiers)
+            else:
+                keys = await text_chunks_db.all_keys()
+                exact_chunks = (
+                    await text_chunks_db.get_by_ids(keys) if keys else []
+                )
+        except Exception:  # noqa: BLE001 - backend cannot scan; skip exact recall
+            exact_chunks = []
+        for chunk in exact_chunks or []:
+            if not isinstance(chunk, dict):
+                continue
+            content = str(chunk.get("content") or "")
+            chunk_id = chunk.get("_id") or chunk.get("chunk_id")
+            if not any(identifier in content for identifier in identifiers):
+                continue
+            if chunk_id and chunk_id in seen:
+                continue
+            if chunk_id:
+                seen.add(chunk_id)
+            recalled.append(
+                {
+                    "content": content,
+                    "created_at": chunk.get("create_time", None),
+                    "file_path": chunk.get("file_path", "unknown_source"),
+                    "source_type": "explicit_id_exact",
+                    "chunk_id": chunk_id,
+                }
+            )
+    return recalled
 
 
 async def _perform_kg_search(
@@ -5164,6 +5271,7 @@ async def _perform_kg_search(
                 chunks_vdb,
                 query_param,
                 query_embedding,
+                text_chunks_db=text_chunks_db,
             )
             # Track vector chunks with source metadata
             for i, chunk in enumerate(vector_chunks):
@@ -5569,6 +5677,60 @@ async def _merge_all_chunks(
     return merged_chunks
 
 
+def _minimum_chunk_budget(max_total_tokens: int) -> int:
+    """Reserve a floor of the token budget for document chunks.
+
+    The KG query context lists entity/relation descriptions that can consume
+    the entire ``max_total_tokens`` budget; without a floor the chunk budget
+    collapses toward zero and answer-bearing evidence chunks are dropped
+    before the model call (observed as rank-3..5 evidence missing from the
+    final context on multi-hop questions).
+    """
+    return min(max(0, max_total_tokens) // 4, 2048)
+
+
+async def _truncate_kg_context_to_budget(
+    *,
+    entities_context: list[dict[str, Any]],
+    relations_context: list[dict[str, Any]],
+    max_kg_tokens: int,
+    tokenizer: Tokenizer,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Shrink the KG context so document chunks keep a token floor.
+
+    Entities carry the answer-bearing descriptions and are kept first; the
+    relations get whatever budget remains.  Both lists are truncated as whole
+    items (never mid-description), matching the render that follows.
+    """
+    if max_kg_tokens <= 0:
+        return [], []
+    key = lambda item: json.dumps(item, ensure_ascii=False)
+    entities = await atruncate_list_by_token_size(
+        entities_context,
+        key=key,
+        separator="\n",
+        max_token_size=max_kg_tokens,
+        tokenizer=tokenizer,
+    )
+    entities_text = "\n".join(key(item) for item in entities)
+    entities_tokens = (
+        await acount_tokens(tokenizer, entities_text) if entities_text else 0
+    )
+    remaining = max(0, max_kg_tokens - entities_tokens)
+    relations = (
+        await atruncate_list_by_token_size(
+            relations_context,
+            key=key,
+            separator="\n",
+            max_token_size=remaining,
+            tokenizer=tokenizer,
+        )
+        if relations_context
+        else []
+    )
+    return entities, relations
+
+
 async def _build_context_str(
     entities_context: list[dict],
     relations_context: list[dict],
@@ -5650,6 +5812,56 @@ async def _build_context_str(
     available_chunk_tokens = max_total_tokens - (
         sys_prompt_tokens + kg_context_tokens + query_tokens + buffer_tokens
     )
+
+    # Reserve a minimum budget for answer-bearing chunks.  A KG-heavy graph
+    # (many entity/relation descriptions) must not starve the chunk budget,
+    # otherwise lower-ranked evidence chunks are silently dropped and the
+    # model answers from a context that lacks the oracle facts.
+    chunk_budget_floor = _minimum_chunk_budget(max_total_tokens)
+    target_kg_tokens = max(
+        0,
+        max_total_tokens
+        - sys_prompt_tokens
+        - query_tokens
+        - buffer_tokens
+        - chunk_budget_floor,
+    )
+    if kg_context_tokens > target_kg_tokens and (entities_context or relations_context):
+        # The rendered KG includes template labels beyond the entity/relation
+        # strings; account for that overhead so the list budget maps exactly
+        # to the final rendered context and chunks keep their floor.
+        entity_str_tokens = (
+            await acount_tokens(tokenizer, entities_str) if entities_str else 0
+        )
+        relation_str_tokens = (
+            await acount_tokens(tokenizer, relations_str) if relations_str else 0
+        )
+        template_overhead = max(
+            0, kg_context_tokens - entity_str_tokens - relation_str_tokens
+        )
+        list_budget = max(0, target_kg_tokens - template_overhead)
+        entities_context, relations_context = await _truncate_kg_context_to_budget(
+            entities_context=entities_context,
+            relations_context=relations_context,
+            max_kg_tokens=list_budget,
+            tokenizer=tokenizer,
+        )
+        entities_str = "\n".join(
+            json.dumps(entity, ensure_ascii=False) for entity in entities_context
+        )
+        relations_str = "\n".join(
+            json.dumps(relation, ensure_ascii=False) for relation in relations_context
+        )
+        pre_kg_context = kg_context_template.format(
+            entities_str=entities_str,
+            relations_str=relations_str,
+            text_chunks_str="",
+            reference_list_str="",
+        )
+        kg_context_tokens = await acount_tokens(tokenizer, pre_kg_context)
+        available_chunk_tokens = max_total_tokens - (
+            sys_prompt_tokens + kg_context_tokens + query_tokens + buffer_tokens
+        )
 
     logger.debug(
         f"Token allocation - Total: {max_total_tokens}, SysPrompt: {sys_prompt_tokens}, Query: {query_tokens}, KG: {kg_context_tokens}, Buffer: {buffer_tokens}, Available for chunks: {available_chunk_tokens}"
@@ -6514,7 +6726,9 @@ async def naive_query(
 
     if progress_callback:
         await progress_callback(QueryProgress.RETRIEVING_CHUNKS)
-    chunks = await _get_vector_context(query, chunks_vdb, query_param, None)
+    chunks = await _get_vector_context(
+        query, chunks_vdb, query_param, None, text_chunks_db=text_chunks_db
+    )
 
     if chunks is None or len(chunks) == 0:
         logger.info(

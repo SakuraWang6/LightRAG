@@ -23,10 +23,99 @@ Two entry points are exported:
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from lightrag.exceptions import ChunkTokenLimitExceededError
 from lightrag.utils import Tokenizer, logger
+
+
+_TABLE_MARKUP_RE = re.compile(r"<table\b[^>]*>.*?</table>", re.DOTALL)
+_TABLE_BODY_RE = re.compile(r"(<table\b[^>]*>)(.*)(</table>)", re.DOTALL)
+_TABLE_ROW_SEP = "], ["
+_TABLE_ROW_SPLIT_RE = re.compile(r"(?<=\])\,\s*(?=\[)")
+_TABLE_TITLE_RE = re.compile(r"^(Table\s+\S+|表\s*\d+[：:])")
+
+
+def _split_table_pieces(
+    table_text: str,
+    tokenizer: Tokenizer,
+    chunk_token_size: int,
+    title: str = "",
+) -> list[tuple[str, int]]:
+    """Split one oversized ``<table>`` block into row-atomic pieces.
+
+    A parsed table is serialised as ``<table ...>[[row...],[row...]]</table>``.
+    The old fixed-token window could cut this JSON at an arbitrary token
+    boundary, leaving unclosed arrays and separating the answer-bearing row
+    from the rest of the table.  Pieces are rebuilt as complete
+    ``<table>[...rows...]</table>`` units, so every piece is valid markup and
+    the token cap is respected without ever splitting inside a row.
+    """
+    match = _TABLE_BODY_RE.match(table_text)
+    if not match:
+        return [(table_text, len(tokenizer.encode(table_text)))]
+    open_tag, inner, close_tag = match.groups()
+    if not (inner.startswith("[") and inner.endswith("]")):
+        return [(table_text, len(tokenizer.encode(table_text)))]
+    rows = _TABLE_ROW_SPLIT_RE.split(inner[1:-1])
+
+    def wrap(row_slice: list[str]) -> str:
+        # Rows already carry their own brackets; a plain comma separator
+        # rebuilds a valid ``[[row...],[row...]]`` array.
+        body = "[" + ", ".join(row_slice) + "]"
+        return title + open_tag + body + close_tag
+
+    pieces: list[tuple[str, int]] = []
+    current_rows: list[str] = []
+    current_tokens = 0
+    for row in rows:
+        candidate = wrap(current_rows + [row])
+        candidate_tokens = len(tokenizer.encode(candidate))
+        if current_rows and candidate_tokens > chunk_token_size:
+            pieces.append((wrap(current_rows), current_tokens))
+            current_rows = [row]
+            current_tokens = len(tokenizer.encode(wrap([row])))
+        else:
+            current_rows.append(row)
+            current_tokens = candidate_tokens
+    if current_rows:
+        pieces.append((wrap(current_rows), current_tokens))
+    return pieces
+
+
+def _table_title(prev_text: str) -> str:
+    """Return the caption/title line preceding a table, if any.
+
+    A split table's tail pieces carry only raw JSON rows; without the title
+    (e.g. ``Table LONG-TBL-APP: ...``) they are invisible to retrieval for a
+    query that names the table.  Copying the title into every piece keeps the
+    answer-bearing tail piece retrievable.
+    """
+    if not prev_text:
+        return ""
+    for line in reversed(prev_text.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        if _TABLE_TITLE_RE.match(line):
+            return line + "\n"
+        return ""
+    return ""
+
+
+def _table_aware_segments(content: str) -> list[tuple[bool, str, int, int]]:
+    """Return ``(is_table, text, start, end)`` segments for table markup."""
+    segments: list[tuple[bool, str, int, int]] = []
+    cursor = 0
+    for match in _TABLE_MARKUP_RE.finditer(content):
+        if match.start() > cursor:
+            segments.append((False, content[cursor : match.start()], cursor, match.start()))
+        segments.append((True, match.group(0), match.start(), match.end()))
+        cursor = match.end()
+    if cursor < len(content):
+        segments.append((False, content[cursor:], cursor, len(content)))
+    return segments
 
 
 def _trimmed_span(content: str, start: int, end: int) -> tuple[int, int]:
@@ -229,30 +318,108 @@ def chunking_by_token_size(
                 )
             )
     else:
-        anchor = (0, 0)
-        for index, start in enumerate(
-            range(
-                0,
-                len(tokens),
-                _window_step(chunk_token_size, chunk_overlap_token_size),
-            )
-        ):
-            end = min(start + chunk_token_size, len(tokens))
-            chunk_content = tokenizer.decode(tokens[start:end])
-            span = None
-            if _emit_source_span:
-                span, anchor = _token_window_source_span(
-                    tokenizer, content, tokens, start, end, anchor=anchor
+        if _TABLE_MARKUP_RE.search(content):
+            # Table-aware path: keep parsed tables atomic and split oversized
+            # tables at JSON row boundaries instead of arbitrary token windows.
+            order = 0
+            prev_text_segment = ""
+            for is_table, segment, seg_start, seg_end in _table_aware_segments(content):
+                if not is_table:
+                    prev_text_segment = segment
+                segment_tokens = tokenizer.encode(segment)
+                if len(segment_tokens) <= chunk_token_size:
+                    results.append(
+                        _make_chunk(
+                            content=segment,
+                            tokens=len(segment_tokens),
+                            order=order,
+                            source_span=(
+                                _source_span(content, seg_start, seg_end)
+                                if _emit_source_span
+                                else None
+                            ),
+                            emit_source_span=_emit_source_span,
+                        )
+                    )
+                    order += 1
+                elif is_table:
+                    title = _table_title(prev_text_segment)
+                    for piece_text, piece_tokens in _split_table_pieces(
+                        segment, tokenizer, chunk_token_size, title=title
+                    ):
+                        results.append(
+                            _make_chunk(
+                                content=piece_text,
+                                tokens=piece_tokens,
+                                order=order,
+                                source_span=(
+                                    _source_span(content, seg_start, seg_end)
+                                    if _emit_source_span
+                                    else None
+                                ),
+                                emit_source_span=_emit_source_span,
+                            )
+                        )
+                        order += 1
+                else:
+                    anchor = (0, 0)
+                    for start in range(
+                        0,
+                        len(segment_tokens),
+                        _window_step(chunk_token_size, chunk_overlap_token_size),
+                    ):
+                        end = min(start + chunk_token_size, len(segment_tokens))
+                        chunk_content = tokenizer.decode(segment_tokens[start:end])
+                        span = None
+                        if _emit_source_span:
+                            span, anchor = _token_window_source_span(
+                                tokenizer,
+                                segment,
+                                segment_tokens,
+                                start,
+                                end,
+                                anchor=anchor,
+                            )
+                            if span is not None:
+                                span = {
+                                    "start": seg_start + span["start"],
+                                    "end": seg_start + span["end"],
+                                }
+                        results.append(
+                            _make_chunk(
+                                content=chunk_content,
+                                tokens=min(chunk_token_size, len(segment_tokens) - start),
+                                order=order,
+                                source_span=span,
+                                emit_source_span=_emit_source_span,
+                            )
+                        )
+                        order += 1
+        else:
+            anchor = (0, 0)
+            for index, start in enumerate(
+                range(
+                    0,
+                    len(tokens),
+                    _window_step(chunk_token_size, chunk_overlap_token_size),
                 )
-            results.append(
-                _make_chunk(
-                    content=chunk_content,
-                    tokens=min(chunk_token_size, len(tokens) - start),
-                    order=index,
-                    source_span=span,
-                    emit_source_span=_emit_source_span,
+            ):
+                end = min(start + chunk_token_size, len(tokens))
+                chunk_content = tokenizer.decode(tokens[start:end])
+                span = None
+                if _emit_source_span:
+                    span, anchor = _token_window_source_span(
+                        tokenizer, content, tokens, start, end, anchor=anchor
+                    )
+                results.append(
+                    _make_chunk(
+                        content=chunk_content,
+                        tokens=min(chunk_token_size, len(tokens) - start),
+                        order=index,
+                        source_span=span,
+                        emit_source_span=_emit_source_span,
+                    )
                 )
-            )
     return results
 
 
