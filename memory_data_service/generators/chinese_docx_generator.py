@@ -103,7 +103,8 @@ _WORKSTREAMS = (
 )
 
 # Per-page parameter profiles rotate so the document is not dominated by one
-# repeated "standard calibration limit" sentence.
+# repeated "standard calibration limit" sentence.  The wider profile set keeps
+# nearby pages semantically distinct even on 200-page corpora.
 _PARAMETER_PROFILES = (
     ("响应时延预算", "ms", lambda p, r: f"{40 + p * 2 + r.randint(0, 6)}"),
     ("吞吐配额", "次/秒", lambda p, r: f"{100 + p * 5 + r.randint(0, 9)}"),
@@ -113,6 +114,14 @@ _PARAMETER_PROFILES = (
     ("标准标定上限", "QMU", lambda p, r: f"{1000 + p * 7 + r.randint(0, 6)}"),
     ("冗余系数", "", lambda p, r: f"{1.1 + (p % 5) * 0.1 + r.randint(0, 2) * 0.05:.2f}"),
     ("保留期限", "天", lambda p, r: f"{30 + p * 3 + r.randint(0, 5)}"),
+    ("缓存命中率下限", "%", lambda p, r: f"{82 + (p % 8) * 0.5 + r.randint(0, 3) * 0.5:.1f}"),
+    ("平均召回率", "%", lambda p, r: f"{88 + (p % 6) * 0.3 + r.randint(0, 5) * 0.1:.1f}"),
+    ("单次查询成本", "元", lambda p, r: f"{0.02 + p * 0.001 + r.randint(0, 5) * 0.001:.3f}"),
+    ("每日备份窗口", "分钟", lambda p, r: f"{5 + (p % 6) * 5 + r.randint(0, 3)}"),
+    ("灰度观察期", "天", lambda p, r: f"{3 + (p % 5) * 2 + r.randint(0, 2)}"),
+    ("模型评分阈值", "分", lambda p, r: f"{70 + p * 0.2 + r.randint(0, 9)}"),
+    ("重复咨询压缩率", "%", lambda p, r: f"{10 + p * 0.4 + r.randint(0, 7)}"),
+    ("知识条目复审周期", "天", lambda p, r: f"{14 + p + r.randint(0, 5)}"),
 )
 
 _SPEC_TEMPLATES = (
@@ -131,6 +140,22 @@ _SPEC_TEMPLATES = (
     (
         "{fact_id}：第 {page} 页{workstream}的{param}为 {value} {unit}，"
         "该数值与上期基线一致，保留完整追溯链。"
+    ),
+    (
+        "{fact_id}：根据档案编号 {record_code}，第 {page} 页{workstream}"
+        "将{param}核定在 {value} {unit}；该口径随发布基线一并归档。"
+    ),
+    (
+        "{fact_id}：第 {page} 页{workstream}的{param}经评审确定"
+        "为 {value} {unit}，并作为当前生效口径记录在案。"
+    ),
+    (
+        "{fact_id}：在第 {page} 页的{workstream}规格中，{param}"
+        "被设定为 {value} {unit}，后续变更须回查档案 {record_code}。"
+    ),
+    (
+        "{fact_id}：第 {page} 页{workstream}沿用编号 {record_code} 的"
+        "评审基线，{param}维持为 {value} {unit}。"
     ),
 )
 
@@ -151,6 +176,22 @@ _NARRATIVE_TEMPLATES = (
         "{workstream}将{param}维持在 {value} {unit}，配合容量预留与降级队列，"
         "确保高峰时段仍满足服务目标。"
     ),
+    (
+        "依据档案 {record_code}，{workstream}在第 {page} 页确认{param}"
+        "为 {value} {unit}，该结论进入正式发布口径。"
+    ),
+    (
+        "第 {page} 页补充说明：{workstream}的{param}在灰度环境按 "
+        "{value} {unit} 验证通过，并与前一页的审计链保持一致。"
+    ),
+    (
+        "为确保口径可追溯，{workstream}的{param}在本页被记为 "
+        "{value} {unit}，关联档案 {record_code}。"
+    ),
+    (
+        "第 {page} 页将{workstream}的{param}同步到运行基线，"
+        "生效值为 {value} {unit}。"
+    ),
 )
 
 _CONTROL_TEMPLATES = (
@@ -160,32 +201,110 @@ _CONTROL_TEMPLATES = (
     "执行控制：涉及{param}的引用须回到原始事实条目，转述或缩写不得改变量纲。",
     "执行控制：超过{param}预算或阈值的请求进入降级与人工复核队列，不直接返回缓存结果。",
     "执行控制：审计日志与版本基线同步归档，回滚后仍可重建{workstream}在{param}为 {value} {unit} 时的上下文快照。",
+    "执行控制：{param}的生效口径须与档案 {record_code} 一致，跨页引用不得混用历史草案值。",
+    "执行控制：涉及{workstream}的{param}变更需在评审记录中写明 {value} {unit} 与上一基线的差异。",
 )
 
 _DISTRACTOR_TEMPLATES = (
     "草案阶段的近似值为 {near} {unit}，未通过评审，不得作为结论依据。",
     "早期草稿曾记录 {near} {unit}，因口径不一致被驳回，正式版本以本页核定值为准。",
+    "邻页曾出现 {near} {unit}，但该值仅适用于不同实施单元，不能迁移到本页。",
+    "历史报告中保留了 {near} {unit} 作为对比值，当前决策不得直接引用。",
 )
 
+# Table themes are data-driven so the table builder can generate varied,
+# domain-specific rows without a growing if/elif ladder.
 _TABLE_THEMES = (
     (
         "时延阈值",
         "在表 {page} 中，标准行标记（时延阈值）对应的最大值是多少？",
         "ms",
         lambda p, r: f"{p * 3 + 0.5}",
+        lambda p, fact_id, answer, unit: [
+            ("参数", "标称值", "最大值 (ms)"),
+            ("检索耗时", f"{p * 0.7:.1f}", f"{p * 1.8:.1f}"),
+            ("重排耗时", f"{p * 0.4:.1f}", f"{p * 1.2:.1f}"),
+            ("生成耗时", f"{p * 0.8:.1f}", f"{p * 2.4:.1f}"),
+            ("首 token 时延", f"{p * 0.6:.1f}", f"{p * 1.6:.1f}"),
+            (fact_id, f"标准行标记（时延阈值）", answer),
+        ],
     ),
     (
         "吞吐配额",
         "在表 {page} 中，标准行标记（吞吐配额）对应的配额是多少？",
         "次/秒",
         lambda p, r: f"{p * 40 + 80}",
+        lambda p, fact_id, answer, unit: [
+            ("参数", "标称值", "配额 (次/秒)"),
+            ("检索并发", f"{p * 10}", f"{p * 16}"),
+            ("重排并发", f"{p * 6}", f"{p * 10}"),
+            ("批处理", f"{p * 4}", f"{p * 8}"),
+            ("缓存命中", f"{p * 30}", f"{p * 44}"),
+            (fact_id, f"标准行标记（吞吐配额）", answer),
+        ],
     ),
     (
         "错误率预算",
         "在表 {page} 中，标准行标记（错误率预算）对应的预算上限是多少？",
         "%",
         lambda p, r: f"{p * 0.2 + 0.5:.1f}",
+        lambda p, fact_id, answer, unit: [
+            ("参数", "标称值", "预算上限 (%)"),
+            ("检索错误", f"{p * 0.1:.1f}", f"{p * 0.2:.1f}"),
+            ("重排错误", f"{p * 0.05:.2f}", f"{p * 0.1:.2f}"),
+            ("生成错误", f"{p * 0.08:.2f}", f"{p * 0.16:.2f}"),
+            ("超时率", f"{p * 0.04:.2f}", f"{p * 0.08:.2f}"),
+            (fact_id, f"标准行标记（错误率预算）", answer),
+        ],
     ),
+    (
+        "可用性目标",
+        "在表 {page} 中，标准行标记（可用性目标）对应的目标值是多少？",
+        "%",
+        lambda p, r: f"{99 + (p % 5) * 0.1 + r.randint(0, 2) * 0.05:.2f}",
+        lambda p, fact_id, answer, unit: [
+            ("参数", "月度目标", "季度目标"),
+            ("核心问答", f"{99 + (p % 4) * 0.1:.1f}%", f"{99 + (p % 4) * 0.15:.2f}%"),
+            ("管理接口", f"{99 + (p % 3) * 0.2:.1f}%", f"{99 + (p % 3) * 0.25:.2f}%"),
+            ("批量任务", f"{99 + (p % 2) * 0.3:.1f}%", f"{99 + (p % 2) * 0.35:.2f}%"),
+            (fact_id, f"标准行标记（可用性目标）", answer),
+        ],
+    ),
+    (
+        "成本配额",
+        "在表 {page} 中，标准行标记（成本配额）对应的单日上限是多少？",
+        "元",
+        lambda p, r: f"{120 + p * 2 + r.randint(0, 9)}",
+        lambda p, fact_id, answer, unit: [
+            ("参数", "预算", "单日上限 (元)"),
+            ("查询成本", f"{p * 40}", f"{p * 50}"),
+            ("存储成本", f"{p * 8}", f"{p * 12}"),
+            ("缓存复用", f"{p * 15}", f"{p * 20}"),
+            (fact_id, f"标准行标记（成本配额）", answer),
+        ],
+    ),
+    (
+        "告警升级阈值",
+        "在表 {page} 中，标准行标记（告警升级阈值）对应的触发次数是多少？",
+        "次",
+        lambda p, r: f"{3 + (p % 6) + r.randint(0, 2)}",
+        lambda p, fact_id, answer, unit: [
+            ("参数", "观察窗口", "触发次数"),
+            ("检索失败", "5 分钟", f"{3 + (p % 4)}"),
+            ("生成失败", "5 分钟", f"{3 + (p % 5)}"),
+            ("人工转接", "10 分钟", f"{2 + (p % 3)}"),
+            (fact_id, f"标准行标记（告警升级阈值）", answer),
+        ],
+    ),
+)
+
+_DIRECT_QUESTION_TEMPLATES = (
+    "第 {page} 页{workstream}的{param}是多少？",
+    "根据第 {page} 页，{workstream}的{param}核定值是什么？",
+    "第 {page} 页中，{workstream}的{param}设定为多少？",
+    "文档第 {page} 页将{workstream}的{param}定为多少？",
+    "请给出第 {page} 页{workstream}的{param}数值。",
+    "第 {page} 页关于{workstream}的{param}是多少？",
 )
 
 _FIGURE_STATES = (
@@ -400,6 +519,7 @@ def _write_docx(
     fact_counter = 1
     previous_text_fact = ""
     previous_table_fact = ""
+    previous_table_page = 0
     last_delivery_fact = ""
     last_risk_fact = ""
 
@@ -474,6 +594,7 @@ def _write_docx(
             (page - 1) % len(_PARAMETER_PROFILES)
         ]
         value = value_fn(page, rng)
+        record_code = f"RC-{page:04d}"
         fact_id = f"FACT-{fact_counter:05d}"
         fact_counter += 1
         text = _SPEC_TEMPLATES[(page - 1) % len(_SPEC_TEMPLATES)].format(
@@ -483,6 +604,7 @@ def _write_docx(
             param=param,
             value=value,
             unit=param_unit,
+            record_code=record_code,
         )
         document.add_heading(f"第 {page} 页规格说明", level=3)
         document.add_paragraph(text)
@@ -512,7 +634,9 @@ def _write_docx(
         questions.append(
             QuestionRecord(
                 id=f"Q-{fact_id}",
-                question=f"第 {page} 页{workstream_title}的{param}是多少？",
+                question=_DIRECT_QUESTION_TEMPLATES[
+                    (page - 1) % len(_DIRECT_QUESTION_TEMPLATES)
+                ].format(page=page, workstream=workstream_title, param=param),
                 answer=answer,
                 question_type="direct_numeric",
                 evidence_fact_ids=[fact_id],
@@ -527,11 +651,16 @@ def _write_docx(
             unit=param_unit,
             page=page,
             prev_page=page - 1 if page > 1 else page,
+            record_code=record_code,
         )
         document.add_paragraph(narrative)
         document.add_paragraph(
             _CONTROL_TEMPLATES[(page - 1) % len(_CONTROL_TEMPLATES)].format(
-                param=param, value=value, unit=param_unit, workstream=workstream_title
+                param=param,
+                value=value,
+                unit=param_unit,
+                workstream=workstream_title,
+                record_code=record_code,
             )
         )
 
@@ -634,39 +763,20 @@ def _write_docx(
         if "tables" in request.modalities and page % 3 == 0:
             table_fact_id = f"FACT-{fact_counter:05d}"
             fact_counter += 1
-            theme, question_template, table_unit, table_value_fn = _TABLE_THEMES[
-                (page // 3) % len(_TABLE_THEMES)
-            ]
+            (
+                theme,
+                question_template,
+                table_unit,
+                table_value_fn,
+                table_rows_fn,
+            ) = _TABLE_THEMES[(page // 3) % len(_TABLE_THEMES)]
             table_answer = table_value_fn(page, rng)
             caption = f"表 {page}：{workstream_title}的{theme}"
             document.add_paragraph(caption)
-            if theme == "时延阈值":
-                rows = [
-                    ("参数", "标称值", "最大值 (ms)"),
-                    ("延迟 Alpha", f"{page}.0", f"{page * 3}.5"),
-                    ("延迟 Beta", f"{page + 2}.0", f"{page * 4}.5"),
-                    ("重排序", f"{page * 0.5:.1f}", f"{page + 1}.0"),
-                    ("生成首 token", f"{page * 0.8:.1f}", f"{page + 2}.0"),
-                    (table_fact_id, f"标准行标记（{theme}）", f"{table_answer} {table_unit}"),
-                ]
-            elif theme == "吞吐配额":
-                rows = [
-                    ("参数", "标称值", "配额 (次/秒)"),
-                    ("检索并发", f"{page * 10}", f"{page * 16}"),
-                    ("重排并发", f"{page * 6}", f"{page * 10}"),
-                    ("批处理", f"{page * 4}", f"{page * 8}"),
-                    ("缓存命中", f"{page * 30}", f"{page * 44}"),
-                    (table_fact_id, f"标准行标记（{theme}）", f"{table_answer} {table_unit}"),
-                ]
-            else:
-                rows = [
-                    ("参数", "标称值", "预算上限 (%)"),
-                    ("检索错误", f"{page * 0.1:.1f}", f"{page * 0.2:.1f}"),
-                    ("重排错误", f"{page * 0.05:.2f}", f"{page * 0.1:.2f}"),
-                    ("生成错误", f"{page * 0.08:.2f}", f"{page * 0.16:.2f}"),
-                    ("超时率", f"{page * 0.04:.2f}", f"{page * 0.08:.2f}"),
-                    (table_fact_id, f"标准行标记（{theme}）", f"{table_answer} {table_unit}"),
-                ]
+            table_fact_answer = f"{table_answer} {table_unit}".strip()
+            rows = table_rows_fn(
+                page, table_fact_id, table_fact_answer, table_unit
+            )
             table = document.add_table(rows=len(rows), cols=3)
             table.style = "Table Grid"
             for row_index, row_values in enumerate(rows):
@@ -682,7 +792,6 @@ def _write_docx(
                 labels=["table", "gold_fact"],
             )
             add_relation(section_id, table_id, "contains")
-            table_fact_answer = f"{table_answer} {table_unit}".strip()
             facts.append(
                 FactRecord(
                     fact_id=table_fact_id,
@@ -705,6 +814,7 @@ def _write_docx(
                 )
             )
             previous_table_fact = table_fact_id
+            previous_table_page = page
 
         if "figures" in request.modalities and page % 4 == 0:
             figure_fact_id = f"FACT-{fact_counter:05d}"
@@ -800,10 +910,18 @@ def _write_docx(
                 )
             )
             if previous_table_fact and previous_text_fact:
+                table_anchor = (
+                    f"第 {previous_table_page} 页的表 {previous_table_page}"
+                    if previous_table_page
+                    else "最近的标准表格行"
+                )
                 questions.append(
                     QuestionRecord(
                         id=f"Q-MULTIHOP-{page:04d}",
-                        question=f"结合第 {page} 页公式和最近的标准表格行，应引用哪两个事实编号？",
+                        question=(
+                            f"结合第 {page} 页公式和{table_anchor}的标准行标记，"
+                            "应引用哪两个事实编号？"
+                        ),
                         answer=f"{previous_table_fact}；{equation_fact_id}",
                         question_type="multi_hop",
                         evidence_fact_ids=[previous_table_fact, equation_fact_id],

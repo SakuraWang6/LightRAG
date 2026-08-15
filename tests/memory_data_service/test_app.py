@@ -167,6 +167,59 @@ def test_chinese_rich_dataset_contains_chinese_oracle_and_provenance(tmp_path) -
     assert (tmp_path / manifest.dataset_id / "zh-rich-smoke.docx").exists()
 
 
+def test_chinese_rich_dataset_disambiguates_repeated_facts(tmp_path) -> None:
+    """Large Chinese corpora must not collapse into identical near-duplicate
+    questions and table themes, otherwise vector retrieval cannot distinguish
+    the correct page from a nearby page.
+    """
+    manifest = generate_dataset(
+        DatasetCreateRequest(
+            dataset_id="zh-rich-realism",
+            display_name="中文富文档真实性检查",
+            language="zh",
+            profile="rich",
+            pages=20,
+            formats=["docx"],
+            modalities=["text", "tables", "figures", "equations"],
+        ),
+        root=tmp_path,
+    )
+    oracle = load_oracle(tmp_path / manifest.dataset_id)
+    direct_questions = [
+        question.question
+        for question in oracle.questions
+        if question.question_type == "direct_numeric"
+    ]
+    assert len(direct_questions) == len(set(direct_questions))
+    assert len(set(direct_questions)) >= 5
+
+    table_questions = [
+        question
+        for question in oracle.questions
+        if question.question_type == "table_cell"
+    ]
+    assert len({question.question.split("标准行标记（")[1].split("）")[0] for question in table_questions}) >= 4
+
+    multihop_questions = [
+        question
+        for question in oracle.questions
+        if question.id.startswith("Q-MULTIHOP-")
+    ]
+    assert multihop_questions
+    for question in multihop_questions:
+        page = int(question.id.rsplit("-", 1)[1])
+        assert f"第 {page} 页" in question.question
+        assert "的表" in question.question
+
+    cross_document = next(
+        question for question in oracle.questions if question.question_type == "cross_document"
+    )
+    source_fact_id = cross_document.evidence_fact_ids[0]
+    source_fact = next(fact for fact in oracle.facts if fact.fact_id == source_fact_id)
+    assert source_fact.fact_type != "governance_owner"
+    assert "核定结果" in cross_document.question
+
+
 def test_english_rich_dataset_contains_operational_dependencies(tmp_path) -> None:
     manifest = generate_dataset(
         DatasetCreateRequest(
