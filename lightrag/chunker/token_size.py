@@ -35,6 +35,16 @@ _TABLE_BODY_RE = re.compile(r"(<table\b[^>]*>)(.*)(</table>)", re.DOTALL)
 _TABLE_ROW_SEP = "], ["
 _TABLE_ROW_SPLIT_RE = re.compile(r"(?<=\])\,\s*(?=\[)")
 _TABLE_TITLE_RE = re.compile(r"^(Table\s+\S+|表\s*\d+[：:])")
+_TABLE_ID_RE = re.compile(r"<table\b[^>]*\bid=\"([^\"]+)\"")
+
+
+def _table_sidecar(table_text: str) -> dict[str, Any] | None:
+    """Return a sidecar pointing at the parsed table object, when identifiable."""
+    match = _TABLE_ID_RE.search(table_text)
+    if not match:
+        return None
+    table_id = match.group(1)
+    return {"type": "table", "id": table_id, "refs": [{"type": "table", "id": table_id}]}
 
 
 def _split_table_pieces(
@@ -42,7 +52,7 @@ def _split_table_pieces(
     tokenizer: Tokenizer,
     chunk_token_size: int,
     title: str = "",
-) -> list[tuple[str, int]]:
+) -> list[dict[str, Any]]:
     """Split one oversized ``<table>`` block into row-atomic pieces.
 
     A parsed table is serialised as ``<table ...>[[row...],[row...]]</table>``.
@@ -52,12 +62,25 @@ def _split_table_pieces(
     ``<table>[...rows...]</table>`` units, so every piece is valid markup and
     the token cap is respected without ever splitting inside a row.
     """
+    sidecar = _table_sidecar(table_text)
     match = _TABLE_BODY_RE.match(table_text)
     if not match:
-        return [(table_text, len(tokenizer.encode(table_text)))]
+        return [
+            {
+                "content": table_text,
+                "tokens": len(tokenizer.encode(table_text)),
+                "sidecar": sidecar,
+            }
+        ]
     open_tag, inner, close_tag = match.groups()
     if not (inner.startswith("[") and inner.endswith("]")):
-        return [(table_text, len(tokenizer.encode(table_text)))]
+        return [
+            {
+                "content": table_text,
+                "tokens": len(tokenizer.encode(table_text)),
+                "sidecar": sidecar,
+            }
+        ]
     rows = _TABLE_ROW_SPLIT_RE.split(inner[1:-1])
 
     def wrap(row_slice: list[str]) -> str:
@@ -66,21 +89,33 @@ def _split_table_pieces(
         body = "[" + ", ".join(row_slice) + "]"
         return title + open_tag + body + close_tag
 
-    pieces: list[tuple[str, int]] = []
+    pieces: list[dict[str, Any]] = []
     current_rows: list[str] = []
     current_tokens = 0
     for row in rows:
         candidate = wrap(current_rows + [row])
         candidate_tokens = len(tokenizer.encode(candidate))
         if current_rows and candidate_tokens > chunk_token_size:
-            pieces.append((wrap(current_rows), current_tokens))
+            pieces.append(
+                {
+                    "content": wrap(current_rows),
+                    "tokens": current_tokens,
+                    "sidecar": sidecar,
+                }
+            )
             current_rows = [row]
             current_tokens = len(tokenizer.encode(wrap([row])))
         else:
             current_rows.append(row)
             current_tokens = candidate_tokens
     if current_rows:
-        pieces.append((wrap(current_rows), current_tokens))
+        pieces.append(
+            {
+                "content": wrap(current_rows),
+                "tokens": current_tokens,
+                "sidecar": sidecar,
+            }
+        )
     return pieces
 
 
@@ -189,6 +224,7 @@ def _make_chunk(
     order: int,
     source_span: dict[str, int] | None,
     emit_source_span: bool,
+    sidecar: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     item: dict[str, Any] = {
         "tokens": tokens,
@@ -197,6 +233,8 @@ def _make_chunk(
     }
     if emit_source_span and source_span is not None:
         item["_source_span"] = source_span
+    if sidecar is not None:
+        item["sidecar"] = sidecar
     return item
 
 
@@ -344,20 +382,19 @@ def chunking_by_token_size(
                     order += 1
                 elif is_table:
                     title = _table_title(prev_text_segment)
-                    for piece_text, piece_tokens in _split_table_pieces(
+                    for piece in _split_table_pieces(
                         segment, tokenizer, chunk_token_size, title=title
                     ):
                         results.append(
                             _make_chunk(
-                                content=piece_text,
-                                tokens=piece_tokens,
+                                content=piece["content"],
+                                tokens=piece["tokens"],
                                 order=order,
                                 source_span=(
-                                    _source_span(content, seg_start, seg_end)
-                                    if _emit_source_span
-                                    else None
+                                    None
                                 ),
                                 emit_source_span=_emit_source_span,
+                                sidecar=piece.get("sidecar"),
                             )
                         )
                         order += 1
