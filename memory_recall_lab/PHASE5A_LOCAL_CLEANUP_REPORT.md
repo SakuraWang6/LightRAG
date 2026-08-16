@@ -7,7 +7,7 @@
 | 项目 | 值 |
 | --- | --- |
 | 操作前 current branch | main |
-| 操作前 main HEAD | b7879b69（文档修正后 bb0392e8；Phase 5A 报告提交后 09119852） |
+| 操作前 main HEAD | b7879b69（文档修正后 bb0392e8；Phase 5A 报告提交后 09119852；Phase 5B 报告提交后 2daaa40b） |
 | git dirty status | 干净（0 变更） |
 | Archive 存在 | ✅ `/Users/sakura/RAG/LightRAG-experiment-archive/` + tar 均存在 |
 | Archive tar SHA256 | `fcb43bfde22b192bc1f8714d0326a5f6856e2a977c17b9a9e6786b2a099b4405` ✅ |
@@ -43,7 +43,7 @@
 
 | Branch | 保留原因 |
 | --- | --- |
-| main | 统一基线（HEAD 09119852，含 integration merge b979c5c8） |
+| main | 统一基线（HEAD 2daaa40b，含 integration merge b979c5c8） |
 | memory-eval-framework | 含未评审独有行为（f0ea9bc0：always-poll / 15s dispatch），manual-review-pending |
 
 ## 4. Historical Tags Verification（删除后）
@@ -74,7 +74,7 @@ status       : source↔archive 全树一致；124 关键文件 0 mismatch；SHA
 ## 6. Main Verification
 
 ```text
-current main HEAD : 09119852（phase 5a report commit；integration merge b979c5c8）
+current main HEAD : 2daaa40b（phase 5b report commit；integration merge b979c5c8）
 9 个 configs/*.yaml : 全部存在
 lightrag/ranking/structured.py : 存在
 memory_recall_lab/config.py : 存在
@@ -95,4 +95,4 @@ fork/main                   = b33c6b08
 fork/memory-eval-framework  = b2b6f591
 ```
 
-本地 main（09119852）领先 origin/main 与 fork/main；本地 memory-eval-framework（f0ea9bc0）与 fork/memory-eval-framework（b2b6f591）不一致。本阶段未修改任何远端 ref。
+本地 main（2daaa40b）领先 origin/main；已与 fork/main 同步；本地 memory-eval-framework（f0ea9bc0）与 fork/memory-eval-framework（b2b6f591）不一致。本阶段未修改任何远端 ref。
