@@ -2,6 +2,11 @@
 
 > 阶段：Phase 2 设计。**在用户明确确认前，不删除、不 force-push、不 rebase 任何本地或远程分支。**
 
+> Phase 4 更新（2026-08-17）：统一基线已由 `refactor/recall-experiment-config` 更新为 `main @ b979c5c8`；
+> 历史 run 已归档（`/Users/sakura/RAG/LightRAG-experiment-archive/`）并通过 SHA256 校验；
+> 9 个 `exp/recall-*` + 1 个 `archive/recall-r1-final-tip` annotated tags 已创建。
+> 最终逐分支矩阵见 `FINAL_BRANCH_CLEANUP.md`；执行删除前仍等待用户确认。
+
 ## A. Merge / Extract（需要把独有能力并入统一基线）
 
 | Branch | 提取内容 | 去向 |

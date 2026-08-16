@@ -1,7 +1,8 @@
-# Recall 实验体系迁移报告（Phase 3）
+# Recall 实验体系迁移报告（Phase 3 + Phase 4 基线更新）
 
-> 日期：2026-08-17 · 分支：`refactor/recall-experiment-config`（基于 main 4f8380d2）
-> 目标：把已验证的 Recall 实验能力从 Git 分支迁移为「统一代码能力 + YAML 配置 + 统一运行器 + 可复现 Run Metadata」。本阶段未删除任何分支/tag，未 force push，未修改 main。
+> 日期：2026-08-17 · 统一基线已更新为 `main @ b979c5c8`（merge commit `merge: integrate config-driven recall experiment framework`）
+> 目标：把已验证的 Recall 实验能力从 Git 分支迁移为「统一代码能力 + YAML 配置 + 统一运行器 + 可复现 Run Metadata」。
+> Phase 3 在 `refactor/recall-experiment-config` 完成（基于 main 4f8380d2）；Phase 4 完成 run 归档、historical tags 与正常 merge，Phase 3 capabilities 已正式进入 main。
 
 ## 1. 提取了哪些能力
 
