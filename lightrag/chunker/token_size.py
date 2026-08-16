@@ -139,6 +139,44 @@ def _table_title(prev_text: str) -> str:
     return ""
 
 
+def _table_with_preceding_context(
+    *,
+    table_text: str,
+    table_start: int,
+    table_end: int,
+    prev_text: str,
+    prev_start: int,
+    tokenizer: Tokenizer,
+    chunk_token_size: int,
+) -> tuple[str, int, int]:
+    """Return a small table chunk that keeps a suffix of its preceding text.
+
+    A lone JSON table is a poor embedding target; including the immediately
+    preceding prose restores the surrounding semantic context without breaking
+    source-span validation.  The returned ``(content, start, tokens)`` is an
+    exact contiguous substring ending at the table.
+    """
+    table_tokens = tokenizer.encode(table_text)
+    if not prev_text:
+        return table_text, table_start, len(table_tokens)
+    budget_tokens = max(0, chunk_token_size - len(table_tokens))
+    if budget_tokens == 0:
+        return table_text, table_start, len(table_tokens)
+    prev_tokens = tokenizer.encode(prev_text)
+    suffix_tokens = prev_tokens[-budget_tokens:]
+    suffix = tokenizer.decode(suffix_tokens)
+    suffix_start = prev_text.rfind(suffix)
+    if suffix_start < 0:
+        return table_text, table_start, len(table_tokens)
+    suffix = prev_text[suffix_start:]
+    start = prev_start + suffix_start
+    combined = suffix + table_text
+    combined_tokens = tokenizer.encode(combined)
+    if len(combined_tokens) > chunk_token_size:
+        return table_text, table_start, len(table_tokens)
+    return combined, start, len(combined_tokens)
+
+
 def _table_aware_segments(content: str) -> list[tuple[bool, str, int, int]]:
     """Return ``(is_table, text, start, end)`` segments for table markup."""
     segments: list[tuple[bool, str, int, int]] = []
@@ -361,18 +399,36 @@ def chunking_by_token_size(
             # tables at JSON row boundaries instead of arbitrary token windows.
             order = 0
             prev_text_segment = ""
+            prev_text_start = 0
             for is_table, segment, seg_start, seg_end in _table_aware_segments(content):
                 if not is_table:
                     prev_text_segment = segment
+                    prev_text_start = seg_start
                 segment_tokens = tokenizer.encode(segment)
                 if len(segment_tokens) <= chunk_token_size:
+                    if is_table:
+                        segment_content, span_start, segment_token_count = (
+                            _table_with_preceding_context(
+                                table_text=segment,
+                                table_start=seg_start,
+                                table_end=seg_end,
+                                prev_text=prev_text_segment,
+                                prev_start=prev_text_start,
+                                tokenizer=tokenizer,
+                                chunk_token_size=chunk_token_size,
+                            )
+                        )
+                    else:
+                        segment_content = segment
+                        span_start = seg_start
+                        segment_token_count = len(segment_tokens)
                     results.append(
                         _make_chunk(
-                            content=segment,
-                            tokens=len(segment_tokens),
+                            content=segment_content,
+                            tokens=segment_token_count,
                             order=order,
                             source_span=(
-                                _source_span(content, seg_start, seg_end)
+                                _source_span(content, span_start, seg_end)
                                 if _emit_source_span
                                 else None
                             ),
