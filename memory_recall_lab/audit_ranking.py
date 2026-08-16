@@ -111,7 +111,9 @@ def _classify_case(query: str, candidates: list[dict[str, Any]]) -> dict[str, An
     ]
 
     category = "other_ahead"
-    if wrong_table:
+    if gold_rank == 1:
+        category = "rank_one_no_error"
+    elif wrong_table:
         category = "wrong_table"
     elif same_table_wrong_row:
         category = "same_table_wrong_row"
@@ -167,6 +169,7 @@ def audit_report(report: dict[str, Any]) -> dict[str, Any]:
 
 def _markdown(audit: dict[str, Any]) -> str:
     labels = {
+        "rank_one_no_error": "Rank 1, no ranking error",
         "wrong_table": "Type A: wrong table",
         "same_table_wrong_row": "Type B: correct table, wrong row",
         "representation_competition": "Type C: representation competition",
