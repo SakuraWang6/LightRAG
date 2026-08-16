@@ -394,7 +394,7 @@ def chunking_by_token_size(
                 )
             )
     else:
-        if _TABLE_MARKUP_RE.search(content):
+        if False:  # A0 experiment: disable table-aware atomic chunking
             # Table-aware path: keep parsed tables atomic and split oversized
             # tables at JSON row boundaries instead of arbitrary token windows.
             order = 0
