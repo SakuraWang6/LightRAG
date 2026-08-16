@@ -23,6 +23,7 @@ Two entry points are exported:
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -36,6 +37,7 @@ _TABLE_ROW_SEP = "], ["
 _TABLE_ROW_SPLIT_RE = re.compile(r"(?<=\])\,\s*(?=\[)")
 _TABLE_TITLE_RE = re.compile(r"^(Table\s+\S+|表\s*\d+[：:])")
 _TABLE_ID_RE = re.compile(r"<table\b[^>]*\bid=\"([^\"]+)\"")
+_TABLE_CAPTION_RE = re.compile(r"""<table\b[^>]*\bcaption\s*=\s*["']([^"']+)["']""")
 
 
 def _table_sidecar(table_text: str) -> dict[str, Any] | None:
@@ -45,6 +47,49 @@ def _table_sidecar(table_text: str) -> dict[str, Any] | None:
         return None
     table_id = match.group(1)
     return {"type": "table", "id": table_id, "refs": [{"type": "table", "id": table_id}]}
+
+
+def _table_columns(table_text: str) -> str:
+    """Return a pipe-joined header list from a JSON ``<table>`` body."""
+    match = _TABLE_BODY_RE.match(table_text)
+    if not match:
+        return ""
+    inner = match.group(2)
+    if not (inner.startswith("[") and inner.endswith("]")):
+        return ""
+    rows = _TABLE_ROW_SPLIT_RE.split(inner[1:-1])
+    if not rows:
+        return ""
+    try:
+        header = json.loads(rows[0])
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(header, list):
+        return ""
+    return " | ".join(str(cell) for cell in header)
+
+
+def _table_caption(table_text: str) -> str:
+    match = _TABLE_CAPTION_RE.search(table_text)
+    return match.group(1).strip() if match else ""
+
+
+def _table_envelope(table_text: str, title_text: str = "") -> str:
+    """Wrap a table in a structured context envelope for retrieval."""
+    table_id = ""
+    id_match = _TABLE_ID_RE.search(table_text)
+    if id_match:
+        table_id = id_match.group(1)
+    title = (_table_title(title_text) or _table_caption(table_text)).strip()
+    columns = _table_columns(table_text)
+    lines = ["Object Type: Table"]
+    if table_id:
+        lines.append(f"Table ID: {table_id}")
+    if title:
+        lines.append(f"Title: {title}")
+    if columns:
+        lines.append(f"Columns: {columns}")
+    return "\n".join(lines) + "\n\n" + table_text
 
 
 def _split_table_pieces(
@@ -87,7 +132,7 @@ def _split_table_pieces(
         # Rows already carry their own brackets; a plain comma separator
         # rebuilds a valid ``[[row...],[row...]]`` array.
         body = "[" + ", ".join(row_slice) + "]"
-        return title + open_tag + body + close_tag
+        return _table_envelope(open_tag + body + close_tag, title)
 
     pieces: list[dict[str, Any]] = []
     current_rows: list[str] = []
@@ -149,32 +194,9 @@ def _table_with_preceding_context(
     tokenizer: Tokenizer,
     chunk_token_size: int,
 ) -> tuple[str, int, int]:
-    """Return a small table chunk that keeps a suffix of its preceding text.
-
-    A lone JSON table is a poor embedding target; including the immediately
-    preceding prose restores the surrounding semantic context without breaking
-    source-span validation.  The returned ``(content, start, tokens)`` is an
-    exact contiguous substring ending at the table.
-    """
-    table_tokens = tokenizer.encode(table_text)
-    if not prev_text:
-        return table_text, table_start, len(table_tokens)
-    budget_tokens = max(0, chunk_token_size - len(table_tokens))
-    if budget_tokens == 0:
-        return table_text, table_start, len(table_tokens)
-    prev_tokens = tokenizer.encode(prev_text)
-    suffix_tokens = prev_tokens[-budget_tokens:]
-    suffix = tokenizer.decode(suffix_tokens)
-    suffix_start = prev_text.rfind(suffix)
-    if suffix_start < 0:
-        return table_text, table_start, len(table_tokens)
-    suffix = prev_text[suffix_start:]
-    start = prev_start + suffix_start
-    combined = suffix + table_text
-    combined_tokens = tokenizer.encode(combined)
-    if len(combined_tokens) > chunk_token_size:
-        return table_text, table_start, len(table_tokens)
-    return combined, start, len(combined_tokens)
+    """Return a table chunk wrapped in a structured context envelope."""
+    envelope = _table_envelope(table_text, prev_text)
+    return envelope, -1, len(tokenizer.encode(envelope))
 
 
 def _table_aware_segments(content: str) -> list[tuple[bool, str, int, int]]:
@@ -429,7 +451,7 @@ def chunking_by_token_size(
                             order=order,
                             source_span=(
                                 _source_span(content, span_start, seg_end)
-                                if _emit_source_span
+                                if _emit_source_span and span_start >= 0
                                 else None
                             ),
                             emit_source_span=_emit_source_span,
