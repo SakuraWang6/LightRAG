@@ -211,9 +211,10 @@ def _validate(cfg: ExperimentConfig) -> None:
             "experiment.historical=true and experiment.reproducible_from_current_code=false "
             "and reproduce it from the recorded git commit instead",
         )
-    _require(table.atomic, "chunking.table.atomic must stay true: the atomic table is a stable Evidence Layer capability")
-    _require(table.row_safe_split, "chunking.table.row_safe_split must stay true: row-safe long-table splitting is a stable capability")
-    _require(table.sidecar_backfill, "chunking.table.sidecar_backfill must stay true: sidecar correctness is a stable capability")
+    if table.mode != "fixed_token":
+        _require(table.atomic, "chunking.table.atomic must stay true: the atomic table is a stable Evidence Layer capability")
+        _require(table.row_safe_split, "chunking.table.row_safe_split must stay true: row-safe long-table splitting is a stable capability")
+        _require(table.sidecar_backfill, "chunking.table.sidecar_backfill must stay true: sidecar correctness is a stable capability")
     if rep.raw and rep.structured_envelope:
         raise ConfigError("representation.table.raw and representation.table.structured_envelope are mutually exclusive")
     if rep.table_view or rep.row_view:
