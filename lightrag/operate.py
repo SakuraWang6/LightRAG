@@ -4999,9 +4999,9 @@ async def _get_vector_context(
     search_top_k = query_param.chunk_top_k or query_param.top_k
     cosine_threshold = chunks_vdb.cosine_better_than_threshold
 
-    explicit_chunks = await _explicit_id_recall(
-        query, chunks_vdb, search_top_k, text_chunks_db=text_chunks_db
-    )
+    # B0 experiment: disable explicit-identifier recall so this arm measures
+    # dense vector retrieval alone.
+    explicit_chunks = []
 
     results = await chunks_vdb.query(
         query, top_k=search_top_k, query_embedding=query_embedding
