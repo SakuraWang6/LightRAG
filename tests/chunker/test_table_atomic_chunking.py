@@ -36,7 +36,7 @@ def _table(rows: list[list[str]], table_id: str = "tb-test") -> str:
     return f'<table id="{table_id}" format="json">{body}</table>'
 
 
-def test_small_table_stays_in_one_chunk() -> None:
+def test_small_table_keeps_preceding_context_in_one_chunk() -> None:
     rows = [
         ["Parameter", "Nominal", "Maximum", "Unit"],
         ["Latency Alpha", "5.50", "33.75", "ms"],
@@ -48,7 +48,9 @@ def test_small_table_stays_in_one_chunk() -> None:
         chunk["content"] for chunk in chunks if "<table" in chunk["content"]
     ]
     assert len(table_chunks) == 1
-    assert table_chunks[0] == _table(rows)
+    assert table_chunks[0].startswith("Intro paragraph.")
+    assert table_chunks[0].endswith("</table>")
+    assert _table(rows) in table_chunks[0]
 
 
 def test_oversized_table_splits_at_row_boundaries() -> None:
