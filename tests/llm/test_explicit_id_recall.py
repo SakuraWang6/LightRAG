@@ -12,7 +12,36 @@ from __future__ import annotations
 import pytest
 
 from lightrag.base import QueryParam
-from lightrag.operate import _get_vector_context, _explicit_id_recall
+from lightrag.operate import (
+    _get_vector_context,
+    _explicit_id_recall,
+    _explicit_id_re,
+)
+
+
+def test_explicit_id_re_defaults_to_stable_fact_identifiers(monkeypatch) -> None:
+    monkeypatch.delenv("LIGHTRAG_EXACT_ID_TYPES", raising=False)
+    pattern = _explicit_id_re()
+    assert pattern is not None
+    assert "FACT-GOV-00001" in pattern.findall("use FACT-GOV-00001 here")
+    assert "EQ-00012" in pattern.findall("EQ-00012 value")
+    assert "REF-00003" in pattern.findall("REF-00003 note")
+    assert pattern.findall("TBL-0003 is nearby") == []
+    assert pattern.findall("FIG-0007 label") == []
+
+
+def test_explicit_id_re_honors_configured_types(monkeypatch) -> None:
+    monkeypatch.setenv("LIGHTRAG_EXACT_ID_TYPES", "TBL,FIG")
+    pattern = _explicit_id_re()
+    assert pattern is not None
+    assert pattern.findall("see TBL-0003") == ["TBL-0003"]
+    assert pattern.findall("see FIG-0007") == ["FIG-0007"]
+    assert pattern.findall("see FACT-00001") == []
+
+
+def test_explicit_id_re_empty_disables_recall(monkeypatch) -> None:
+    monkeypatch.setenv("LIGHTRAG_EXACT_ID_TYPES", "")
+    assert _explicit_id_re() is None
 
 
 class _FakeChunksVdb:

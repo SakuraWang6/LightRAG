@@ -6,6 +6,7 @@ from pathlib import Path
 import asyncio
 import json
 import logging
+import os
 import re
 import json_repair
 from typing import Any, AsyncIterator, overload, Literal, Callable, Awaitable
@@ -5051,7 +5052,32 @@ async def _get_vector_context(
     return valid_chunks
 
 
-_EXPLICIT_ID_RE = re.compile(r"\b(?:FACT|EQ|REF)(?:-[A-Z0-9]+)*\d{2,}\b")
+_DEFAULT_EXACT_ID_TYPES = ("FACT", "EQ", "REF")
+
+
+def _explicit_id_re() -> re.Pattern[str] | None:
+    """Build the explicit-identifier pattern from the configured type list.
+
+    ``LIGHTRAG_EXACT_ID_TYPES`` is a comma-separated list of identifier
+    prefixes (FACT/EQ/REF/TBL/FIG).  An empty value disables explicit-id
+    recall entirely (dense-only).  The default matches the stable production
+    behaviour: FACT/EQ/REF only.
+    """
+    raw = os.environ.get("LIGHTRAG_EXACT_ID_TYPES")
+    if raw is None:
+        types = _DEFAULT_EXACT_ID_TYPES
+    else:
+        types = tuple(
+            token.strip().upper()
+            for token in raw.split(",")
+            if token.strip()
+        )
+    if not types:
+        return None
+    prefix_alternation = "|".join(re.escape(token) for token in types)
+    return re.compile(
+        rf"\b(?:{prefix_alternation})(?:-[A-Z0-9]+)*\d{{2,}}\b"
+    )
 
 
 async def _explicit_id_recall(
@@ -5068,7 +5094,10 @@ async def _explicit_id_recall(
     identifier is a precise retrieval key, so query the chunk vector store
     with each identifier and prepend the matches.
     """
-    identifiers = list(dict.fromkeys(_EXPLICIT_ID_RE.findall(query)))[:5]
+    pattern = _explicit_id_re()
+    if pattern is None:
+        return []
+    identifiers = list(dict.fromkeys(pattern.findall(query)))[:5]
     if not identifiers:
         return []
     recalled: list[dict] = []
