@@ -50,6 +50,15 @@ from memory_eval_tests.workflow import (
 )
 
 from memory_recall_lab.retrieval import evaluate_recall
+from memory_recall_lab.config import (
+    ConfigError,
+    ExperimentConfig,
+    apply_environment,
+    default_config_path,
+    load_config,
+    resolved_to_dict,
+    resolved_to_yaml,
+)
 
 RECALL_DEFAULTS: dict[str, Any] = {
     "mode": "naive",
@@ -68,6 +77,8 @@ RECALL_DEFAULTS: dict[str, Any] = {
     "engine": "native",
     "max_cases": 0,
 }
+
+_ACTIVE_CONFIG: ExperimentConfig | None = None
 
 
 def _recall_process_options(
@@ -241,6 +252,8 @@ def _report_markdown(report: dict[str, Any], label: str | None) -> str:
 
 def _runner(context: RunContext) -> dict[str, Any]:
     _prepare(context)
+    if _ACTIVE_CONFIG is not None:
+        apply_environment(_ACTIVE_CONFIG)
     profile = context.environment_profile
     unit = context.execution_unit
     assert profile is not None and unit is not None
@@ -414,6 +427,12 @@ definition = EvaluationDefinition(
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Recall-only LightRAG experiment")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=default_config_path(),
+        help="experiment YAML config (default: configs/a2_atomic_context.yaml)",
+    )
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--run-id", default=None)
@@ -435,27 +454,48 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
-    baseline = dict(definition.default_baseline)
+    overrides: dict[str, Any] = {}
     for key, value in (
-        ("model", args.model),
         ("mode", args.mode),
         ("top_k", args.top_k),
         ("chunk_top_k", args.chunk_top_k),
+        ("model", args.model),
         ("engine", args.engine),
     ):
         if value is not None:
-            baseline[key] = value
+            overrides[key] = value
     if args.skip_kg:
-        baseline["kg"] = False
-        if args.mode is None:
-            baseline["mode"] = "naive"
-        elif args.mode != "naive":
-            raise SystemExit("--skip-kg requires --mode naive")
-    baseline["max_cases"] = args.max_cases
+        overrides["skip_kg"] = True
+    if args.max_cases:
+        overrides["max_cases"] = args.max_cases
     if args.question_types:
-        baseline["question_types"] = [
+        overrides["question_types"] = [
             item.strip() for item in args.question_types.split(",") if item.strip()
         ]
+    try:
+        resolved = load_config(args.config, overrides=overrides or None)
+    except ConfigError as exc:
+        raise SystemExit(f"configuration error: {exc}") from exc
+    if not resolved.experiment.reproducible_from_current_code:
+        reference = resolved.experiment.git_commit or "<recorded git commit>"
+        raise SystemExit(
+            f"experiment {resolved.experiment.name} is historical-only and not "
+            f"reproducible from the current code path; reproduce it from "
+            f"git commit {reference} instead of running it here"
+        )
+    global _ACTIVE_CONFIG
+    _ACTIVE_CONFIG = resolved
+
+    baseline = dict(definition.default_baseline)
+    baseline["mode"] = resolved.runtime.mode
+    baseline["top_k"] = resolved.runtime.top_k
+    baseline["chunk_top_k"] = resolved.runtime.chunk_top_k
+    baseline["model"] = resolved.runtime.model
+    baseline["engine"] = resolved.runtime.engine
+    baseline["kg"] = not resolved.runtime.skip_kg
+    baseline["max_cases"] = resolved.runtime.max_cases
+    if resolved.runtime.question_types:
+        baseline["question_types"] = list(resolved.runtime.question_types)
 
     extra: dict[str, str] = {}
     for item in args.extra:
@@ -503,7 +543,18 @@ def main(argv: list[str] | None = None) -> None:
         "requested_max_cases": args.max_cases,
         "case_ids": selected_case_ids(args.dataset, args.max_cases),
     }
+    context.execution_manifest["experiment"] = {
+        "config_file": resolved.config_file,
+        "name": resolved.experiment.name,
+        "historical": resolved.experiment.historical,
+        "legacy_mode": resolved.experiment.legacy_mode,
+        "reproducible_from_current_code": resolved.experiment.reproducible_from_current_code,
+        "resolved_config": resolved_to_dict(resolved),
+    }
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    (args.output_dir / "resolved_config.yaml").write_text(
+        resolved_to_yaml(resolved), encoding="utf-8"
+    )
     _install_sigterm_handler(args.output_dir)
     _log(args.output_dir, f"starting recall_only run_id={run_id} dataset={args.dataset}")
     append_run_event(
