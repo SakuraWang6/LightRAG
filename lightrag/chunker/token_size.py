@@ -120,22 +120,7 @@ def _split_table_pieces(
 
 
 def _table_title(prev_text: str) -> str:
-    """Return the caption/title line preceding a table, if any.
-
-    A split table's tail pieces carry only raw JSON rows; without the title
-    (e.g. ``Table LONG-TBL-APP: ...``) they are invisible to retrieval for a
-    query that names the table.  Copying the title into every piece keeps the
-    answer-bearing tail piece retrievable.
-    """
-    if not prev_text:
-        return ""
-    for line in reversed(prev_text.splitlines()):
-        line = line.strip()
-        if not line:
-            continue
-        if _TABLE_TITLE_RE.match(line):
-            return line + "\n"
-        return ""
+    """Return no title context for the A1 atomic-raw representation."""
     return ""
 
 
@@ -149,32 +134,9 @@ def _table_with_preceding_context(
     tokenizer: Tokenizer,
     chunk_token_size: int,
 ) -> tuple[str, int, int]:
-    """Return a small table chunk that keeps a suffix of its preceding text.
-
-    A lone JSON table is a poor embedding target; including the immediately
-    preceding prose restores the surrounding semantic context without breaking
-    source-span validation.  The returned ``(content, start, tokens)`` is an
-    exact contiguous substring ending at the table.
-    """
+    """Return the table alone, with no preceding prose context."""
     table_tokens = tokenizer.encode(table_text)
-    if not prev_text:
-        return table_text, table_start, len(table_tokens)
-    budget_tokens = max(0, chunk_token_size - len(table_tokens))
-    if budget_tokens == 0:
-        return table_text, table_start, len(table_tokens)
-    prev_tokens = tokenizer.encode(prev_text)
-    suffix_tokens = prev_tokens[-budget_tokens:]
-    suffix = tokenizer.decode(suffix_tokens)
-    suffix_start = prev_text.rfind(suffix)
-    if suffix_start < 0:
-        return table_text, table_start, len(table_tokens)
-    suffix = prev_text[suffix_start:]
-    start = prev_start + suffix_start
-    combined = suffix + table_text
-    combined_tokens = tokenizer.encode(combined)
-    if len(combined_tokens) > chunk_token_size:
-        return table_text, table_start, len(table_tokens)
-    return combined, start, len(combined_tokens)
+    return table_text, table_start, len(table_tokens)
 
 
 def _table_aware_segments(content: str) -> list[tuple[bool, str, int, int]]:
