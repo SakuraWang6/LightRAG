@@ -12,6 +12,44 @@ Because recall does not need a full KG, the fast iteration command uses
 `naive` mode and `--skip-kg`. This keeps the experiment focused on chunk
 representation and vector ranking.
 
+## Config-driven experiments
+
+Experiments are expressed as YAML capability switches, never as branches or
+experiment names. A run is fully described by:
+
+```text
+git commit + resolved config + dataset fingerprint
+```
+
+```bash
+conda run -n lightrag-memory-eval python -m memory_recall_lab.run \
+  --config memory_recall_lab/configs/r1_structured_ranker.yaml \
+  --dataset memory_data_service/generated/verify-en-20p \
+  --output-dir memory_recall_lab/runs/<run-name> \
+  --label "<human label>"
+```
+
+Available configs:
+
+```text
+memory_recall_lab/configs/
+  a0_fixed_token.yaml            historical A0 (legacy fixed-token; not runnable)
+  a1_atomic_raw.yaml             atomic raw table, no preceding context
+  a2_atomic_context.yaml         current main default (atomic + preceding context)
+  a3_structured_envelope.yaml    structured envelope around atomic table
+  b0_dense_only.yaml             dense retrieval only, exact-id disabled
+  b1_exact_id.yaml               atomic + FACT/EQ/REF/TBL/FIG exact-id
+  c3_table_row_view.yaml         table view + row view
+  r0_c3_exact_id.yaml            C3 views + full exact-id, no structured rank
+  r1_structured_ranker.yaml      C3 + full exact-id + structured ranking
+```
+
+CLI flags (`--top-k`, `--chunk-top-k`, `--mode`, `--skip-kg`, ...) override the
+config's `runtime` section; every other capability comes from the config file.
+Each run saves `resolved_config.yaml` (defaults + config + CLI overrides merged)
+and records the git commit, branch, dirty status and resolved config in
+`run.json`, so any run can be reproduced exactly.
+
 ## Run one recall experiment
 
 ```bash
