@@ -6,6 +6,7 @@ from pathlib import Path
 import asyncio
 import json
 import logging
+import os
 import re
 import json_repair
 from typing import Any, AsyncIterator, overload, Literal, Callable, Awaitable
@@ -15,6 +16,7 @@ from lightrag.exceptions import (
     IndexFlushError,
     PipelineCancelledException,
 )
+from lightrag.ranking import apply_ranking_strategy
 from lightrag.utils import (
     logger,
     compute_mdhash_id,
@@ -5014,7 +5016,7 @@ async def _get_vector_context(
             logger.info(
                 f"Naive query: {len(explicit_chunks)} explicit-id chunks"
             )
-            return explicit_chunks
+            return apply_ranking_strategy(query, explicit_chunks)
         return []
 
     valid_chunks = []
@@ -5026,6 +5028,7 @@ async def _get_vector_context(
                 "file_path": result.get("file_path", "unknown_source"),
                 "source_type": "vector",  # Mark the source type
                 "chunk_id": result.get("id"),  # Add chunk_id for deduplication
+                "distance": result.get("distance"),
             }
             valid_chunks.append(chunk_with_metadata)
 
@@ -5047,11 +5050,36 @@ async def _get_vector_context(
             if not chunk.get("chunk_id")
             or chunk["chunk_id"] not in explicit_ids
         ]
-        return explicit_chunks + deduped
-    return valid_chunks
+        return apply_ranking_strategy(query, explicit_chunks + deduped)
+    return apply_ranking_strategy(query, valid_chunks)
 
 
-_EXPLICIT_ID_RE = re.compile(r"\b(?:FACT|EQ|REF)(?:-[A-Z0-9]+)*\d{2,}\b")
+_DEFAULT_EXACT_ID_TYPES = ("FACT", "EQ", "REF")
+
+
+def _explicit_id_re() -> re.Pattern[str] | None:
+    """Build the explicit-identifier pattern from the configured type list.
+
+    ``LIGHTRAG_EXACT_ID_TYPES`` is a comma-separated list of identifier
+    prefixes (FACT/EQ/REF/TBL/FIG).  An empty value disables explicit-id
+    recall entirely (dense-only).  The default matches the stable production
+    behaviour: FACT/EQ/REF only.
+    """
+    raw = os.environ.get("LIGHTRAG_EXACT_ID_TYPES")
+    if raw is None:
+        types = _DEFAULT_EXACT_ID_TYPES
+    else:
+        types = tuple(
+            token.strip().upper()
+            for token in raw.split(",")
+            if token.strip()
+        )
+    if not types:
+        return None
+    prefix_alternation = "|".join(re.escape(token) for token in types)
+    return re.compile(
+        rf"\b(?:{prefix_alternation})(?:-[A-Z0-9]+)*\d{{2,}}\b"
+    )
 
 
 async def _explicit_id_recall(
@@ -5068,7 +5096,10 @@ async def _explicit_id_recall(
     identifier is a precise retrieval key, so query the chunk vector store
     with each identifier and prepend the matches.
     """
-    identifiers = list(dict.fromkeys(_EXPLICIT_ID_RE.findall(query)))[:5]
+    pattern = _explicit_id_re()
+    if pattern is None:
+        return []
+    identifiers = list(dict.fromkeys(pattern.findall(query)))[:5]
     if not identifiers:
         return []
     recalled: list[dict] = []

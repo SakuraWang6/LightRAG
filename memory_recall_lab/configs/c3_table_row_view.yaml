@@ -1,0 +1,48 @@
+experiment:
+  name: c3_table_row_view
+  historical: false
+  legacy_mode: false
+  reproducible_from_current_code: true
+
+chunking:
+  table:
+    mode: atomic
+    atomic: true
+    preceding_context: false
+    row_safe_split: true
+    sidecar_backfill: true
+
+representation:
+  table:
+    raw: false
+    table_view: true
+    row_view: true
+    structured_envelope: false
+
+retrieval:
+  dense:
+    enabled: true
+  exact_id:
+    enabled: true
+    types:
+      - FACT
+      - EQ
+      - REF
+
+ranking:
+  strategy: none
+  lexical_overlap: false
+
+runtime:
+  mode: naive
+  top_k: 20
+  chunk_top_k: 20
+  skip_kg: true
+  model: qwen3:8b
+  engine: native
+  max_cases: 0
+  question_types: []
+
+evaluation:
+  save_ranking: true
+  save_ranking_audit: false

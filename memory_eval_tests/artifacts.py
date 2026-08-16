@@ -217,6 +217,39 @@ def _git_commit() -> str | dict[str, str]:
         return _unknown("git revision is unavailable")
 
 
+def _git_branch() -> str | dict[str, str]:
+    try:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        branch = result.stdout.strip()
+        return branch or _unknown("git returned an empty branch name")
+    except (OSError, subprocess.SubprocessError):
+        return _unknown("git branch is unavailable")
+
+
+def _git_dirty() -> bool:
+    try:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        return bool(result.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return True
+
+
 def _manifest_value(payload: dict[str, Any], *keys: str) -> Any:
     for key in keys:
         value = payload.get(key)
@@ -371,7 +404,12 @@ def build_execution_manifest(
             "display_name": manifest.get("display_name") if manifest else None,
         },
         "evaluation": {"id": evaluation_id, "type": evaluation_type},
-        "code": {"git_commit": _git_commit(), "framework_version": framework_version},
+        "code": {
+            "git_commit": _git_commit(),
+            "git_branch": _git_branch(),
+            "git_dirty": _git_dirty(),
+            "framework_version": framework_version,
+        },
         "parameters": declared_parameters,
     }
 

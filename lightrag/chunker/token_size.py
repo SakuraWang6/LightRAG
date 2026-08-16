@@ -23,6 +23,8 @@ Two entry points are exported:
 
 from __future__ import annotations
 
+import json
+import os
 import re
 from typing import Any
 
@@ -36,6 +38,35 @@ _TABLE_ROW_SEP = "], ["
 _TABLE_ROW_SPLIT_RE = re.compile(r"(?<=\])\,\s*(?=\[)")
 _TABLE_TITLE_RE = re.compile(r"^(Table\s+\S+|表\s*\d+[：:])")
 _TABLE_ID_RE = re.compile(r"<table\b[^>]*\bid=\"([^\"]+)\"")
+_TABLE_CAPTION_RE = re.compile(r"""<table\b[^>]*\bcaption\s*=\s*["']([^"']+)["']""")
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Read an experiment capability switch from the server environment.
+
+    Capability switches are opt-in and default to the stable behaviour, so an
+    unset variable always means "keep the current production representation".
+    """
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _table_preceding_context_enabled() -> bool:
+    return _env_flag("LIGHTRAG_TABLE_PRECEDING_CONTEXT", default=True)
+
+
+def _table_structured_envelope_enabled() -> bool:
+    return _env_flag("LIGHTRAG_TABLE_STRUCTURED_ENVELOPE")
+
+
+def _table_view_enabled() -> bool:
+    return _env_flag("LIGHTRAG_TABLE_VIEW")
+
+
+def _table_row_view_enabled() -> bool:
+    return _env_flag("LIGHTRAG_TABLE_ROW_VIEW")
 
 
 def _table_sidecar(table_text: str) -> dict[str, Any] | None:
@@ -47,11 +78,168 @@ def _table_sidecar(table_text: str) -> dict[str, Any] | None:
     return {"type": "table", "id": table_id, "refs": [{"type": "table", "id": table_id}]}
 
 
+def _table_caption(table_text: str) -> str:
+    match = _TABLE_CAPTION_RE.search(table_text)
+    return match.group(1).strip() if match else ""
+
+
+def _table_rows(table_text: str) -> list[list[Any]]:
+    """Decode the JSON rows inside a parsed ``<table>`` tag."""
+    match = _TABLE_BODY_RE.match(table_text)
+    if not match:
+        return []
+    inner = match.group(2)
+    if not (inner.startswith("[") and inner.endswith("]")):
+        return []
+    rows: list[list[Any]] = []
+    for row_text in _TABLE_ROW_SPLIT_RE.split(inner[1:-1]):
+        try:
+            value = json.loads(row_text)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(value, list):
+            rows.append(value)
+    return rows
+
+
+def _table_id(table_text: str) -> str:
+    match = _TABLE_ID_RE.search(table_text)
+    return match.group(1) if match else ""
+
+
+def _table_columns(table_text: str) -> str:
+    """Return a pipe-joined header list from a JSON ``<table>`` body."""
+    rows = _table_rows(table_text)
+    if not rows:
+        return ""
+    header = rows[0]
+    return " | ".join(str(cell) for cell in header)
+
+
+def _table_envelope(table_text: str, title_text: str = "") -> str:
+    """Wrap a table in a structured context envelope for retrieval."""
+    table_id = _table_id(table_text)
+    title = (_table_title(title_text) or _table_caption(table_text)).strip()
+    columns = _table_columns(table_text)
+    lines = ["Object Type: Table"]
+    if table_id:
+        lines.append(f"Table ID: {table_id}")
+    if title:
+        lines.append(f"Title: {title}")
+    if columns:
+        lines.append(f"Columns: {columns}")
+    return "\n".join(lines) + "\n\n" + table_text
+
+
+def _table_views(
+    table_text: str,
+    prev_text: str,
+    tokenizer: Tokenizer,
+    chunk_token_size: int,
+    *,
+    table_view: bool = True,
+    row_view: bool = True,
+) -> list[dict[str, Any]]:
+    """Build table-view and row-view retrieval chunks for one parsed table.
+
+    The original atomic table is never replaced: every view chunk keeps the
+    table sidecar so a retrieval hit can always be resolved back to the full
+    Evidence Object.  Long tables stay row-safe: rows are never split and a
+    pathological single row is split only at cell-group boundaries.
+    """
+    rows = _table_rows(table_text)
+    if not rows:
+        return [
+            {
+                "content": table_text,
+                "tokens": len(tokenizer.encode(table_text)),
+                "sidecar": _table_sidecar(table_text),
+            }
+        ]
+
+    table_id = _table_id(table_text)
+    title = (_table_title(prev_text) or _table_caption(table_text)).strip()
+    header = rows[0]
+    header_text = " | ".join(str(cell) for cell in header)
+    views: list[dict[str, Any]] = []
+    if table_view:
+        table_lines = ["Object Type: Table"]
+        if table_id:
+            table_lines.append(f"Table ID: {table_id}")
+        if title:
+            table_lines.append(f"Title: {title}")
+        table_lines.append(f"Columns: {header_text}")
+        table_lines.append(f"This table contains {max(0, len(rows) - 1)} data rows.")
+        views.append(
+            {
+                "content": "\n".join(table_lines),
+                "tokens": len(tokenizer.encode("\n".join(table_lines))),
+                "sidecar": _table_sidecar(table_text),
+            }
+        )
+
+    if not row_view:
+        return views
+    for row in rows[1:]:
+        cells: list[str] = []
+        for index, value in enumerate(row):
+            label = str(header[index]) if index < len(header) else f"Column {index + 1}"
+            cells.append(f"{label}: {value}")
+        row_lines = ["Object Type: Table Row"]
+        if table_id:
+            row_lines.append(f"Table ID: {table_id}")
+        if title:
+            row_lines.append(f"Title: {title}")
+        row_lines.extend(cells)
+        row_view_text = "\n".join(row_lines)
+        tokens = len(tokenizer.encode(row_view_text))
+        if tokens <= chunk_token_size:
+            views.append(
+                {
+                    "content": row_view_text,
+                    "tokens": tokens,
+                    "sidecar": _table_sidecar(table_text),
+                }
+            )
+            continue
+        # A single pathological row larger than the token budget is split into
+        # cell groups while still carrying the table identity in every piece.
+        current_lines = row_lines[:3]
+        current_tokens = len(tokenizer.encode("\n".join(current_lines)))
+        for cell in cells:
+            candidate = "\n".join(current_lines + [cell])
+            candidate_tokens = len(tokenizer.encode(candidate))
+            if current_lines[3:] and candidate_tokens > chunk_token_size:
+                views.append(
+                    {
+                        "content": "\n".join(current_lines),
+                        "tokens": current_tokens,
+                        "sidecar": _table_sidecar(table_text),
+                    }
+                )
+                current_lines = row_lines[:3] + [cell]
+                current_tokens = len(tokenizer.encode("\n".join(current_lines)))
+            else:
+                current_lines.append(cell)
+                current_tokens = candidate_tokens
+        if len(current_lines) > 3:
+            views.append(
+                {
+                    "content": "\n".join(current_lines),
+                    "tokens": current_tokens,
+                    "sidecar": _table_sidecar(table_text),
+                }
+            )
+    return views
+
+
 def _split_table_pieces(
     table_text: str,
     tokenizer: Tokenizer,
     chunk_token_size: int,
     title: str = "",
+    *,
+    structured_envelope: bool = False,
 ) -> list[dict[str, Any]]:
     """Split one oversized ``<table>`` block into row-atomic pieces.
 
@@ -87,6 +275,8 @@ def _split_table_pieces(
         # Rows already carry their own brackets; a plain comma separator
         # rebuilds a valid ``[[row...],[row...]]`` array.
         body = "[" + ", ".join(row_slice) + "]"
+        if structured_envelope:
+            return _table_envelope(open_tag + body + close_tag, title)
         return title + open_tag + body + close_tag
 
     pieces: list[dict[str, Any]] = []
@@ -400,24 +590,61 @@ def chunking_by_token_size(
             order = 0
             prev_text_segment = ""
             prev_text_start = 0
+            table_view_on = _table_view_enabled()
+            row_view_on = _table_row_view_enabled()
+            emit_views = table_view_on or row_view_on
+            structured_envelope = _table_structured_envelope_enabled()
+            preceding_context = _table_preceding_context_enabled()
             for is_table, segment, seg_start, seg_end in _table_aware_segments(content):
                 if not is_table:
                     prev_text_segment = segment
                     prev_text_start = seg_start
                 segment_tokens = tokenizer.encode(segment)
-                if len(segment_tokens) <= chunk_token_size:
-                    if is_table:
-                        segment_content, span_start, segment_token_count = (
-                            _table_with_preceding_context(
-                                table_text=segment,
-                                table_start=seg_start,
-                                table_end=seg_end,
-                                prev_text=prev_text_segment,
-                                prev_start=prev_text_start,
-                                tokenizer=tokenizer,
-                                chunk_token_size=chunk_token_size,
+                if is_table and emit_views:
+                    for view in _table_views(
+                        segment,
+                        prev_text_segment,
+                        tokenizer,
+                        chunk_token_size,
+                        table_view=table_view_on,
+                        row_view=row_view_on,
+                    ):
+                        results.append(
+                            _make_chunk(
+                                content=view["content"],
+                                tokens=view["tokens"],
+                                order=order,
+                                source_span=None,
+                                emit_source_span=_emit_source_span,
+                                sidecar=view.get("sidecar"),
                             )
                         )
+                        order += 1
+                    continue
+                if len(segment_tokens) <= chunk_token_size:
+                    if is_table:
+                        if structured_envelope:
+                            segment_content = _table_envelope(
+                                segment, prev_text_segment
+                            )
+                            span_start = -1
+                            segment_token_count = len(tokenizer.encode(segment_content))
+                        elif preceding_context:
+                            segment_content, span_start, segment_token_count = (
+                                _table_with_preceding_context(
+                                    table_text=segment,
+                                    table_start=seg_start,
+                                    table_end=seg_end,
+                                    prev_text=prev_text_segment,
+                                    prev_start=prev_text_start,
+                                    tokenizer=tokenizer,
+                                    chunk_token_size=chunk_token_size,
+                                )
+                            )
+                        else:
+                            segment_content = segment
+                            span_start = seg_start
+                            segment_token_count = len(segment_tokens)
                     else:
                         segment_content = segment
                         span_start = seg_start
@@ -429,17 +656,30 @@ def chunking_by_token_size(
                             order=order,
                             source_span=(
                                 _source_span(content, span_start, seg_end)
-                                if _emit_source_span
+                                if _emit_source_span and span_start >= 0
                                 else None
                             ),
                             emit_source_span=_emit_source_span,
+                            sidecar=(
+                                _table_sidecar(segment)
+                                if is_table and structured_envelope
+                                else None
+                            ),
                         )
                     )
                     order += 1
                 elif is_table:
-                    title = _table_title(prev_text_segment)
+                    title = (
+                        _table_title(prev_text_segment)
+                        if preceding_context or structured_envelope
+                        else ""
+                    )
                     for piece in _split_table_pieces(
-                        segment, tokenizer, chunk_token_size, title=title
+                        segment,
+                        tokenizer,
+                        chunk_token_size,
+                        title=title,
+                        structured_envelope=structured_envelope,
                     ):
                         results.append(
                             _make_chunk(

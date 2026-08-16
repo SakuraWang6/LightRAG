@@ -1,0 +1,49 @@
+experiment:
+  name: a0_fixed_token
+  historical: true
+  legacy_mode: true
+  reproducible_from_current_code: false
+  git_commit: b140c9db28ee43a3323723bc21c3a3afbeea63c6
+
+chunking:
+  table:
+    mode: fixed_token
+    atomic: false
+    preceding_context: false
+    row_safe_split: false
+    sidecar_backfill: false
+
+representation:
+  table:
+    raw: false
+    table_view: false
+    row_view: false
+    structured_envelope: false
+
+retrieval:
+  dense:
+    enabled: true
+  exact_id:
+    enabled: true
+    types:
+      - FACT
+      - EQ
+      - REF
+
+ranking:
+  strategy: none
+  lexical_overlap: false
+
+runtime:
+  mode: naive
+  top_k: 20
+  chunk_top_k: 20
+  skip_kg: true
+  model: qwen3:8b
+  engine: native
+  max_cases: 0
+  question_types: []
+
+evaluation:
+  save_ranking: true
+  save_ranking_audit: false
