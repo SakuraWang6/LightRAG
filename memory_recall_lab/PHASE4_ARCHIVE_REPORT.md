@@ -1,6 +1,6 @@
 # Phase 4 Archive Report
 
-> 生成时间：2026-08-17 · 仓库：`/Users/sakura/RAG/LightRAG` · 统一基线：`main @ b979c5c8`
+> 生成时间：2026-08-17 · 仓库：`/Users/sakura/RAG/LightRAG` · 统一基线：`main`（capability integration merge `b979c5c8`；当前 main HEAD `b7879b69`）
 
 ## 1. Archive
 
@@ -51,7 +51,7 @@ table_cell R@1/R@3/R@5 = 1.0 / 1.0 / 1.0，MRR = 1.0
 7/7 table_cell gold rank = 1
 ```
 
-### Merge 后（main @ b979c5c8）
+### Merge 后（main HEAD @ b7879b69，integration merge b979c5c8）
 
 ```text
 tests/recall_lab = 27 passed（config loader + structured rank + audit）
@@ -67,7 +67,7 @@ R1 post-merge smoke：table_cell R@1/R@3/R@5 = 1.0 / 1.0 / 1.0，MRR = 1.0
 | --- | --- |
 | 旧 main commit | 4f8380d2 |
 | Merge commit | b979c5c8（`merge: integrate config-driven recall experiment framework`） |
-| 新 main commit | b979c5c8 |
+| 新 main commit | b979c5c8（integration merge）；当前 main HEAD b7879b69（phase 4 docs commit） |
 | 策略 | 正常 merge（--no-ff），保留 Phase 3 全部 11 个 capability commit，未 squash |
 
 Phase 3 capabilities（harness / config runner / multi-view / exact-id types / structured rank / audit / run metadata / figure-aware timeout）已正式进入 main。
@@ -88,7 +88,7 @@ manual-review：memory-eval-framework（always-poll / 15s dispatch 未评审）
 | 风险 | 说明 |
 | --- | --- |
 | memory-eval-framework | f0ea9bc0 未提取/未合并/未删除，保持 manual-review-pending |
-| remote refs | `fork/memory-eval-framework`（b2b6f591）与本地（f0ea9bc0）不一致；本地 main（b979c5c8）领先 fork/main（b33c6b08）与 origin/main（2b67343b）；均未推送 |
+| remote refs | `fork/memory-eval-framework`（b2b6f591）与本地（f0ea9bc0）不一致；本地 main（b7879b69）领先 fork/main（b33c6b08）与 origin/main（2b67343b）；均未推送 |
 | 归档位置 | archive 在 `/Users/sakura/RAG/LightRAG-experiment-archive/`（项目外），Phase 5 前建议确认长期存放位置与备份 |
 | 远端 tag 未 push | 10 个本地 annotated tags 均未推送（按约定等待确认） |
 | 历史 run 无 resolved config | 旧 run 未记录 resolved config；如需可补 `reconstructed: true` metadata，本次未伪造 |

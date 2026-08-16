@@ -1,12 +1,12 @@
 # 最终 Branch Cleanup Matrix（Phase 4）
 
-> 生成时间：2026-08-17 · 统一基线：`main @ b979c5c8`
+> 生成时间：2026-08-17 · 统一基线：`main @ b7879b69`（capability integration merge `b979c5c8`）
 > 状态：仅分析与建议；**未执行任何 branch 删除 / remote push**。Phase 5 需用户确认后单独执行。
 > 前置条件：历史 run 已归档并通过 SHA256 校验（`/Users/sakura/RAG/LightRAG-experiment-archive/`）；9 个实验 milestone tags + 1 个 final-tip tag 已创建。
 
 | Branch | In main? | Archive OK? | Tag OK? | Unique code? | Delete safe? | Reason |
 | --- | --- | --- | --- | --- | --- | --- |
-| main | 自身 | n/a | n/a | n/a | 否（永久保留） | 统一基线 b979c5c8 |
+| main | 自身 | n/a | n/a | n/a | 否（永久保留） | 统一基线 main @ b7879b69（integration merge b979c5c8） |
 | refactor/recall-experiment-config | ✅（merge b979c5c8） | n/a | n/a | 无 | ✅ 用户确认后 | 已完整合入 main，无独有内容 |
 | exp/recall-lab | ✅（harness 全部提取） | ✅ | ✅ exp/recall-a2-atomic-context → 4f8380d2 | 无 | ✅ 用户确认后 | harness/README/UI/tests 均已在 main；A2 = configs/a2_atomic_context.yaml |
 | recall-a0-old-fixed-token | ❌（historical-only） | ✅ a0 run | ✅ exp/recall-a0-fixed-token → b140c9db | 无（历史复现走 tag） | ✅ 用户确认后 | A0 不可从当前代码复现，但已由 tag b140c9db 固定；tag 存在前不可删（现已满足） |
