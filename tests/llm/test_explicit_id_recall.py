@@ -88,6 +88,18 @@ async def test_explicit_id_recall_extracts_identifiers() -> None:
     assert recalled[0]["source_type"] == "explicit_id"
 
 
+async def test_explicit_id_recall_ignores_table_and_other_object_ids() -> None:
+    """TBL/FIG object ids in a question are not stable fact evidence.  Treating
+    them as explicit recall keys can crowd answer-bearing vector chunks out of
+    top-k (observed as table_cell retrieval regressions)."""
+    assert await _explicit_id_recall(
+        "In TBL-0003, what is the maximum value?", _FakeChunksVdb(), 5
+    ) == []
+    assert await _explicit_id_recall(
+        "According to FIG-0004, what is the state?", _FakeChunksVdb(), 5
+    ) == []
+
+
 async def test_get_vector_context_prepends_explicit_id_chunks() -> None:
     vdb = _FakeChunksVdb()
     chunks = await _get_vector_context(

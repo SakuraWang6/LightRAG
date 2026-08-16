@@ -5051,7 +5051,7 @@ async def _get_vector_context(
     return valid_chunks
 
 
-_EXPLICIT_ID_RE = re.compile(r"\b[A-Z][A-Z0-9-]*-\d{2,}\b")
+_EXPLICIT_ID_RE = re.compile(r"\b(?:FACT|EQ|REF)(?:-[A-Z0-9]+)*\d{2,}\b")
 
 
 async def _explicit_id_recall(
