@@ -496,6 +496,35 @@ def test_ingestion_timeout_scales_with_dataset_pages(
     )
 
 
+def test_ingestion_timeout_accounts_for_vlm_figures(
+    tmp_path: Path,
+) -> None:
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    manifest = dataset / "manifest.json"
+    files = [
+        {"name": f"zh_figure_{i:04d}.png", "role": "evaluation_artifact"}
+        for i in range(50)
+    ]
+
+    manifest.write_text(
+        json.dumps({"pages": 200, "files": files}), encoding="utf-8"
+    )
+    # 200 pages * 90s + 50 figures * 180s = 27000s (7.5h), beyond the old
+    # 18000s ceiling that timed out the VLM-heavy 200P stress dataset.
+    assert workflow._ingestion_timeout_seconds({}, None, dataset) == 27000
+
+    # The 12h ceiling still bounds very large stress documents.
+    huge_files = [
+        {"name": f"zh_figure_{i:04d}.png", "role": "evaluation_artifact"}
+        for i in range(100)
+    ]
+    manifest.write_text(
+        json.dumps({"pages": 400, "files": huge_files}), encoding="utf-8"
+    )
+    assert workflow._ingestion_timeout_seconds({}, None, dataset) == 43200
+
+
 def test_disabling_kg_requires_vector_query_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

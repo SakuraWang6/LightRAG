@@ -109,6 +109,24 @@ def _dataset_pages(dataset: Path) -> int:
         return 0
 
 
+def _dataset_figure_count(dataset: Path) -> int:
+    """Return the number of figure assets declared by the dataset manifest."""
+    try:
+        manifest = json.loads(
+            (dataset / "manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return 0
+    count = 0
+    for item in manifest.get("files") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").lower()
+        if name.endswith(tuple(_FIGURE_FILE_EXTENSIONS)):
+            count += 1
+    return count
+
+
 def _ingestion_timeout_seconds(
     baseline: dict[str, Any],
     extra: dict[str, Any] | None,
@@ -120,7 +138,8 @@ def _ingestion_timeout_seconds(
     Otherwise the default scales with the dataset so large documents are not
     killed mid-extraction: a 200-page dataset takes several hours of
     entity/relation extraction on local 8B models, far beyond the old flat
-    5400s ceiling.
+    5400s ceiling, and every embedded figure adds a VLM analysis of roughly
+    2-4 minutes (50 figures ≈ 2-3 extra hours).
     """
     override = (extra or {}).get("ingestion_timeout_seconds")
     if override is not None:
@@ -135,7 +154,10 @@ def _ingestion_timeout_seconds(
         except (TypeError, ValueError):
             pass
     pages = _dataset_pages(dataset)
-    return min(max(5400, pages * 90), 28800)
+    figures = _dataset_figure_count(dataset)
+    # ~90s/page of parsing/extraction plus ~180s per VLM figure analysis,
+    # with a generous 12h ceiling for very large stress documents.
+    return min(max(5400, pages * 90 + figures * 180), 43200)
 
 
 def _ingestion_wait_progress(
