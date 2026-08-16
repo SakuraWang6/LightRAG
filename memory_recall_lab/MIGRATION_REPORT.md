@@ -122,6 +122,7 @@ overall R@1/R@3/R@5 = 0.4 / 0.7308 / 0.9
 c676134b feat(recall-lab): add remaining historical experiment configs
 b5c7fad6 fix(eval): scale ingestion timeout for VLM-heavy datasets
 87e8d4ce docs(recall-lab): document config-driven experiment usage
+6717e144 docs: add recall experiment migration report
 ```
 
 修改的核心文件：`memory_recall_lab/{config.py, run.py, retrieval.py, server.py, audit/ranking.py, configs/*.yaml, README.md}`、`lightrag/chunker/token_size.py`、`lightrag/operate.py`、`lightrag/ranking/{__init__,structured}.py`、`memory_eval_tests/{artifacts.py, workflow.py}`、`tests/recall_lab/*`、`tests/chunker/test_table_multi_view_chunks.py`、`tests/llm/test_explicit_id_recall.py`、`tests/memory_eval/test_product_evaluation.py`、`.gitignore`。
