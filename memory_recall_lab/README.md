@@ -56,3 +56,53 @@ evidence integrity but are poor dense-retrieval targets. A2 restores more
 table-cell recall than A1/A3, but still does not recover the legacy fixed-token
 ranking. This is the expected starting point for the next stage: separate
 evidence objects from retrieval views (table view / row view).
+
+## Retrieval strategy and multi-view experiments
+
+On the A2 chunker (`exp/recall-lab`) with `naive` mode and top 20:
+
+| Arm | Branch | Change | Table-cell R@1 | Table-cell R@3 | Table-cell R@5 | MRR |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| B0 | `recall-b0-dense-only` | disable explicit-id recall | 0.0% | 28.6% | 57.1% | 0.222 |
+| A2/Baseline | `exp/recall-lab` | FACT/EQ/REF exact-id + dense | 0.0% | 28.6% | 57.1% | 0.222 |
+| B1 | `recall-b1-exact-id-table` | add TBL/FIG exact-id | 0.0% | 28.6% | 100.0% | 0.283 |
+| C3 | `recall-c3-table-row-view` | table view + row view | 14.3% | 14.3% | 14.3% | 0.265 |
+| C3 + B1 | `recall-c3-table-row-view-exact-id` | row views + TBL exact-id | 14.3% | 85.7% | 100.0% | 0.481 |
+
+The combination of row views and table-id exact recall recovers table-cell
+Recall@3 to the legacy fixed-token level while keeping the underlying table
+object intact. Recall@1 remains the open problem, which points to a ranking
+step rather than more chunk-context tuning.
+
+## Ranking stage (R0 / R1)
+
+Baseline is fixed at `C3 + exact-id` (`recall-c3-table-row-view-exact-id`).
+The R1 branch keeps candidate generation identical and adds a structured ranker
+in `lightrag/operate.py`:
+
+```text
+explicit FACT-ID match
+  > TBL-ID match + row-view
+  > TBL-ID match + table-view/raw
+  > other candidates
+```
+
+Within the same TBL row-view tier, a cheap lexical-overlap score is used as a
+proxy for semantic row ranking.
+
+| Arm | Branch | Table-cell R@1 | R@3 | R@5 | MRR |
+| --- | --- | ---: | ---: | ---: | ---: |
+| R0 | `recall-c3-table-row-view-exact-id` | 14.3% | 85.7% | 100.0% | 0.481 |
+| R1 | `recall-r1-structured-ranker` | **100.0%** | **100.0%** | **100.0%** | **1.000** |
+
+The R1 result exceeds the legacy fixed-token table-cell R@1 (57.1%) without
+changing the atomic table object or C3 retrieval views.
+
+Run the ranking audit on an existing run:
+
+```bash
+conda run -n lightrag-memory-eval python -m memory_recall_lab.audit_ranking \
+  --run-dir memory_recall_lab/runs/r1-structured-ranker-top20
+```
+
+This writes `ranking_audit.md` and `ranking_audit.json` into the run directory.
