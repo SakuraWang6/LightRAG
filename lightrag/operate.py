@@ -16,6 +16,7 @@ from lightrag.exceptions import (
     IndexFlushError,
     PipelineCancelledException,
 )
+from lightrag.ranking import apply_ranking_strategy
 from lightrag.utils import (
     logger,
     compute_mdhash_id,
@@ -5015,7 +5016,7 @@ async def _get_vector_context(
             logger.info(
                 f"Naive query: {len(explicit_chunks)} explicit-id chunks"
             )
-            return explicit_chunks
+            return apply_ranking_strategy(query, explicit_chunks)
         return []
 
     valid_chunks = []
@@ -5027,6 +5028,7 @@ async def _get_vector_context(
                 "file_path": result.get("file_path", "unknown_source"),
                 "source_type": "vector",  # Mark the source type
                 "chunk_id": result.get("id"),  # Add chunk_id for deduplication
+                "distance": result.get("distance"),
             }
             valid_chunks.append(chunk_with_metadata)
 
@@ -5048,8 +5050,8 @@ async def _get_vector_context(
             if not chunk.get("chunk_id")
             or chunk["chunk_id"] not in explicit_ids
         ]
-        return explicit_chunks + deduped
-    return valid_chunks
+        return apply_ranking_strategy(query, explicit_chunks + deduped)
+    return apply_ranking_strategy(query, valid_chunks)
 
 
 _DEFAULT_EXACT_ID_TYPES = ("FACT", "EQ", "REF")

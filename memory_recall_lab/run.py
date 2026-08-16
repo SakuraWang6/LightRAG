@@ -50,6 +50,7 @@ from memory_eval_tests.workflow import (
 )
 
 from memory_recall_lab.retrieval import evaluate_recall
+from memory_recall_lab.audit.ranking import write_ranking_audit
 from memory_recall_lab.config import (
     ConfigError,
     ExperimentConfig,
@@ -375,6 +376,9 @@ def _runner(context: RunContext) -> dict[str, Any]:
             + "\n",
             encoding="utf-8",
         )
+        if _ACTIVE_CONFIG is not None and _ACTIVE_CONFIG.evaluation.save_ranking_audit:
+            write_ranking_audit(context.output_dir, recall)
+            context.progress("running", 1, 1, "report", "ranking audit 已生成")
         report = _report_markdown(recall, context.label)
         context.progress("running", 1, 1, "report", "召回报告已生成")
         methods = [
@@ -398,6 +402,12 @@ def _runner(context: RunContext) -> dict[str, Any]:
             "extra": {
                 "recall_report": "recall_report.json",
                 "ranking": "ranking.json",
+                "ranking_audit": (
+                    "ranking_audit.json"
+                    if _ACTIVE_CONFIG is not None
+                    and _ACTIVE_CONFIG.evaluation.save_ranking_audit
+                    else None
+                ),
                 "ingestion_receipt": "ingestion_receipt.json",
                 "index_receipt": "index_receipt.json",
                 "execution_unit": "execution_unit.json",
