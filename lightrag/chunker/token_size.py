@@ -455,6 +455,7 @@ def chunking_by_token_size(
                                 else None
                             ),
                             emit_source_span=_emit_source_span,
+                            sidecar=_table_sidecar(segment) if is_table else None,
                         )
                     )
                     order += 1
