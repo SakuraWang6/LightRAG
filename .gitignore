@@ -66,6 +66,8 @@ lightrag/evaluation/results/
 memory_data_service/generated/
 memory_eval_tests/runs/*
 !memory_eval_tests/runs/.gitkeep
+memory_recall_lab/runs/*
+!memory_recall_lab/runs/.gitkeep
 
 # Miscellaneous
 .DS_Store
