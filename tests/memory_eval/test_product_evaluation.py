@@ -525,6 +525,106 @@ def test_ingestion_timeout_accounts_for_vlm_figures(
     assert workflow._ingestion_timeout_seconds({}, None, dataset) == 43200
 
 
+def _sample_answer() -> dict:
+    return {
+        "cases": 3,
+        "correct_cases": 1,
+        "answer_accuracy": 1 / 3,
+        "groundedness": 1 / 3,
+        "uncertain_answers": 0,
+        "results": [
+            {
+                "question_id": "Q-A",
+                "question_type": "table_cell",
+                "exact_match": True,
+                "expected": "x",
+                "answer": "x",
+            },
+            {
+                "question_id": "Q-B",
+                "question_type": "multi_hop",
+                "exact_match": False,
+                "expected": "42",
+                "answer": "43",
+            },
+            {
+                "question_id": "Q-C",
+                "question_type": "direct_numeric",
+                "exact_match": False,
+                "expected": "7",
+                "answer": "8",
+            },
+        ],
+    }
+
+
+def _sample_diagnosis() -> dict:
+    return {
+        "diagnosis_coverage": 0.5,
+        "cause_distribution": {"retrieval_miss": 1, "generation_or_prompt_failure": 1},
+        "trace_availability": {"context_unavailable": 0},
+        "cases": [
+            {"question_id": "Q-B", "primary_cause": "retrieval_miss"},
+            {"question_id": "Q-C", "primary_cause": "generation_or_prompt_failure"},
+        ],
+    }
+
+
+def test_report_markdown_focuses_on_results_and_failures() -> None:
+    retrieval = {
+        "summary": {
+            "cases": 3,
+            "average_recall": 0.5,
+            "mrr": 0.25,
+            "context_precision": 0.1,
+        }
+    }
+    report = workflow._report_markdown(
+        _sample_answer(), _sample_diagnosis(), retrieval
+    )
+    assert "## 结果概览" in report
+    assert "正确题数 / 总题数：1 / 3" in report
+    assert "## 失败原因" in report
+    assert "检索未命中（1 题）" in report and "Q-B" in report
+    assert "回答与标准答案不符（1 题）" in report and "Q-C" in report
+    assert "## 未通过题目" in report
+    failed_table = report.split("## 未通过题目", 1)[1]
+    assert "Q-B" in failed_table and "Q-C" in failed_table
+    assert "42" in failed_table and "43" in failed_table
+    assert "## 检索指标" in report
+    assert "平均召回@K" in report
+    assert "可归因覆盖率：50.0%" in report
+    assert "**解读**" not in report
+    assert "### 逐题流程状态" not in report
+
+
+def test_report_markdown_without_retrieval_summary() -> None:
+    report = workflow._report_markdown(_sample_answer(), _sample_diagnosis())
+    assert "## 结果概览" in report
+    assert "## 失败原因" in report
+    assert "## 未通过题目" in report
+    assert "## 检索指标" not in report
+
+
+def test_report_markdown_keeps_attribution_coverage_when_all_pass() -> None:
+    answer = _sample_answer()
+    answer["results"] = answer["results"][:1]
+    answer["cases"] = 1
+    answer["correct_cases"] = 1
+    diagnosis = _sample_diagnosis()
+    diagnosis["cases"] = [{"question_id": "Q-A", "primary_cause": "not_applicable"}]
+    report = workflow._report_markdown(answer, diagnosis)
+    assert "所有题目均通过" in report
+    assert "可归因覆盖率" in report
+
+
+def test_report_markdown_flattens_long_cells() -> None:
+    answer = _sample_answer()
+    answer["results"][1]["answer"] = "line1\nline2 | pipe"
+    report = workflow._report_markdown(answer, _sample_diagnosis())
+    assert "line1 line2 \\| pipe" in report
+
+
 def test_disabling_kg_requires_vector_query_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
