@@ -39,8 +39,7 @@ def _retrieval_method(question_ids: list[str]) -> dict[str, Any]:
         "method": "retrieval",
         "summary": {"cases": len(question_ids), "recall_at_1": 0.5, "mrr": 0.6},
         "results": [
-            {"question_id": qid, "recall_at_1": 0.5, "mrr": 0.6}
-            for qid in question_ids
+            {"question_id": qid, "recall_at_1": 0.5, "mrr": 0.6} for qid in question_ids
         ],
     }
 
@@ -53,9 +52,7 @@ def _answer_method(question_ids: list[str]) -> dict[str, Any]:
             "answer_accuracy": 0.8,
             "groundedness": 0.9,
         },
-        "results": [
-            {"question_id": qid, "exact_match": True} for qid in question_ids
-        ],
+        "results": [{"question_id": qid, "exact_match": True} for qid in question_ids],
     }
 
 

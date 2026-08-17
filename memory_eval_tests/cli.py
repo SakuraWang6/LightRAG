@@ -387,6 +387,20 @@ def main() -> None:
         parameter_sources=parameter_sources,
         started_at=context.started_at,
     )
+    scope = str(baseline.get("evaluation_scope") or "end_to_end")
+    diagnostics = str(baseline.get("retrieval_diagnostics") or "summary")
+    context.execution_manifest.update(
+        {
+            "evaluation_scope": scope,
+            "retrieval_diagnostics": diagnostics,
+            "retrieval_evaluation": {"enabled": True},
+            "answer_evaluation": {"enabled": scope == "end_to_end"},
+            "retrieval_scorers": [
+                {"name": "recall@k", "version": "1"},
+                {"name": "mrr", "version": "1"},
+            ],
+        }
+    )
     context.execution_manifest["case_selection"] = {
         "algorithm": "deterministic_even_stride_v1",
         "requested_max_cases": args.max_cases,

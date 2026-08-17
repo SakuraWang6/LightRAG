@@ -506,6 +506,20 @@ def _write_queued_run_envelope(*, runs_root: Path, params: RunParams) -> None:
         parameter_sources=parameter_sources,
         started_at=started_at,
     )
+    scope = str(baseline.get("evaluation_scope") or "end_to_end")
+    diagnostics = str(baseline.get("retrieval_diagnostics") or "summary")
+    manifest.update(
+        {
+            "evaluation_scope": scope,
+            "retrieval_diagnostics": diagnostics,
+            "retrieval_evaluation": {"enabled": True},
+            "answer_evaluation": {"enabled": scope == "end_to_end"},
+            "retrieval_scorers": [
+                {"name": "recall@k", "version": "1"},
+                {"name": "mrr", "version": "1"},
+            ],
+        }
+    )
     manifest.update(
         {
             "provisional": True,
