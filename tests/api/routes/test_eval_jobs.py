@@ -155,6 +155,22 @@ def test_pending_run_is_visible_before_a_worker_starts(
     ]
 
 
+def test_dispatch_interval_defaults_to_15_seconds(monkeypatch) -> None:
+    monkeypatch.delenv("MEMORY_EVAL_DISPATCH_INTERVAL_SECONDS", raising=False)
+    assert eval_jobs._dispatch_interval_seconds() == 15
+
+
+def test_dispatch_interval_env_override_and_clamp(monkeypatch) -> None:
+    monkeypatch.setenv("MEMORY_EVAL_DISPATCH_INTERVAL_SECONDS", "5")
+    assert eval_jobs._dispatch_interval_seconds() == 5
+    # Zero or negative intervals would spin the recovery loop; clamp to 1s.
+    monkeypatch.setenv("MEMORY_EVAL_DISPATCH_INTERVAL_SECONDS", "0")
+    assert eval_jobs._dispatch_interval_seconds() == 1
+    # Invalid values fall back to the default instead of crashing the loop.
+    monkeypatch.setenv("MEMORY_EVAL_DISPATCH_INTERVAL_SECONDS", "abc")
+    assert eval_jobs._dispatch_interval_seconds() == 15
+
+
 def test_dispatch_fills_each_configured_capacity_slot(
     tmp_path: Path, monkeypatch
 ) -> None:

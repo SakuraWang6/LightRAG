@@ -22,6 +22,7 @@ import {
   TableRow
 } from '@/components/ui/Table'
 import { evalStatusLabel, formatDate } from '@/features/eval/utils'
+import { useEvalPolling } from '@/features/eval/useEvalPolling'
 
 interface JobsViewProps {
   onBack: () => void
@@ -92,9 +93,9 @@ export default function JobsView({ onBack }: JobsViewProps) {
     [jobs]
   )
 
-  useEffect(() => {
-    if (!hasActive) return
-    const timer = window.setInterval(() => {
+  useEvalPolling({
+    active: hasActive,
+    onTick: () => {
       void load()
       if (expanded) {
         void (async () => {
@@ -102,9 +103,8 @@ export default function JobsView({ onBack }: JobsViewProps) {
           setLog(detail.log ?? [])
         })()
       }
-    }, 5000)
-    return () => window.clearInterval(timer)
-  }, [hasActive, load, expanded])
+    },
+  })
 
   const expand = async (job: EvalJob) => {
     if (expanded === job.id) {

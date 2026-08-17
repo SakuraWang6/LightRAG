@@ -417,48 +417,53 @@ def _format_rate(value: Any) -> str:
     return f"{float(value):.1%}" if isinstance(value, (int, float)) else "—"
 
 
-def _diagnosis_markdown(diagnosis: dict[str, Any]) -> str:
-    distribution = diagnosis.get("cause_distribution") or {}
-    actionable = {
-        str(cause): count
-        for cause, count in distribution.items()
-        if cause not in {"not_applicable", "unclassified"} and count
-    }
-    lines = [
-        "## 失败归因",
-        "",
-    ]
-    if not actionable:
-        lines.extend(["本次没有需要归因的失败题。", ""])
-        return "\n".join(lines)
-    labels = {
-        "abstention_failure": "拒答结果不正确",
-        "retrieval_miss": "检索未命中",
-        "selection_or_truncation_miss": "上下文选择或截断不足",
-        "generation_or_prompt_failure": "回答与标准答案不符",
-    }
-    lines.append(f"- 可归因覆盖率：{_format_rate(diagnosis.get('diagnosis_coverage'))}")
-    for cause, count in actionable.items():
-        lines.append(f"- {labels.get(cause, cause)}：{count} 题")
-    unavailable = (diagnosis.get("trace_availability") or {}).get("context_unavailable", 0)
-    if unavailable:
-        lines.append(f"- {unavailable} 题缺少最终上下文记录，需人工复核")
-    lines.extend(
-        [
-            "",
-            "归因只在最终上下文可观测时给出；逐题证据与归因记录可在“逐题详情”中查看。",
-            "",
-        ]
-    )
-    return "\n".join(lines)
+_CAUSE_LABELS = {
+    "abstention_failure": "拒答结果不正确",
+    "retrieval_miss": "检索未命中",
+    "selection_or_truncation_miss": "上下文选择或截断不足",
+    "generation_or_prompt_failure": "回答与标准答案不符",
+    "unclassified": "未能归因",
+}
 
 
-def _report_markdown(answer: dict[str, Any], diagnosis: dict[str, Any]) -> str:
+def _report_cell(value: Any, limit: int = 400) -> str:
+    """Flatten one table cell safely without hiding the full record.
+
+    The complete expected/actual text stays in ``case_trace.json``; the summary
+    only needs a readable, table-safe preview.  Newlines and pipes are escaped
+    so the Markdown table cannot break, and an explicit marker is appended when
+    the preview is shortened.
+    """
+    text = " ".join(str(value or "").split())
+    text = text.replace("|", "\\|").replace("`", "\\`")
+    if len(text) > limit:
+        return text[:limit] + "…（截断，完整值见逐题详情）"
+    return text
+
+
+def _report_markdown(
+    answer: dict[str, Any],
+    diagnosis: dict[str, Any],
+    retrieval: dict[str, Any] | None = None,
+) -> str:
+    """Render a review-focused markdown report.
+
+    The summary answers "how did it go / which questions failed / why / what
+    was expected vs actual".  Full per-case machine diagnostics remain in
+    ``diagnosis.json`` / ``case_trace.json`` and the per-case detail view.
+    """
     total = int(answer.get("cases") or 0)
     correct = answer.get("correct_cases")
     if not isinstance(correct, int):
         correct = sum(bool(row.get("exact_match")) for row in answer.get("results") or [])
     uncertain = int(answer.get("uncertain_answers") or 0)
+    results = answer.get("results") or []
+    failed = [row for row in results if not bool(row.get("exact_match"))]
+    cause_by_qid = {
+        str(case.get("question_id")): str(case.get("primary_cause") or "unclassified")
+        for case in diagnosis.get("cases") or []
+    }
+
     lines = [
         "# 测评报告",
         "",
@@ -467,10 +472,66 @@ def _report_markdown(answer: dict[str, Any], diagnosis: dict[str, Any]) -> str:
         f"- 正确题数 / 总题数：{correct} / {total}",
         f"- 回答准确率：{_format_rate(answer.get('answer_accuracy'))}",
         f"- 证据支撑率：{_format_rate(answer.get('groundedness'))}",
+        f"- 未通过题数：{len(failed)}",
     ]
     if uncertain:
         lines.append(f"- 待复核题数：{uncertain}")
-    lines.extend(["", _diagnosis_markdown(diagnosis)])
+
+    summary = (retrieval or {}).get("summary") if isinstance(retrieval, dict) else None
+    if isinstance(summary, dict) and summary.get("cases"):
+        lines.extend(
+            [
+                "",
+                "## 检索指标",
+                "",
+                "| 指标 | 值 |",
+                "| --- | --- |",
+                f"| 平均召回@K | {_format_rate(summary.get('average_recall'))} |",
+                f"| MRR | {_format_rate(summary.get('mrr'))} |",
+                f"| 上下文精确率 | {_format_rate(summary.get('context_precision'))} |",
+            ]
+        )
+
+    lines.extend(["", "## 失败原因", ""])
+    coverage = diagnosis.get("diagnosis_coverage")
+    lines.append(f"- 可归因覆盖率：{_format_rate(coverage)}")
+    if not failed:
+        lines.append("- 所有题目均通过，无需归因。")
+    else:
+        grouped: dict[str, list[str]] = {}
+        for row in failed:
+            qid = str(row.get("question_id") or "")
+            cause = cause_by_qid.get(qid, "unclassified")
+            grouped.setdefault(cause, []).append(qid)
+        for cause, qids in sorted(
+            grouped.items(), key=lambda item: (-len(item[1]), item[0])
+        ):
+            label = _CAUSE_LABELS.get(cause, cause)
+            lines.append(f"- **{label}（{len(qids)} 题）**：{'、'.join(qids)}")
+    unavailable = (diagnosis.get("trace_availability") or {}).get("context_unavailable", 0)
+    if unavailable:
+        lines.append(f"- {unavailable} 题缺少最终上下文记录，需人工复核")
+    lines.append("- 归因基于最终模型可见上下文与检索候选的确定性判定；逐题证据见“逐题详情”。")
+
+    if failed:
+        lines.extend(
+            [
+                "",
+                "## 未通过题目",
+                "",
+                "| 题号 | 类型 | 归因 | 期望答案 | 模型回答 |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+        )
+        for row in failed:
+            qid = str(row.get("question_id") or "")
+            cause = cause_by_qid.get(qid, "unclassified")
+            lines.append(
+                f"| {qid} | {_report_cell(row.get('question_type'))} | "
+                f"{_CAUSE_LABELS.get(cause, cause)} | "
+                f"{_report_cell(row.get('expected'))} | "
+                f"{_report_cell(row.get('answer'))} |"
+            )
     return "\n".join(lines)
 
 
@@ -689,7 +750,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
         (context.output_dir / "diagnosis.json").write_text(
             json.dumps(diagnosis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
-        report = _report_markdown(answer, diagnosis)
+        report = _report_markdown(answer, diagnosis, retrieval)
         analysis_extra: dict[str, Any] = {}
         try:
             answer_rows = answer.get("results") or []
