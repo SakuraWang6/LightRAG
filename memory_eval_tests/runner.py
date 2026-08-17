@@ -188,6 +188,7 @@ class RunParams:
     output_dir: Path
     run_id: str | None = None
     label: str | None = None
+    evaluation_type: str = "answer"
     model: str | None = None
     mode: str | None = None
     top_k: int | None = None
@@ -217,6 +218,7 @@ def params_from_args(args: argparse.Namespace) -> RunParams:
         output_dir=args.output_dir,
         run_id=args.run_id,
         label=args.label,
+        evaluation_type=args.evaluation_type,
         model=args.model,
         mode=args.mode,
         top_k=args.top_k,
@@ -254,6 +256,7 @@ def build_run_command(params: RunParams) -> list[str]:
     ]
     for key in (
         "model",
+        "evaluation_type",
         "mode",
         "top_k",
         "chunk_top_k",
@@ -332,6 +335,7 @@ def build_supervise_command(
     ]
     for key in (
         "model",
+        "evaluation_type",
         "mode",
         "top_k",
         "chunk_top_k",
@@ -458,6 +462,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--label", default=None)
+    parser.add_argument(
+        "--evaluation-type",
+        choices=("answer", "recall", "answer_recall"),
+        default="answer",
+    )
     parser.add_argument("--model", default=None)
     parser.add_argument("--mode", default=None)
     parser.add_argument("--top-k", type=int, default=None)

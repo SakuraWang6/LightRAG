@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
@@ -142,12 +143,52 @@ def evaluate_api(
         expected_count = len(expected_facts)
         recall = len(hits_by_fact) / expected_count if expected_count else 0.0
         first_rank = min(hits_by_fact.values()) if hits_by_fact else 0
+        fact_ranks = list(hits_by_fact.values())
+
+        def _recall_at(cutoff: int) -> float:
+            if not expected_count:
+                return 0.0
+            return sum(1 for rank in fact_ranks if rank <= cutoff) / expected_count
+
+        def _full_at(cutoff: int) -> bool:
+            return bool(fact_ranks) and all(rank <= cutoff for rank in fact_ranks)
+
+        candidates = [
+            {
+                "rank": rank,
+                "file_path": ordered_chunks[ref_index].get("file_path", ""),
+                "content_excerpt": chunk[:_HIT_EVIDENCE_EXCERPT_CHARS],
+                "matched_fact_ids": [
+                    str(fact["fact_id"])
+                    for fact in expected_facts
+                    if hits_by_fact.get(str(fact["fact_id"])) == rank
+                ],
+            }
+            for rank, ref_index, chunk in ranked_chunks
+        ]
         results.append(
             {
                 "question_id": question["id"],
                 "question_type": question.get("question_type", ""),
+                "question": question["question"],
+                "expected_fact_ids": [fact["fact_id"] for fact in expected_facts],
+                "fact_gold_ranks": {
+                    str(fact_id): rank for fact_id, rank in hits_by_fact.items()
+                },
                 "recall_at_k": recall,
+                "recall_at_1": _recall_at(1),
+                "recall_at_3": _recall_at(3),
+                "recall_at_5": _recall_at(5),
+                "full_recall_at_1": _full_at(1),
+                "full_recall_at_3": _full_at(3),
+                "full_recall_at_5": _full_at(5),
                 "reciprocal_rank": 1 / first_rank if first_rank else 0.0,
+                "mrr": 1 / first_rank if first_rank else 0.0,
+                "mean_fact_mrr": (
+                    sum(1 / rank for rank in fact_ranks) / expected_count
+                    if expected_count
+                    else 0.0
+                ),
                 "first_evidence_rank": first_rank or None,
                 "context_precision": (
                     hit_chunk_count / len(ranked_chunks) if ranked_chunks else 0.0
@@ -155,13 +196,13 @@ def evaluate_api(
                 # The API references expose file paths and chunk text only, not
                 # the parsed object kind, so object-level hits are unavailable.
                 "object_hit_rate": None,
-                "expected_fact_ids": [fact["fact_id"] for fact in expected_facts],
                 "hit_fact_ids": [
                     fact_id
                     for fact_id, _ in sorted(
                         hits_by_fact.items(), key=lambda item: item[1]
                     )
                 ],
+                "candidates": candidates,
                 "hit_evidence": hit_evidence[:_HIT_EVIDENCE_LIMIT],
                 "top_contexts": [
                     {
@@ -208,6 +249,8 @@ def _summarize_dict_results(
     object_rates = [
         r["object_hit_rate"] for r in results if r.get("object_hit_rate") is not None
     ]
+    recall_summary = _recall_summary(results)
+    overall = recall_summary["overall"]
     return {
         "backend": backend,
         "mode": mode,
@@ -221,7 +264,80 @@ def _summarize_dict_results(
         if object_rates
         else None,
         "full_recall_cases": sum(r["recall_at_k"] == 1.0 for r in results),
+        # Recall@1/3/5 aggregates as top-level scalars so the run envelope and
+        # WebUI metric cards expose them without a separate recall method.
+        "recall_at_1": overall["recall_at_1"],
+        "recall_at_3": overall["recall_at_3"],
+        "recall_at_5": overall["recall_at_5"],
+        "full_recall_at_1": overall["full_recall_at_1"],
+        "full_recall_at_3": overall["full_recall_at_3"],
+        "full_recall_at_5": overall["full_recall_at_5"],
+        "first_rank_one_cases": overall["first_rank_one_cases"],
+        "recall_summary": recall_summary,
         "results": results,
+    }
+
+
+def _aggregate_recall(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate one group of per-question retrieval results into recall metrics."""
+    if not rows:
+        return {}
+    count = len(rows)
+
+    def mean(key: str) -> float:
+        return sum(float(row.get(key) or 0.0) for row in rows) / count
+
+    first_ranks = [row.get("first_evidence_rank") for row in rows]
+
+    def bucket(rank: Any) -> str:
+        if rank is None:
+            return "miss"
+        if rank == 1:
+            return "1"
+        if rank == 2:
+            return "2"
+        if rank == 3:
+            return "3"
+        if rank <= 5:
+            return "4_5"
+        if rank <= 10:
+            return "6_10"
+        return "11_plus"
+
+    distribution: dict[str, int] = defaultdict(int)
+    for rank in first_ranks:
+        distribution[bucket(rank)] += 1
+    return {
+        "cases": count,
+        "recall_at_1": mean("recall_at_1"),
+        "recall_at_3": mean("recall_at_3"),
+        "recall_at_5": mean("recall_at_5"),
+        "recall_at_k": mean("recall_at_k"),
+        "full_recall_at_1": sum(bool(row.get("full_recall_at_1")) for row in rows),
+        "full_recall_at_3": sum(bool(row.get("full_recall_at_3")) for row in rows),
+        "full_recall_at_5": sum(bool(row.get("full_recall_at_5")) for row in rows),
+        "mrr": mean("mrr"),
+        "mean_fact_mrr": mean("mean_fact_mrr"),
+        "first_rank_one_cases": sum(
+            bool(row.get("first_evidence_rank")) and row["first_evidence_rank"] == 1
+            for row in rows
+        ),
+        "gold_rank_distribution": dict(sorted(distribution.items())),
+    }
+
+
+def _recall_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build the recall-focused summary (overall + by question type)."""
+    by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in results:
+        by_type[str(row.get("question_type") or "unknown")].append(row)
+    return {
+        "cases": len(results),
+        "overall": _aggregate_recall(results),
+        "by_question_type": {
+            question_type: _aggregate_recall(rows)
+            for question_type, rows in sorted(by_type.items())
+        },
     }
 
 

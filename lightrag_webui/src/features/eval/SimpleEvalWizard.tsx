@@ -60,6 +60,9 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
   const [name, setName] = useState(() => initial?.name ?? '')
   const [dataset, setDataset] = useState(() => initial?.dataset ?? '')
   const [model, setModel] = useState(() => stringParam(initial?.params, 'model', 'qwen3:8b'))
+  const [evaluationType, setEvaluationType] = useState(() =>
+    stringParam(initial?.params, 'evaluation_type', 'answer')
+  )
   const [mode, setMode] = useState(() => stringParam(initial?.params, 'mode', 'mix'))
   const [topK, setTopK] = useState(() => numberParam(initial?.params, 'top_k', 5))
   const [chunkTopK, setChunkTopK] = useState(() => numberParam(initial?.params, 'chunk_top_k', 5))
@@ -195,6 +198,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
         dataset,
         params: {
           model: model.trim() || undefined,
+          evaluation_type: evaluationType,
           mode: effectiveMode,
           ...numericParams,
           temperature: parsedTemperature,
@@ -215,7 +219,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
     } finally {
       setSubmitting(false)
     }
-  }, [chunkTopK, dataset, datasetInfo, effectiveMode, engine, extractionMaxAsync, kg, maxCases, maxTotalTokens, model, name, numCtx, numPredict, onStarted, optionsError, optionsLoading, queryMaxAsync, questionTypes, t, temperature, topK, vlm])
+  }, [chunkTopK, dataset, datasetInfo, effectiveMode, engine, evaluationType, extractionMaxAsync, kg, maxCases, maxTotalTokens, model, name, numCtx, numPredict, onStarted, optionsError, optionsLoading, queryMaxAsync, questionTypes, t, temperature, topK, vlm])
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -266,6 +270,20 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-sm">{t('eval.retrievalSettings')}</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
+              <label className="space-y-1.5 md:col-span-2">
+                <span className="text-sm font-medium">测评类型</span>
+                <Select value={evaluationType} onValueChange={setEvaluationType}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="answer">Answer Evaluation（回答 + 检索指标）</SelectItem>
+                    <SelectItem value="recall">Recall Evaluation（仅召回）</SelectItem>
+                    <SelectItem value="answer_recall">Answer + Recall（回答 + 完整召回报告）</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span className="text-muted-foreground block text-xs">
+                  Recall 复用现有任务队列/状态/报告；仅召回时不生成回答。
+                </span>
+              </label>
               <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramModel')}</span><Select value={model} onValueChange={setModel} disabled={optionsLoading || modelOptions.length === 0 || optionsError !== null}><SelectTrigger><SelectValue placeholder={t('eval.paramModelPick')} /></SelectTrigger><SelectContent>{modelOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">{t('eval.modelHint')}</span></label>
               <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramMode')}</span><Select value={effectiveMode} onValueChange={setMode} disabled={!kg}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="naive">Naive</SelectItem><SelectItem value="mix">Mix</SelectItem><SelectItem value="local">Local</SelectItem><SelectItem value="global">Global</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select>{!kg ? <span className="text-muted-foreground block text-xs">{t('eval.kgDisabledHint')}</span> : null}</label>
               <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramTopK')}</span><Input type="number" min="1" value={topK} onChange={(event) => setTopK(event.target.value)} /></label>

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from memory_eval_tests import retrieval
 
 
@@ -227,3 +229,64 @@ def test_value_without_unit_is_not_evidence_of_united_answer() -> None:
     chunk = '["FACT-00007", "标准行标记", "200"]'
     assert retrieval._find_expected_text_match(chunk, fact) is None
     assert retrieval._find_answer_match(chunk, fact) is None
+
+
+def test_retrieval_exposes_recall_metrics(monkeypatch) -> None:
+    facts = [
+        {
+            "fact_id": "FACT-RANK",
+            "answer": "42",
+            "expected_text": "FACT-RANK the answer is 42",
+        }
+    ]
+    questions = [
+        {
+            "id": "Q-1",
+            "question": "what is the value?",
+            "question_type": "direct_numeric",
+            "evidence_fact_ids": ["FACT-RANK"],
+        }
+    ]
+    chunks = [
+        "unrelated chunk A",
+        "unrelated chunk B",
+        "FACT-RANK the answer is 42",
+        "tail chunk",
+    ]
+    response = {
+        "data": {
+            "chunks": [
+                {"content": chunk, "file_path": "doc.docx", "id": f"c{index}"}
+                for index, chunk in enumerate(chunks)
+            ],
+            "references": [{"file_path": "doc.docx", "content": chunks}],
+        }
+    }
+
+    class FakeDatasetClient:
+        def __init__(self, _source: str) -> None:
+            pass
+
+        @staticmethod
+        def oracle() -> dict[str, Any]:
+            return {"facts": facts, "questions": questions}
+
+    monkeypatch.setattr(retrieval, "DatasetClient", FakeDatasetClient)
+    monkeypatch.setattr(retrieval, "_post_json", lambda *_args, **_kwargs: response)
+
+    report = retrieval.evaluate_api(dataset_source="dataset", rag_api_url="http://rag")
+    row = report["results"][0]
+    assert row["first_evidence_rank"] == 3
+    assert row["recall_at_1"] == 0.0
+    assert row["recall_at_3"] == 1.0
+    assert row["recall_at_5"] == 1.0
+    assert row["full_recall_at_3"] is True
+    assert row["fact_gold_ranks"] == {"FACT-RANK": 3}
+    assert row["mrr"] == pytest.approx(1 / 3)
+    assert len(row["candidates"]) == 4
+    assert row["candidates"][2]["matched_fact_ids"] == ["FACT-RANK"]
+    overall = report["recall_summary"]["overall"]
+    assert overall["recall_at_3"] == 1.0
+    assert overall["gold_rank_distribution"].get("3") == 1
+    assert report["recall_at_3"] == 1.0
+    assert report["first_rank_one_cases"] == 0

@@ -613,6 +613,127 @@ def test_report_markdown_flattens_long_cells() -> None:
     assert "line1 line2 \\| pipe" in report
 
 
+def _sample_recall_retrieval() -> dict:
+    overall = {
+        "cases": 2,
+        "recall_at_1": 0.5,
+        "recall_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "recall_at_k": 1.0,
+        "full_recall_at_1": 1,
+        "full_recall_at_3": 2,
+        "full_recall_at_5": 2,
+        "mrr": 0.75,
+        "mean_fact_mrr": 0.75,
+        "first_rank_one_cases": 1,
+        "gold_rank_distribution": {"1": 1, "2": 1},
+    }
+    return {
+        "mode": "naive",
+        "top_k": 5,
+        "cases": 2,
+        "average_recall": 0.5,
+        "mrr": 0.75,
+        "context_precision": 0.2,
+        "recall_at_1": 0.5,
+        "recall_at_3": 1.0,
+        "recall_at_5": 1.0,
+        "first_rank_one_cases": 1,
+        "full_recall_at_1": 1,
+        "full_recall_at_3": 2,
+        "full_recall_at_5": 2,
+        "recall_summary": {
+            "cases": 2,
+            "overall": overall,
+            "by_question_type": {"table_cell": dict(overall, cases=2)},
+        },
+        "results": [
+            {
+                "question_id": "Q-A",
+                "question_type": "table_cell",
+                "question": "q1",
+                "expected_fact_ids": ["F-1"],
+                "fact_gold_ranks": {"F-1": 1},
+                "recall_at_1": 1.0,
+                "recall_at_3": 1.0,
+                "recall_at_5": 1.0,
+                "recall_at_k": 1.0,
+                "full_recall_at_1": True,
+                "full_recall_at_3": True,
+                "full_recall_at_5": True,
+                "mrr": 1.0,
+                "mean_fact_mrr": 1.0,
+                "first_evidence_rank": 1,
+                "candidates": [
+                    {
+                        "rank": 1,
+                        "file_path": "d.docx",
+                        "content_excerpt": "F-1 gold row",
+                        "matched_fact_ids": ["F-1"],
+                    }
+                ],
+            },
+            {
+                "question_id": "Q-B",
+                "question_type": "table_cell",
+                "question": "q2",
+                "expected_fact_ids": ["F-2"],
+                "fact_gold_ranks": {"F-2": 7},
+                "recall_at_1": 0.0,
+                "recall_at_3": 0.0,
+                "recall_at_5": 0.0,
+                "recall_at_k": 1.0,
+                "full_recall_at_1": False,
+                "full_recall_at_3": False,
+                "full_recall_at_5": False,
+                "mrr": 1 / 7,
+                "mean_fact_mrr": 1 / 7,
+                "first_evidence_rank": 7,
+                "candidates": [
+                    {
+                        "rank": 7,
+                        "file_path": "d.docx",
+                        "content_excerpt": "F-2 in a deep chunk",
+                        "matched_fact_ids": ["F-2"],
+                    }
+                ],
+            },
+        ],
+    }
+
+
+def test_recall_report_builder_matches_recall_lab_schema() -> None:
+    retrieval = _sample_recall_retrieval()
+    report = workflow._recall_report(retrieval, {"top_k": 5, "chunk_top_k": 5}, 5)
+    assert report["summary"] == retrieval["recall_summary"]["overall"]
+    assert report["cases"] == 2
+    assert report["results"][0]["gold_rank_by_fact"] == {"F-1": 1}
+    assert report["results"][1]["candidates"][0]["matched_fact_ids"] == ["F-2"]
+
+
+def test_recall_report_markdown_focuses_on_recall() -> None:
+    retrieval = _sample_recall_retrieval()
+    markdown = workflow._recall_report_markdown(
+        retrieval, {"top_k": 5, "chunk_top_k": 5}
+    )
+    assert "## 总体召回指标" in markdown
+    assert "Recall@1" in markdown and "Recall@3" in markdown and "Recall@5" in markdown
+    assert "## 按题型" in markdown
+    assert "## Gold rank 分布" in markdown
+    assert "## 失败问题" in markdown
+    assert "Q-B" in markdown and "Gold rank：7" in markdown
+    assert "F-2 in a deep chunk" in markdown
+
+
+def test_answer_report_includes_recall_metrics_from_top_level() -> None:
+    report = workflow._report_markdown(
+        _sample_answer(), _sample_diagnosis(), _sample_recall_retrieval()
+    )
+    assert "## 检索指标" in report
+    assert "Recall@1" in report
+    assert "Gold Rank=1" in report
+
+
 def test_disabling_kg_requires_vector_query_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

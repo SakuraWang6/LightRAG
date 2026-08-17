@@ -461,6 +461,147 @@ def _report_cell(value: Any, limit: int = 400) -> str:
     return text
 
 
+def _recall_report(
+    retrieval: dict[str, Any], baseline: dict[str, Any], chunk_top_k: int
+) -> dict[str, Any]:
+    """Build the recall-focused artifact (recall_report.json).
+
+    Schema mirrors the recall-lab experiment report so existing ranking audit
+    tooling can consume product runs directly.
+    """
+    rows = retrieval.get("results") or []
+    results = [
+        {
+            "question_id": row.get("question_id"),
+            "question_type": row.get("question_type", ""),
+            "question": row.get("question", ""),
+            "expected_fact_ids": row.get("expected_fact_ids") or [],
+            "gold_rank_by_fact": row.get("fact_gold_ranks") or {},
+            "recall_at_1": row.get("recall_at_1"),
+            "recall_at_3": row.get("recall_at_3"),
+            "recall_at_5": row.get("recall_at_5"),
+            "recall_at_k": row.get("recall_at_k"),
+            "full_recall_at_1": row.get("full_recall_at_1"),
+            "full_recall_at_3": row.get("full_recall_at_3"),
+            "full_recall_at_5": row.get("full_recall_at_5"),
+            "mrr": row.get("mrr"),
+            "mean_fact_mrr": row.get("mean_fact_mrr"),
+            "first_evidence_rank": row.get("first_evidence_rank"),
+            "candidates": row.get("candidates") or [],
+        }
+        for row in rows
+    ]
+    return {
+        "mode": retrieval.get("mode"),
+        "top_k": retrieval.get("top_k"),
+        "chunk_top_k": chunk_top_k,
+        "cases": len(results),
+        "summary": (retrieval.get("recall_summary") or {}).get("overall") or {},
+        "by_question_type": (retrieval.get("recall_summary") or {}).get(
+            "by_question_type"
+        )
+        or {},
+        "results": results,
+    }
+
+
+def _ranking_json(
+    retrieval: dict[str, Any], baseline: dict[str, Any], chunk_top_k: int
+) -> dict[str, Any]:
+    """UI-friendly ranking artifact (ranking.json)."""
+    report = _recall_report(retrieval, baseline, chunk_top_k)
+    return {
+        "schema_version": "1.0",
+        "mode": report["mode"],
+        "top_k": report["top_k"],
+        "chunk_top_k": report["chunk_top_k"],
+        "summary": report["summary"],
+        "by_question_type": report["by_question_type"],
+        "questions": report["results"],
+    }
+
+
+def _recall_report_markdown(retrieval: dict[str, Any], baseline: dict[str, Any]) -> str:
+    """Render the recall-only evaluation report (report.md)."""
+    summary = (retrieval.get("recall_summary") or {}).get("overall") or {}
+    by_type = (retrieval.get("recall_summary") or {}).get("by_question_type") or {}
+    top_k = int(retrieval.get("top_k") or baseline.get("top_k") or 5)
+    chunk_top_k = int(baseline.get("chunk_top_k") or top_k)
+    lines = [
+        "# 召回测评报告",
+        "",
+        f"- 检索模式：{retrieval.get('mode') or baseline.get('mode') or 'mix'}",
+        f"- Top-K：{top_k} / Chunk Top-K：{chunk_top_k}",
+        f"- 题数：{summary.get('cases')}",
+        "",
+        "## 总体召回指标",
+        "",
+        "| 指标 | 值 |",
+        "| --- | --- |",
+        f"| Recall@1 | {_format_rate(summary.get('recall_at_1'))} |",
+        f"| Recall@3 | {_format_rate(summary.get('recall_at_3'))} |",
+        f"| Recall@5 | {_format_rate(summary.get('recall_at_5'))} |",
+        f"| Recall@{chunk_top_k} | {_format_rate(summary.get('recall_at_k'))} |",
+        f"| MRR | {float(summary.get('mrr') or 0):.3f} |",
+        f"| Mean Fact MRR | {float(summary.get('mean_fact_mrr') or 0):.3f} |",
+        f"| 全证据命中@1 | {summary.get('full_recall_at_1')} / {summary.get('cases')} |",
+        f"| 全证据命中@3 | {summary.get('full_recall_at_3')} / {summary.get('cases')} |",
+        f"| 全证据命中@5 | {summary.get('full_recall_at_5')} / {summary.get('cases')} |",
+        f"| Gold Rank=1 | {summary.get('first_rank_one_cases')} / {summary.get('cases')} |",
+        "",
+        "## 按题型",
+        "",
+        "| 题型 | 题数 | Recall@1 | Recall@3 | Recall@5 | MRR |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for question_type, metrics in sorted(by_type.items()):
+        lines.append(
+            f"| {question_type} | {metrics.get('cases', 0)} | "
+            f"{_format_rate(metrics.get('recall_at_1'))} | "
+            f"{_format_rate(metrics.get('recall_at_3'))} | "
+            f"{_format_rate(metrics.get('recall_at_5'))} | "
+            f"{float(metrics.get('mrr') or 0):.3f} |"
+        )
+    lines.extend(["", "## Gold rank 分布", ""])
+    distribution = summary.get("gold_rank_distribution") or {}
+    for key, label in (
+        ("1", "Rank 1"),
+        ("2", "Rank 2"),
+        ("3", "Rank 3"),
+        ("4_5", "Rank 4-5"),
+        ("6_10", "Rank 6-10"),
+        ("11_plus", "Rank 11+"),
+        ("miss", "未命中"),
+    ):
+        lines.append(f"- {label}：{distribution.get(key, 0)}")
+    failed = [
+        row
+        for row in retrieval.get("results") or []
+        if row.get("first_evidence_rank") is None
+        or row.get("first_evidence_rank", 0) > 5
+    ]
+    lines.extend(["", "## 失败问题", ""])
+    if not failed:
+        lines.append("所有问题在 Top-5 内命中首个证据。")
+    for row in failed:
+        lines.append(f"### {row.get('question_id')} · {row.get('question_type')}")
+        lines.append(f"- Gold rank：{row.get('first_evidence_rank') or '未命中'}")
+        lines.append(
+            f"- 期望证据：{', '.join(row.get('expected_fact_ids') or []) or '—'}"
+        )
+        candidates = row.get("candidates") or []
+        if candidates:
+            lines.append("")
+            lines.append("| Rank | 证据命中 | 候选摘要 |")
+            lines.append("| ---: | --- | --- |")
+            for candidate in candidates[:chunk_top_k]:
+                matched = "、".join(candidate.get("matched_fact_ids") or []) or "—"
+                excerpt = _report_cell(candidate.get("content_excerpt"), limit=160)
+                lines.append(f"| {candidate.get('rank')} | {matched} | {excerpt} |")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def _report_markdown(
     answer: dict[str, Any],
     diagnosis: dict[str, Any],
@@ -500,6 +641,9 @@ def _report_markdown(
         lines.append(f"- 待复核题数：{uncertain}")
 
     summary = (retrieval or {}).get("summary") if isinstance(retrieval, dict) else None
+    if not isinstance(summary, dict) or not summary.get("cases"):
+        # evaluate_api exposes the retrieval metrics at the top level.
+        summary = retrieval if isinstance(retrieval, dict) else None
     if isinstance(summary, dict) and summary.get("cases"):
         lines.extend(
             [
@@ -511,6 +655,10 @@ def _report_markdown(
                 f"| 平均召回@K | {_format_rate(summary.get('average_recall'))} |",
                 f"| MRR | {_format_rate(summary.get('mrr'))} |",
                 f"| 上下文精确率 | {_format_rate(summary.get('context_precision'))} |",
+                f"| Recall@1 | {_format_rate(summary.get('recall_at_1'))} |",
+                f"| Recall@3 | {_format_rate(summary.get('recall_at_3'))} |",
+                f"| Recall@5 | {_format_rate(summary.get('recall_at_5'))} |",
+                f"| Gold Rank=1 | {summary.get('first_rank_one_cases')} 题 |",
             ]
         )
 
@@ -637,6 +785,12 @@ def _runner(context: RunContext) -> dict[str, Any]:
         context.environment["rag_api_url"] = unit["runtime_endpoint"]
         context.runtime_snapshot = unit["runtime_snapshot"]
         baseline = context.baseline
+        evaluation_type = str(baseline.get("evaluation_type") or "answer")
+        if evaluation_type not in {"answer", "recall", "answer_recall"}:
+            raise ValueError(
+                "evaluation_type must be one of answer/recall/answer_recall, "
+                f"got {evaluation_type!r}"
+            )
         # VLM image analysis: an explicit run parameter wins, otherwise
         # auto-enable for datasets whose manifest declares figures.  Persist
         # the effective value so run.json / reports reflect what actually ran.
@@ -739,6 +893,73 @@ def _runner(context: RunContext) -> dict[str, Any]:
                 "正在评测检索结果",
             ),
         )
+        recall_extra: dict[str, Any] = {}
+        recall_method: dict[str, Any] | None = None
+        if evaluation_type in {"recall", "answer_recall"}:
+            recall_report = _recall_report(retrieval, baseline, chunk_top_k)
+            (context.output_dir / "recall_report.json").write_text(
+                json.dumps(recall_report, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            (context.output_dir / "ranking.json").write_text(
+                json.dumps(
+                    _ranking_json(retrieval, baseline, chunk_top_k),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            recall_extra["recall_report"] = "recall_report.json"
+            recall_extra["ranking"] = "ranking.json"
+            try:
+                from memory_recall_lab.audit.ranking import write_ranking_audit
+
+                write_ranking_audit(context.output_dir, recall_report)
+                recall_extra["ranking_audit"] = "ranking_audit.json"
+            except Exception as exc:  # noqa: BLE001 - audit is diagnostic-only
+                logger.warning(f"ranking audit skipped: {type(exc).__name__}: {exc}")
+            recall_method = {
+                "method": "recall",
+                "label": "召回结果",
+                "params": {
+                    "mode": baseline.get("mode"),
+                    "top_k": top_k,
+                    "chunk_top_k": chunk_top_k,
+                },
+                "summary": (retrieval.get("recall_summary") or {}).get("overall") or {},
+                "results": recall_report["results"],
+            }
+        if evaluation_type == "recall":
+            context.progress("running", 0, 1, "report", "正在汇总召回结果并生成报告")
+            report = _recall_report_markdown(retrieval, baseline)
+            context.progress("running", 1, 1, "report", "召回报告已生成")
+            methods = [
+                {
+                    "method": "retrieval",
+                    "label": "检索结果",
+                    "params": {
+                        "mode": baseline.get("mode"),
+                        "top_k": top_k,
+                        "chunk_top_k": chunk_top_k,
+                    },
+                    "summary": normalize_summary(retrieval, "retrieval"),
+                    "results": retrieval.get("results", []),
+                },
+                recall_method,
+            ]
+            outcome = "complete"
+            return {
+                "status": "complete",
+                "methods": methods,
+                "report": report,
+                "extra": {
+                    "ingestion_receipt": "ingestion_receipt.json",
+                    "index_receipt": "index_receipt.json",
+                    "execution_unit": "execution_unit.json",
+                    **recall_extra,
+                },
+            }
         if answer_question_count:
             context.progress(
                 "running", 0, answer_question_count, "answer", "正在生成回答并评分"
@@ -828,14 +1049,18 @@ def _runner(context: RunContext) -> dict[str, Any]:
                 "summary": normalize_summary(retrieval, "retrieval"),
                 "results": retrieval.get("results", []),
             },
+        ]
+        if recall_method is not None:
+            methods.append(recall_method)
+        methods.append(
             {
                 "method": "answer",
                 "label": "回答结果",
                 "params": {"mode": baseline.get("mode"), "top_k": top_k},
                 "summary": normalize_summary(answer, "answer"),
                 "results": answer.get("results", []),
-            },
-        ]
+            }
+        )
         outcome = "complete"
         return {
             "status": "complete",
@@ -851,6 +1076,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
                 "cause_distribution": diagnosis["cause_distribution"],
                 "trace_availability": diagnosis["trace_availability"],
                 **analysis_extra,
+                **recall_extra,
             },
         }
     except Exception:
@@ -868,6 +1094,7 @@ definition = EvaluationDefinition(
     description="在独立 LightRAG 工作空间内完成文档入库、索引、检索、回答与评分。",
     default_baseline={
         "mode": "mix",
+        "evaluation_type": "answer",
         "top_k": 5,
         "chunk_top_k": 5,
         "max_total_tokens": 8192,

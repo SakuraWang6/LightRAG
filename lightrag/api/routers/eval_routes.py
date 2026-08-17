@@ -92,6 +92,7 @@ class CompareRunsRequest(BaseModel):
 
 
 _GENERIC_PARAM_KEYS = {
+    "evaluation_type",
     "model",
     "mode",
     "top_k",
@@ -493,6 +494,9 @@ def _build_run_params(
             mode = "naive"
         elif mode != "naive":
             raise ValueError("mode must be naive when KG extraction is disabled")
+    evaluation_type = params.get("evaluation_type", "answer")
+    if evaluation_type not in {"answer", "recall", "answer_recall"}:
+        raise ValueError("evaluation_type must be one of answer/recall/answer_recall")
     env = os.environ
     max_cases = params.get("max_cases", 0)
     if isinstance(max_cases, bool):
@@ -523,6 +527,7 @@ def _build_run_params(
         dataset=dataset_dir,
         output_dir=Path("."),
         label=_run_label(name),
+        evaluation_type=evaluation_type,
         model=model,
         mode=mode,
         top_k=top_k,

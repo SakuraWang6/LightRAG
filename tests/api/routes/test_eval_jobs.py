@@ -22,6 +22,29 @@ def test_run_command_uses_only_the_product_cli(tmp_path: Path) -> None:
     assert "--storage-dir" not in command
 
 
+def test_build_run_command_includes_evaluation_type(tmp_path: Path) -> None:
+    command = build_run_command(
+        RunParams(
+            dataset=tmp_path / "dataset",
+            output_dir=tmp_path / "output",
+            evaluation_type="recall",
+        )
+    )
+    assert "--evaluation-type" in command
+    assert command[command.index("--evaluation-type") + 1] == "recall"
+
+
+def test_run_params_roundtrip_keeps_evaluation_type(tmp_path: Path) -> None:
+    params = RunParams(
+        dataset=tmp_path / "d",
+        output_dir=tmp_path / "o",
+        evaluation_type="answer_recall",
+    )
+    payload = eval_jobs._params_to_json(params)
+    restored = eval_jobs._params_from_json(payload)
+    assert restored.evaluation_type == "answer_recall"
+
+
 def test_build_run_command_serializes_vlm(tmp_path: Path) -> None:
     base = RunParams(dataset=tmp_path / "dataset", output_dir=tmp_path / "output")
     cmd = build_run_command(base)

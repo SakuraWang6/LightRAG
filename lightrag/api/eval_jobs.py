@@ -462,6 +462,7 @@ def _write_queued_run_envelope(*, runs_root: Path, params: RunParams) -> None:
     parameter_sources = {key: "default" for key in baseline}
     for key in (
         "model",
+        "evaluation_type",
         "mode",
         "top_k",
         "chunk_top_k",

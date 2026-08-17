@@ -65,16 +65,10 @@ conda run -n lightrag-memory-eval python -m memory_recall_lab.run \
 
 ## Open the comparison UI
 
-```bash
-conda run -n lightrag-memory-eval python -m memory_recall_lab.server \
-  --host 127.0.0.1 \
-  --port 8710 \
-  --runs-root memory_recall_lab/runs
-```
-
-Open <http://127.0.0.1:8710>. The UI compares selected runs across overall and
-per-question-type Recall@1/3/5, MRR, gold-rank distribution, and exposes every
-question's ranked candidate list.
+> **已停用（2026-08-17）：独立 Recall 对比 UI（server.py + static/）已删除。**
+> Recall / Retrieval 评测已作为 Evaluation 流程的一种测评类型（`evaluation_type=recall` 或
+> `answer_recall`）集成到现有 Evaluation 控制台，结果在现有 run 详情与 report.md 中查看。
+> 实验配置（configs/*.yaml）与 `run.py` CLI 继续作为实验体系保留。
 
 ## Table representation ablation (verify-en-20p, naive, top 20)
 

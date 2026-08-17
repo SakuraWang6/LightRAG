@@ -211,6 +211,12 @@ def main() -> None:
         default=None,
         help="User-facing evaluation name stored in the envelope.",
     )
+    parser.add_argument(
+        "--evaluation-type",
+        choices=("answer", "recall", "answer_recall"),
+        default="answer",
+        help="What to run: answer generation, retrieval-only recall, or both.",
+    )
     parser.add_argument("--model", default=None)
     parser.add_argument("--mode", default=None)
     parser.add_argument("--top-k", type=int, default=None)
@@ -288,6 +294,7 @@ def main() -> None:
     baseline = dict(definition.default_baseline)
     baseline.update({k: v for k, v in BASELINE_DEFAULTS.items() if k not in baseline})
     for key, value in (
+        ("evaluation_type", args.evaluation_type),
         ("model", args.model),
         ("mode", args.mode),
         ("top_k", args.top_k),
