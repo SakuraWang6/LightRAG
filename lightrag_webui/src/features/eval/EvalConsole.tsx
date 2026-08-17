@@ -41,6 +41,7 @@ import {
   compareCompatible,
   formatDate,
 } from '@/features/eval/utils'
+import { useEvalPolling } from '@/features/eval/useEvalPolling'
 
 type SimpleEvalDraft = {
   name?: string
@@ -171,14 +172,16 @@ export default function EvalConsole() {
     [runs]
   )
 
-  useEffect(() => {
-    if (!hasActiveRuns) return
-    const timer = window.setInterval(() => {
+  useEvalPolling({
+    active: hasActiveRuns,
+    // While the jobs view is shown it owns the queue refresh; polling runs
+    // here as well would duplicate the same class of background requests.
+    enabled: view !== 'jobs',
+    onTick: () => {
       void loadRuns()
       if (selectedId) void loadDetail(selectedId, true)
-    }, 5000)
-    return () => window.clearInterval(timer)
-  }, [hasActiveRuns, loadRuns, loadDetail, selectedId])
+    },
+  })
 
   const toggleCompare = useCallback((id: string) => {
     setCompareIds((prev) => {
