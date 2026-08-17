@@ -138,7 +138,9 @@ def test_pending_run_is_visible_before_a_worker_starts(
 
     job = eval_jobs.start_run_job(
         runs_root=tmp_path,
-        params=RunParams(dataset=dataset, output_dir=tmp_path / "unused", label="queued"),
+        params=RunParams(
+            dataset=dataset, output_dir=tmp_path / "unused", label="queued"
+        ),
         supervise=False,
         supervision="auto",
         stale_minutes=60,
@@ -190,7 +192,11 @@ def test_dispatch_fills_each_configured_capacity_slot(
     started: list[str] = []
     monkeypatch.setenv("MEMORY_EVAL_MAX_ACTIVE_JOBS", "2")
     monkeypatch.setattr(eval_jobs, "_start_dispatch_loop", lambda *_args: None)
-    monkeypatch.setattr(eval_jobs, "_params_from_json", lambda _payload: RunParams(tmp_path, tmp_path / "out"))
+    monkeypatch.setattr(
+        eval_jobs,
+        "_params_from_json",
+        lambda _payload: RunParams(tmp_path, tmp_path / "out"),
+    )
     monkeypatch.setattr(
         eval_jobs,
         "_claim_owner",
@@ -270,7 +276,12 @@ def test_queue_positions_are_scoped_to_job_kind(tmp_path: Path) -> None:
             },
         )
 
-    listed = {job["id"]: job for job in eval_jobs.list_jobs(runs_root=tmp_path, datasets_root=tmp_path / "datasets")}
+    listed = {
+        job["id"]: job
+        for job in eval_jobs.list_jobs(
+            runs_root=tmp_path, datasets_root=tmp_path / "datasets"
+        )
+    }
 
     assert listed["run-first"]["queue_position"] == 1
     assert listed["run-second"]["queue_position"] == 2

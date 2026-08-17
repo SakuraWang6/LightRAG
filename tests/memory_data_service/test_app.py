@@ -138,18 +138,28 @@ def test_chinese_rich_dataset_contains_chinese_oracle_and_provenance(tmp_path) -
     assert manifest.generation_provenance is not None
     assert manifest.generation_provenance.input_parameters["language"] == "zh"
     assert oracle.language == "zh"
-    assert any(question.question_type == "direct_numeric" for question in oracle.questions)
+    assert any(
+        question.question_type == "direct_numeric" for question in oracle.questions
+    )
     assert any("是多少" in question.question for question in oracle.questions)
     assert any(question.question_type == "equation" for question in oracle.questions)
-    assert any(question.question_type == "figure_caption" for question in oracle.questions)
+    assert any(
+        question.question_type == "figure_caption" for question in oracle.questions
+    )
     # Gold table rows must carry the same unit as the oracle answer, otherwise
     # a model that reads "27.5" from the cell is marked wrong against "27.5 ms".
-    table_answers = [q.answer for q in oracle.questions if q.question_type == "table_cell"]
+    table_answers = [
+        q.answer for q in oracle.questions if q.question_type == "table_cell"
+    ]
     assert table_answers
-    assert all(any(unit in answer for unit in ("ms", "次/秒", "%")) for answer in table_answers)
+    assert all(
+        any(unit in answer for unit in ("ms", "次/秒", "%")) for answer in table_answers
+    )
     assert any(fact.fact_type == "governance_owner" for fact in oracle.facts)
     assert any(question.id == "Q-RELEASE-GATE-0004" for question in oracle.questions)
-    assert any(question.question_type == "cross_document" for question in oracle.questions)
+    assert any(
+        question.question_type == "cross_document" for question in oracle.questions
+    )
     # Regression: repeated multi-hop questions must anchor the page in the
     # question text, otherwise identical queries collapse to one retrieval
     # context and one cached answer (observed as 4 identical wrong answers).
@@ -198,7 +208,15 @@ def test_chinese_rich_dataset_disambiguates_repeated_facts(tmp_path) -> None:
         for question in oracle.questions
         if question.question_type == "table_cell"
     ]
-    assert len({question.question.split("标准行标记（")[1].split("）")[0] for question in table_questions}) >= 4
+    assert (
+        len(
+            {
+                question.question.split("标准行标记（")[1].split("）")[0]
+                for question in table_questions
+            }
+        )
+        >= 4
+    )
 
     multihop_questions = [
         question
@@ -212,7 +230,9 @@ def test_chinese_rich_dataset_disambiguates_repeated_facts(tmp_path) -> None:
         assert "的表" in question.question
 
     cross_document = next(
-        question for question in oracle.questions if question.question_type == "cross_document"
+        question
+        for question in oracle.questions
+        if question.question_type == "cross_document"
     )
     source_fact_id = cross_document.evidence_fact_ids[0]
     source_fact = next(fact for fact in oracle.facts if fact.fact_id == source_fact_id)

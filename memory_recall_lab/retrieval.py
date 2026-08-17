@@ -199,8 +199,7 @@ def evaluate_recall(
                 "question": question["question"],
                 "expected_fact_ids": expected_ids,
                 "gold_rank_by_fact": {
-                    fact_id: fact_ranks.get(fact_id)
-                    for fact_id in expected_ids
+                    fact_id: fact_ranks.get(fact_id) for fact_id in expected_ids
                 },
                 **metrics,
                 "candidates": candidates,

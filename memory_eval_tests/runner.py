@@ -87,7 +87,11 @@ def _write_child_state(output_dir: Path, proc: subprocess.Popen) -> None:
     # start-time token still matches the live process.
     tmp.write_text(
         json.dumps(
-            {"pid": pid, "pgid": pid, "process_started_at": _process_start_identity(pid)},
+            {
+                "pid": pid,
+                "pgid": pid,
+                "process_started_at": _process_start_identity(pid),
+            },
             ensure_ascii=False,
         )
         + "\n",
@@ -113,9 +117,9 @@ def _process_start_identity(pid: int) -> int | None:
         )
         value = result.stdout.strip()
         if value:
-            started = datetime.strptime(
-                value, "%a %b %d %H:%M:%S %Y"
-            ).replace(tzinfo=timezone.utc)
+            started = datetime.strptime(value, "%a %b %d %H:%M:%S %Y").replace(
+                tzinfo=timezone.utc
+            )
             return int(started.timestamp())
     except (OSError, subprocess.SubprocessError, ValueError):
         pass

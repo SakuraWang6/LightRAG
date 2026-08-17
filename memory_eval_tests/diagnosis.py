@@ -59,23 +59,32 @@ def build_case_traces(
                     "question_type": question.get("question_type"),
                     "modality": _modality(evidence_ids, facts),
                     "evidence_fact_ids": evidence_ids,
-                    "evidence_facts": [facts[item] for item in evidence_ids if item in facts],
+                    "evidence_facts": [
+                        facts[item] for item in evidence_ids if item in facts
+                    ],
                 },
-                "parsed": unavailable("isolated API does not expose parsed object trace"),
+                "parsed": unavailable(
+                    "isolated API does not expose parsed object trace"
+                ),
                 "chunks": unavailable("isolated API does not expose chunk trace"),
-                "index": unavailable("isolated API does not expose index membership trace"),
+                "index": unavailable(
+                    "isolated API does not expose index membership trace"
+                ),
                 "retrieval": (
                     {
                         "status": _OBSERVED,
                         "recall_at_k": retrieval_row.get("recall_at_k"),
                         "mode": retrieval_mode,
-                        "expected_fact_ids": retrieval_row.get("expected_fact_ids") or [],
+                        "expected_fact_ids": retrieval_row.get("expected_fact_ids")
+                        or [],
                         "hit_fact_ids": retrieval_row.get("hit_fact_ids") or [],
                         "first_evidence_rank": retrieval_row.get("first_evidence_rank"),
                         "hit_evidence": retrieval_row.get("hit_evidence") or [],
                     }
                     if retrieval_row is not None
-                    else unavailable("no retrieval trace was produced for this question")
+                    else unavailable(
+                        "no retrieval trace was produced for this question"
+                    )
                 ),
                 "final_context": _final_context(
                     answer_row, [facts[item] for item in evidence_ids if item in facts]
@@ -88,7 +97,9 @@ def build_case_traces(
                         "abstention_correct": answer_row.get("abstention_correct"),
                         "citation_presence": answer_row.get("citation_presence"),
                         "citation_correctness": answer_row.get("citation_correctness"),
-                        "response_reference_count": answer_row.get("response_reference_count", 0),
+                        "response_reference_count": answer_row.get(
+                            "response_reference_count", 0
+                        ),
                     }
                     if answer_row is not None
                     else unavailable("no answer trace was produced for this question")
@@ -109,14 +120,20 @@ def diagnose_case(trace: dict[str, Any]) -> dict[str, Any]:
     expected_abstain = oracle.get("expected_behavior") == "abstain"
     if expected_abstain and answer.get("status") == _OBSERVED:
         if answer.get("abstention_correct") is False:
-            return _diagnosis("abstention_failure", 1.0, ["answer.abstention_correct=false"])
+            return _diagnosis(
+                "abstention_failure", 1.0, ["answer.abstention_correct=false"]
+            )
         if answer.get("abstention_correct") is True:
             return _diagnosis("not_applicable", 1.0, ["correct abstention"])
 
     if answer.get("status") == _OBSERVED and answer.get("exact_match") is True:
         return _diagnosis("not_applicable", 1.0, ["answer.exact_match=true"])
 
-    for key, cause in (("parsed", "parse_missing"), ("chunks", "chunk_missing"), ("index", "index_missing")):
+    for key, cause in (
+        ("parsed", "parse_missing"),
+        ("chunks", "chunk_missing"),
+        ("index", "index_missing"),
+    ):
         value = trace.get(key) or {}
         if value.get("status") == _MISSING:
             return _diagnosis(cause, 0.95, [f"{key}.status=missing"])
@@ -138,13 +155,19 @@ def diagnose_case(trace: dict[str, Any]) -> dict[str, Any]:
             return _diagnosis(
                 "selection_or_truncation_miss",
                 0.9,
-                ["retrieval contains evidence", "final_context lacks complete oracle evidence"],
+                [
+                    "retrieval contains evidence",
+                    "final_context lacks complete oracle evidence",
+                ],
             )
         if sufficient is True:
             return _diagnosis(
                 "generation_or_prompt_failure",
                 0.85,
-                ["final_context contains complete oracle evidence", "answer.exact_match=false"],
+                [
+                    "final_context contains complete oracle evidence",
+                    "answer.exact_match=false",
+                ],
             )
 
     return _diagnosis(
@@ -169,9 +192,7 @@ def build_diagnosis(traces: list[dict[str, Any]]) -> dict[str, Any]:
     causes = Counter(case["primary_cause"] for case in cases)
     applicable = [case for case in cases if case["primary_cause"] != "not_applicable"]
     classified = [
-        case
-        for case in applicable
-        if case["primary_cause"] != "unclassified"
+        case for case in applicable if case["primary_cause"] != "unclassified"
     ]
     return {
         "schema_version": DIAGNOSIS_SCHEMA_VERSION,
@@ -182,7 +203,9 @@ def build_diagnosis(traces: list[dict[str, Any]]) -> dict[str, Any]:
         "diagnosis_coverage": len(classified) / len(applicable) if applicable else 1.0,
         "trace_availability": {
             "fully_observable": sum(
-                1 for trace in traces if (trace.get("final_context") or {}).get("status") == _OBSERVED
+                1
+                for trace in traces
+                if (trace.get("final_context") or {}).get("status") == _OBSERVED
             ),
             "context_unavailable": sum(
                 1
@@ -245,7 +268,9 @@ def _final_context(
     return unavailable("controlled evaluation trace was not returned by the API")
 
 
-def _contains_oracle_evidence(context: str, evidence_facts: list[dict[str, Any]]) -> bool:
+def _contains_oracle_evidence(
+    context: str, evidence_facts: list[dict[str, Any]]
+) -> bool:
     # A bare FACT identifier is metadata, not proof that the answer-bearing
     # evidence reached the context, and punctuation/JSON markup must not break
     # a match.  Normalise both sides and prefer the FACT-ID-anchored sentence
@@ -264,7 +289,9 @@ def _contains_oracle_evidence(context: str, evidence_facts: list[dict[str, Any]]
     return True
 
 
-def _group_distribution(cases: list[dict[str, Any]], key: str) -> dict[str, dict[str, Any]]:
+def _group_distribution(
+    cases: list[dict[str, Any]], key: str
+) -> dict[str, dict[str, Any]]:
     groups: dict[str, list[dict[str, Any]]] = {}
     for case in cases:
         label = str(case.get(key) or "unknown")
@@ -272,7 +299,9 @@ def _group_distribution(cases: list[dict[str, Any]], key: str) -> dict[str, dict
     return {
         label: {
             "case_count": len(rows),
-            "cause_distribution": dict(sorted(Counter(row["primary_cause"] for row in rows).items())),
+            "cause_distribution": dict(
+                sorted(Counter(row["primary_cause"] for row in rows).items())
+            ),
         }
         for label, rows in sorted(groups.items())
     }

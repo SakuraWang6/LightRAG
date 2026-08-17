@@ -97,7 +97,9 @@ def evaluate_answers(
         references_blob = json.dumps(response.get("references", []), ensure_ascii=False)
         expected = question.get("answer", "")
         evidence_ids = question.get("evidence_fact_ids", [])
-        evidence_facts = [facts_by_id[fid] for fid in evidence_ids if fid in facts_by_id]
+        evidence_facts = [
+            facts_by_id[fid] for fid in evidence_ids if fid in facts_by_id
+        ]
         final_context_trace = response.get("evaluation_trace")
         final_context_evidence = (
             _not_applicable_final_context_evidence()
@@ -218,11 +220,17 @@ def score_answer(
 ) -> dict[str, Any]:
     question_type = question.get("question_type", "")
     expected_behavior = question.get("expected_behavior", "answer")
-    deterministic_exact = _answer_match(expected, answer_text, evidence_facts, question_type=question_type)
+    deterministic_exact = _answer_match(
+        expected, answer_text, evidence_facts, question_type=question_type
+    )
     scoring_mode = question.get("scoring_mode", "deterministic")
     verdict = "pass" if deterministic_exact else "fail"
     scorer_name, scorer_version = SCORER_NAME, SCORER_VERSION
-    reason = "deterministic answer rule matched" if deterministic_exact else "deterministic answer rule did not match"
+    reason = (
+        "deterministic answer rule matched"
+        if deterministic_exact
+        else "deterministic answer rule did not match"
+    )
     if scoring_mode in {"semantic", "hybrid"} and not deterministic_exact:
         if semantic_scorer is None:
             verdict = "uncertain"
@@ -240,7 +248,9 @@ def score_answer(
         if evidence_available_override is _EVIDENCE_UNSET
         else evidence_available_override
     )
-    citation_presence, citation_correctness = _citation_metrics(evidence_facts, answer_text)
+    citation_presence, citation_correctness = _citation_metrics(
+        evidence_facts, answer_text
+    )
 
     numeric_unit_correct = None
     formula_correct = None
@@ -257,7 +267,11 @@ def score_answer(
         abstention_correct = _looks_like_abstain(answer_text)
         exact = abstention_correct
         verdict = "pass" if abstention_correct else "fail"
-        reason = "deterministic abstention rule matched" if abstention_correct else "deterministic abstention rule did not match"
+        reason = (
+            "deterministic abstention rule matched"
+            if abstention_correct
+            else "deterministic abstention rule did not match"
+        )
         # Refusing an unanswerable question has no oracle evidence and needs no
         # citation.  Keep evidence_available as None so abstain questions are
         # excluded from the evidence-availability rate instead of inflating it.
@@ -331,9 +345,7 @@ def _numeric_unit_match(expected: str, answer_text: str) -> bool:
     # falling back to a whitespace-sensitive substring check that failed on
     # "114 次/秒" vs the model's "114次/秒".
     unit = r"[A-Za-z%]+|(?:[\u4e00-\u9fff]+/)*[\u4e00-\u9fff]+"
-    expected_pairs = re.findall(
-        rf"([-+]?\d+(?:\.\d+)?)\s*({unit})", expected
-    )
+    expected_pairs = re.findall(rf"([-+]?\d+(?:\.\d+)?)\s*({unit})", expected)
     if not expected_pairs:
         return _compact(expected) in _compact(answer_text)
     answer_compact = _compact(answer_text)
@@ -365,7 +377,9 @@ def _answer_match(
             return False
         remainder = expected.replace(formula, " ", 1)
         numeric_pairs = re.findall(r"([-+]?\d+(?:\.\d+)?)\s*([A-Za-z%]+)", remainder)
-        if numeric_pairs and not _numeric_unit_match(" ".join("".join(pair) for pair in numeric_pairs), answer_text):
+        if numeric_pairs and not _numeric_unit_match(
+            " ".join("".join(pair) for pair in numeric_pairs), answer_text
+        ):
             return False
         return _required_terms_present(remainder, answer_text)
     if question_type in {"direct_numeric", "table_cell"}:
@@ -381,7 +395,24 @@ def _formula_fragment(text: str) -> str | None:
 
 
 def _required_terms(text: str) -> list[str]:
-    ignored = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "is", "of", "on", "or", "the", "to", "with"}
+    ignored = {
+        "a",
+        "an",
+        "and",
+        "as",
+        "at",
+        "by",
+        "for",
+        "from",
+        "in",
+        "is",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
+    }
     return [
         term
         for term in re.findall(r"[a-z0-9]+(?:[._-][a-z0-9]+)*", text.lower())
@@ -397,7 +428,9 @@ def _required_terms_present(expected: str, answer_text: str) -> bool:
     return all(_compact(term) in compact_answer for term in terms)
 
 
-def _evidence_available(evidence_facts: list[dict[str, Any]], references_blob: str) -> bool:
+def _evidence_available(
+    evidence_facts: list[dict[str, Any]], references_blob: str
+) -> bool:
     if not evidence_facts:
         return True
     normalized_refs = _compact(references_blob)
@@ -408,7 +441,10 @@ def _evidence_available(evidence_facts: list[dict[str, Any]], references_blob: s
             fact.get("answer", ""),
             fact.get("expected_text", ""),
         )
-        if any(candidate and _compact(candidate) in normalized_refs for candidate in candidates):
+        if any(
+            candidate and _compact(candidate) in normalized_refs
+            for candidate in candidates
+        ):
             hits += 1
     return hits == len(evidence_facts)
 
@@ -422,7 +458,10 @@ def _final_context_evidence(
     Missing trace data is an observability gap, not an evidence miss.
     """
     expected_ids = [str(fact.get("fact_id") or "") for fact in evidence_facts]
-    if not isinstance(final_context_trace, dict) or final_context_trace.get("status") != "observed":
+    if (
+        not isinstance(final_context_trace, dict)
+        or final_context_trace.get("status") != "observed"
+    ):
         reason = (
             str(final_context_trace.get("reason") or "")
             if isinstance(final_context_trace, dict)
@@ -436,7 +475,8 @@ def _final_context_evidence(
             "expected_fact_ids": expected_ids,
             "hit_fact_ids": [],
             "missing_fact_ids": expected_ids,
-            "reason": reason or "controlled final-context trace was not returned by the API",
+            "reason": reason
+            or "controlled final-context trace was not returned by the API",
         }
     context = str(final_context_trace.get("final_context") or "")
     normalized_context = _compact(context)
@@ -471,7 +511,9 @@ def _not_applicable_final_context_evidence() -> dict[str, Any]:
     }
 
 
-def _fact_in_context(fact: dict[str, Any], context: str, normalized_context: str) -> bool:
+def _fact_in_context(
+    fact: dict[str, Any], context: str, normalized_context: str
+) -> bool:
     # A bare FACT id is metadata, not proof that the answer-bearing value
     # reached the model.  Prefer the FACT-ID-anchored expected text, then the
     # answer value; this matches the stricter rule used by diagnosis.py.
@@ -479,9 +521,11 @@ def _fact_in_context(fact: dict[str, Any], context: str, normalized_context: str
     answer = str(fact.get("answer") or "")
     candidates = (expected_text, answer) if expected_text else (answer,)
     return any(
-        candidate and (candidate in context or _compact(candidate) in normalized_context)
+        candidate
+        and (candidate in context or _compact(candidate) in normalized_context)
         for candidate in candidates
     )
+
 
 def _citation_metrics(
     evidence_facts: list[dict[str, Any]], answer_text: str
@@ -493,7 +537,10 @@ def _citation_metrics(
     function intentionally avoids treating a matching answer value as a
     citation; otherwise numeric answers would make citation presence vacuous.
     """
-    cited_ids = {item.upper() for item in re.findall(r"\b(?:FACT|OBJ)-\d{5}\b", answer_text, re.IGNORECASE)}
+    cited_ids = {
+        item.upper()
+        for item in re.findall(r"\b(?:FACT|OBJ)-\d{5}\b", answer_text, re.IGNORECASE)
+    }
     if not cited_ids:
         return False, None
     expected_ids = {str(fact.get("fact_id", "")).upper() for fact in evidence_facts}
@@ -515,7 +562,8 @@ def _average_nested_bool(
     values = [
         row[parent_key].get(key)
         for row in results
-        if isinstance(row.get(parent_key), dict) and row[parent_key].get(key) is not None
+        if isinstance(row.get(parent_key), dict)
+        and row[parent_key].get(key) is not None
     ]
     return sum(bool(value) for value in values) / len(values) if values else None
 
@@ -543,7 +591,9 @@ def _stratify(results: list[dict[str, Any]], key: str) -> dict[str, dict[str, An
     return {
         label: {
             "cases": len(rows),
-            "decisive_cases": sum(row.get("answer_verdict") != "uncertain" for row in rows),
+            "decisive_cases": sum(
+                row.get("answer_verdict") != "uncertain" for row in rows
+            ),
             "uncertain": sum(row.get("answer_verdict") == "uncertain" for row in rows),
             "answer_accuracy": _rate(rows, "exact_match"),
             "groundedness": _rate(rows, "grounded"),
@@ -554,7 +604,11 @@ def _stratify(results: list[dict[str, Any]], key: str) -> dict[str, dict[str, An
 
 def _rate(rows: list[dict[str, Any]], key: str) -> float | None:
     applicable = [row.get(key) for row in rows if row.get(key) is not None]
-    return sum(bool(value) for value in applicable) / len(applicable) if applicable else None
+    return (
+        sum(bool(value) for value in applicable) / len(applicable)
+        if applicable
+        else None
+    )
 
 
 def _metric_definitions() -> dict[str, dict[str, str]]:
@@ -588,7 +642,10 @@ def _metric_definitions() -> dict[str, dict[str, str]]:
 
 def _scorer_inventory(results: list[dict[str, Any]]) -> list[dict[str, str]]:
     seen = {
-        (str((row.get("scorer") or {}).get("name")), str((row.get("scorer") or {}).get("version")))
+        (
+            str((row.get("scorer") or {}).get("name")),
+            str((row.get("scorer") or {}).get("version")),
+        )
         for row in results
     }
     return [{"name": name, "version": version} for name, version in sorted(seen)]
@@ -671,8 +728,6 @@ def _replace_latex_fractions(text: str) -> str:
         output.append(f"({numerator[0]})/({denominator[0]})")
         index = denominator[1]
     return "".join(output)
-
-
 
 
 def _post_json(

@@ -2311,9 +2311,7 @@ async def pipeline_enqueue_file(
         extraction_engine = directives.engine
         process_options = directives.process_options
         api_process_options = (
-            process_options_override
-            or process_options
-            or PROCESS_OPTION_CHUNK_FIXED
+            process_options_override or process_options or PROCESS_OPTION_CHUNK_FIXED
         )
 
         # Overlay any per-file chunk parameters (from the filename hint or a

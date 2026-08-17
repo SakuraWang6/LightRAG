@@ -437,20 +437,14 @@ def test_effective_vlm_auto_detects_figures_from_manifest(
     manifest.write_text(json.dumps({"modalities": ["text"]}), encoding="utf-8")
     assert workflow._effective_vlm({}, dataset) is False
 
-    manifest.write_text(
-        json.dumps({"modalities": ["text"]}), encoding="utf-8"
-    )
+    manifest.write_text(json.dumps({"modalities": ["text"]}), encoding="utf-8")
     assert workflow._effective_vlm({"vlm": True}, dataset) is True
     assert workflow._effective_vlm({"vlm": False}, dataset) is False
 
     # Legacy manifests without a modalities list fall back to figure files.
     manifest.write_text(
         json.dumps(
-            {
-                "files": [
-                    {"name": "zh_figure_0004.png", "role": "evaluation_artifact"}
-                ]
-            }
+            {"files": [{"name": "zh_figure_0004.png", "role": "evaluation_artifact"}]}
         ),
         encoding="utf-8",
     )
@@ -461,9 +455,7 @@ def test_ingestion_process_options_reflects_vlm_and_override() -> None:
     assert workflow._ingestion_process_options({"vlm": True}) == "Fi"
     assert workflow._ingestion_process_options({"vlm": False}) == "F"
     assert (
-        workflow._ingestion_process_options(
-            {"vlm": True}, {"process_options": "Fit"}
-        )
+        workflow._ingestion_process_options({"vlm": True}, {"process_options": "Fit"})
         == "Fit"
     )
 
@@ -507,9 +499,7 @@ def test_ingestion_timeout_accounts_for_vlm_figures(
         for i in range(50)
     ]
 
-    manifest.write_text(
-        json.dumps({"pages": 200, "files": files}), encoding="utf-8"
-    )
+    manifest.write_text(json.dumps({"pages": 200, "files": files}), encoding="utf-8")
     # 200 pages * 90s + 50 figures * 180s = 27000s (7.5h), beyond the old
     # 18000s ceiling that timed out the VLM-heavy 200P stress dataset.
     assert workflow._ingestion_timeout_seconds({}, None, dataset) == 27000
@@ -579,9 +569,7 @@ def test_report_markdown_focuses_on_results_and_failures() -> None:
             "context_precision": 0.1,
         }
     }
-    report = workflow._report_markdown(
-        _sample_answer(), _sample_diagnosis(), retrieval
-    )
+    report = workflow._report_markdown(_sample_answer(), _sample_diagnosis(), retrieval)
     assert "## 结果概览" in report
     assert "正确题数 / 总题数：1 / 3" in report
     assert "## 失败原因" in report

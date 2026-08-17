@@ -75,7 +75,11 @@ def _table_sidecar(table_text: str) -> dict[str, Any] | None:
     if not match:
         return None
     table_id = match.group(1)
-    return {"type": "table", "id": table_id, "refs": [{"type": "table", "id": table_id}]}
+    return {
+        "type": "table",
+        "id": table_id,
+        "refs": [{"type": "table", "id": table_id}],
+    }
 
 
 def _table_caption(table_text: str) -> str:
@@ -373,7 +377,9 @@ def _table_aware_segments(content: str) -> list[tuple[bool, str, int, int]]:
     cursor = 0
     for match in _TABLE_MARKUP_RE.finditer(content):
         if match.start() > cursor:
-            segments.append((False, content[cursor : match.start()], cursor, match.start()))
+            segments.append(
+                (False, content[cursor : match.start()], cursor, match.start())
+            )
         segments.append((True, match.group(0), match.start(), match.end()))
         cursor = match.end()
     if cursor < len(content):
@@ -686,9 +692,7 @@ def chunking_by_token_size(
                                 content=piece["content"],
                                 tokens=piece["tokens"],
                                 order=order,
-                                source_span=(
-                                    None
-                                ),
+                                source_span=(None),
                                 emit_source_span=_emit_source_span,
                                 sidecar=piece.get("sidecar"),
                             )
@@ -721,7 +725,9 @@ def chunking_by_token_size(
                         results.append(
                             _make_chunk(
                                 content=chunk_content,
-                                tokens=min(chunk_token_size, len(segment_tokens) - start),
+                                tokens=min(
+                                    chunk_token_size, len(segment_tokens) - start
+                                ),
                                 order=order,
                                 source_span=span,
                                 emit_source_span=_emit_source_span,

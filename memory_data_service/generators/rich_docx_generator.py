@@ -47,7 +47,9 @@ MATH_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 
 
 class RichDocxBuilder:
-    def __init__(self, request: DatasetCreateRequest, dataset_id: str, dataset_path: Path):
+    def __init__(
+        self, request: DatasetCreateRequest, dataset_id: str, dataset_path: Path
+    ):
         self.request = request
         self.dataset_id = dataset_id
         self.dataset_path = dataset_path
@@ -70,7 +72,9 @@ class RichDocxBuilder:
 
         doc = Document()
         doc.core_properties.title = self.request.title
-        doc.core_properties.subject = "Synthetic benchmark for single-document memory evaluation"
+        doc.core_properties.subject = (
+            "Synthetic benchmark for single-document memory evaluation"
+        )
         doc.core_properties.keywords = "LightRAG, memory, rich document, oracle"
         self._configure_document(doc)
 
@@ -138,7 +142,9 @@ class RichDocxBuilder:
             )
             last_text_fact = text_fact_id
 
-            self._add_distractor_paragraph(doc, page, section_path, section_id, text_fact_id)
+            self._add_distractor_paragraph(
+                doc, page, section_path, section_id, text_fact_id
+            )
             self._add_numbered_controls(doc, page, section_path, section_id)
             self._add_operational_dependency(doc, page, section_path, section_id)
 
@@ -152,13 +158,19 @@ class RichDocxBuilder:
                 self._add_negative_constraint_fact(doc, page, section_path, section_id)
 
             if "tables" in self.request.modalities and page % 3 == 0:
-                last_table_fact = self._add_rich_table(doc, page, section_path, section_id)
+                last_table_fact = self._add_rich_table(
+                    doc, page, section_path, section_id
+                )
 
             if "figures" in self.request.modalities and page % 4 == 0:
-                last_figure_fact = self._add_rich_figure(doc, page, section_path, section_id)
+                last_figure_fact = self._add_rich_figure(
+                    doc, page, section_path, section_id
+                )
 
             if "equations" in self.request.modalities and page % 5 == 0:
-                equation_fact_id = self._add_omml_equation(doc, page, section_path, section_id)
+                equation_fact_id = self._add_omml_equation(
+                    doc, page, section_path, section_id
+                )
                 if last_table_fact:
                     self._add_multihop_question(
                         page=page,
@@ -173,7 +185,9 @@ class RichDocxBuilder:
                     )
 
             if page % 6 == 0 and last_table_fact and last_text_fact:
-                self._add_table_reference_paragraph(doc, page, section_path, section_id, last_table_fact)
+                self._add_table_reference_paragraph(
+                    doc, page, section_path, section_id, last_table_fact
+                )
                 self._add_multihop_question(
                     page=page,
                     question_id=f"Q-CROSS-{page:04d}",
@@ -187,7 +201,9 @@ class RichDocxBuilder:
                 )
 
             if page % 8 == 0 and last_figure_fact:
-                self._add_reference_paragraph(doc, page, section_path, section_id, last_figure_fact)
+                self._add_reference_paragraph(
+                    doc, page, section_path, section_id, last_figure_fact
+                )
                 if last_text_fact:
                     self._add_multihop_question(
                         page=page,
@@ -220,7 +236,9 @@ class RichDocxBuilder:
         section.bottom_margin = Inches(0.7)
         section.left_margin = Inches(0.75)
         section.right_margin = Inches(0.75)
-        section.header.paragraphs[0].text = "LightRAG Memory Benchmark - Synthetic Rich Document"
+        section.header.paragraphs[
+            0
+        ].text = "LightRAG Memory Benchmark - Synthetic Rich Document"
         section.footer.paragraphs[0].text = "Confidential synthetic evaluation corpus"
 
     def _cover(self, doc) -> None:
@@ -322,7 +340,9 @@ class RichDocxBuilder:
         )
         self._add_relation(object_id, "FACT-GOV-00001", "supports", evidence_text=text)
 
-    def _add_operational_dependency(self, doc, page: int, section: str, section_id: str) -> None:
+    def _add_operational_dependency(
+        self, doc, page: int, section: str, section_id: str
+    ) -> None:
         """Create interdependent delivery and risk evidence across nearby pages."""
         if page % 4 == 1:
             fact_id = self._next_fact_id()
@@ -443,8 +463,12 @@ class RichDocxBuilder:
         self.footnotes.append((1, footnote_text))
         self.endnotes.append((1, endnote_text))
         self._add_relation(root_id, note_anchor_id, "contains")
-        self._add_relation(note_anchor_id, footnote_id, "refers_to", evidence_text=footnote_text)
-        self._add_relation(note_anchor_id, endnote_id, "refers_to", evidence_text=endnote_text)
+        self._add_relation(
+            note_anchor_id, footnote_id, "refers_to", evidence_text=footnote_text
+        )
+        self._add_relation(
+            note_anchor_id, endnote_id, "refers_to", evidence_text=endnote_text
+        )
 
     def _add_complex_layout_controls(self, doc, root_id: str) -> None:
         doc.add_page_break()
@@ -530,14 +554,20 @@ class RichDocxBuilder:
         paragraph._p.append(parse_xml(textbox_xml))
         return paragraph
 
-    def _append_note_reference(self, paragraph, *, note_id: int, note_kind: str) -> None:
+    def _append_note_reference(
+        self, paragraph, *, note_id: int, note_kind: str
+    ) -> None:
         run = paragraph.add_run()
-        element_name = "w:footnoteReference" if note_kind == "footnote" else "w:endnoteReference"
+        element_name = (
+            "w:footnoteReference" if note_kind == "footnote" else "w:endnoteReference"
+        )
         reference = OxmlElement(element_name)
         reference.set(qn("w:id"), str(note_id))
         run._r.append(reference)
 
-    def _add_section_summary(self, doc, page: int, section: str, section_id: str) -> None:
+    def _add_section_summary(
+        self, doc, page: int, section: str, section_id: str
+    ) -> None:
         text = (
             f"Section summary {page:04d}: this section binds authoritative retrieval-cell "
             "facts to nearby table, figure, formula, and reference objects."
@@ -553,7 +583,9 @@ class RichDocxBuilder:
         )
         self._add_relation(section_id, summary_id, "contains")
 
-    def _add_local_conclusion(self, doc, page: int, section: str, section_id: str) -> None:
+    def _add_local_conclusion(
+        self, doc, page: int, section: str, section_id: str
+    ) -> None:
         text = (
             f"Local conclusion {page:04d}: current answers must prefer gold FACT rows, "
             "caption-grounded visual states, and explicit equation labels over archived distractors."
@@ -637,9 +669,13 @@ class RichDocxBuilder:
             labels=["distractor"],
         )
         self._add_relation(section_id, paragraph_id, "contains")
-        self._add_relation(paragraph_id, target_fact_id, "distracts", evidence_text=text)
+        self._add_relation(
+            paragraph_id, target_fact_id, "distracts", evidence_text=text
+        )
 
-    def _add_numbered_controls(self, doc, page: int, section: str, section_id: str) -> None:
+    def _add_numbered_controls(
+        self, doc, page: int, section: str, section_id: str
+    ) -> None:
         intro = f"Operational checklist for Retrieval Cell {page:04d}:"
         doc.add_paragraph(intro)
         paragraph_id = self._add_object(
@@ -793,10 +829,14 @@ class RichDocxBuilder:
             evidence_fact_ids=[fact_id],
         )
         self._add_relation(object_id, fact_id, "supports", evidence_text=text)
-        self._add_relation(draft_obj_id, fact_id, "contradicts", evidence_text=draft_text)
+        self._add_relation(
+            draft_obj_id, fact_id, "contradicts", evidence_text=draft_text
+        )
         return fact_id
 
-    def _add_negative_constraint_fact(self, doc, page: int, section: str, section_id: str) -> str:
+    def _add_negative_constraint_fact(
+        self, doc, page: int, section: str, section_id: str
+    ) -> str:
         fact_id = self._next_fact_id()
         forbidden = f"retired override channel ROC-{page:04d}"
         text = (
@@ -858,18 +898,34 @@ class RichDocxBuilder:
             table.cell(1, col).text = header
         max_value = page * 11 + 0.75
         rows = [
-            ("Latency Alpha", f"{page + 1}.00", f"{page + 2}.50", f"{max_value:.2f}", "ms"),
-            ("Latency Beta", f"{page + 2}.00", f"{page + 3}.50", f"{max_value + 8:.2f}", "ms"),
-            ("Voltage Guard", f"{page + 0.1:.1f}", f"{page + 0.5:.1f}", f"{page + 0.9:.1f}", "V"),
+            (
+                "Latency Alpha",
+                f"{page + 1}.00",
+                f"{page + 2}.50",
+                f"{max_value:.2f}",
+                "ms",
+            ),
+            (
+                "Latency Beta",
+                f"{page + 2}.00",
+                f"{page + 3}.50",
+                f"{max_value + 8:.2f}",
+                "ms",
+            ),
+            (
+                "Voltage Guard",
+                f"{page + 0.1:.1f}",
+                f"{page + 0.5:.1f}",
+                f"{page + 0.9:.1f}",
+                "V",
+            ),
             (fact_id, "gold-row", "authoritative", f"{max_value:.2f}", "ms"),
             ("Archived Row", "legacy", "obsolete", f"{max_value + 17:.2f}", "ms"),
         ]
         for row_offset, row_values in enumerate(rows, start=2):
             for col, value in enumerate(row_values):
                 table.cell(row_offset, col).text = str(value)
-        footnote = (
-            f"Table note {table_id}: The gold-row maximum is authoritative; the Archived Row is a distractor."
-        )
+        footnote = f"Table note {table_id}: The gold-row maximum is authoritative; the Archived Row is a distractor."
         doc.add_paragraph(footnote)
 
         table_id_obj = self._add_object(
@@ -884,7 +940,9 @@ class RichDocxBuilder:
         )
         self._add_relation(section_id, caption_id, "contains")
         self._add_relation(section_id, table_id_obj, "contains")
-        self._add_relation(caption_id, table_id_obj, "caption_of", evidence_text=caption)
+        self._add_relation(
+            caption_id, table_id_obj, "caption_of", evidence_text=caption
+        )
         self._add_fact(
             fact_id=fact_id,
             fact_type="table_cell",
@@ -937,7 +995,9 @@ class RichDocxBuilder:
             labels=["figure_caption"],
         )
         self._add_relation(section_id, figure_obj_id, "contains")
-        self._add_relation(caption_id, figure_obj_id, "caption_of", evidence_text=caption)
+        self._add_relation(
+            caption_id, figure_obj_id, "caption_of", evidence_text=caption
+        )
         self._add_fact(
             fact_id=fact_id,
             fact_type="figure_caption",
@@ -1018,7 +1078,9 @@ class RichDocxBuilder:
         )
         self._add_relation(section_id, latex_obj_id, "contains")
         self._add_relation(section_id, reference_obj_id, "contains")
-        self._add_relation(latex_obj_id, equation_obj_id, "mentions", evidence_text=latex_mirror)
+        self._add_relation(
+            latex_obj_id, equation_obj_id, "mentions", evidence_text=latex_mirror
+        )
         self._add_relation(reference_obj_id, equation_obj_id, "refers_to")
         self._add_fact(
             fact_id=fact_id,
@@ -1063,8 +1125,12 @@ class RichDocxBuilder:
             question_type="formula_variable",
         )
         self._add_relation(equation_obj_id, fact_id, "supports")
-        self._add_relation(definition_obj_id, variable_fact_id, "supports", evidence_text=definition)
-        self._add_relation(definition_obj_id, equation_obj_id, "defines", evidence_text=definition)
+        self._add_relation(
+            definition_obj_id, variable_fact_id, "supports", evidence_text=definition
+        )
+        self._add_relation(
+            definition_obj_id, equation_obj_id, "defines", evidence_text=definition
+        )
         return fact_id
 
     def _add_table_reference_paragraph(
@@ -1081,7 +1147,9 @@ class RichDocxBuilder:
             "answers about latency maxima must cite that table row instead of narrative summaries."
         )
         paragraph = doc.add_paragraph(text + " Cross-reference field: ")
-        self._append_ref_field(paragraph, _bookmark_name(f"TBL-{page - (page % 3):04d}"))
+        self._append_ref_field(
+            paragraph, _bookmark_name(f"TBL-{page - (page % 3):04d}")
+        )
         ref_obj_id = self._add_object(
             "reference",
             title=ref_id,
@@ -1277,7 +1345,9 @@ class RichDocxBuilder:
         )
         self._add_relation(appendix_id, caption_id, "contains")
         self._add_relation(appendix_id, table_obj_id, "contains")
-        self._add_relation(caption_id, table_obj_id, "caption_of", evidence_text=caption)
+        self._add_relation(
+            caption_id, table_obj_id, "caption_of", evidence_text=caption
+        )
         self._add_fact(
             fact_id=fact_id,
             fact_type="table_cell",
@@ -1337,7 +1407,9 @@ class RichDocxBuilder:
         draw.line((390, 235, 780, 235), fill=(80, 80, 90), width=4)
         draw.polygon([(760, 215), (800, 235), (760, 255)], fill=(80, 80, 90))
         draw.text((430, 390), f"Gold state: {state}", fill=(10, 120, 80))
-        draw.text((430, 430), "Gray retired state is a distractor", fill=(130, 130, 130))
+        draw.text(
+            (430, 430), "Gray retired state is a distractor", fill=(130, 130, 130)
+        )
         image.save(path)
 
     def _add_multihop_question(
@@ -1372,7 +1444,9 @@ class RichDocxBuilder:
     def _add_object(self, object_type: str, **kwargs) -> str:
         object_id = kwargs.pop("object_id", f"OBJ-{self.object_counter:06d}")
         self.object_counter += 1
-        self.objects.append(DocumentObject(object_id=object_id, object_type=object_type, **kwargs))
+        self.objects.append(
+            DocumentObject(object_id=object_id, object_type=object_type, **kwargs)
+        )
         return object_id
 
     def _add_relation(
@@ -1416,9 +1490,13 @@ class RichDocxBuilder:
         return paragraph
 
     def _append_ref_field(self, paragraph, bookmark_name: str) -> None:
-        self._append_simple_field(paragraph, f" REF {bookmark_name} \\h ", bookmark_name)
+        self._append_simple_field(
+            paragraph, f" REF {bookmark_name} \\h ", bookmark_name
+        )
 
-    def _append_simple_field(self, paragraph, instruction_text: str, placeholder_text: str) -> None:
+    def _append_simple_field(
+        self, paragraph, instruction_text: str, placeholder_text: str
+    ) -> None:
         run = paragraph.add_run()
         begin = OxmlElement("w:fldChar")
         begin.set(qn("w:fldCharType"), "begin")
@@ -1435,11 +1513,14 @@ class RichDocxBuilder:
 
     def _inject_update_fields_setting(self, docx_path: Path) -> None:
         tmp_path = docx_path.with_suffix(".settings.tmp.docx")
-        with zipfile.ZipFile(docx_path, "r") as source, zipfile.ZipFile(
-            tmp_path,
-            "w",
-            compression=zipfile.ZIP_DEFLATED,
-        ) as target:
+        with (
+            zipfile.ZipFile(docx_path, "r") as source,
+            zipfile.ZipFile(
+                tmp_path,
+                "w",
+                compression=zipfile.ZIP_DEFLATED,
+            ) as target,
+        ):
             for item in source.infolist():
                 data = source.read(item.filename)
                 if item.filename == "word/settings.xml":
@@ -1457,11 +1538,14 @@ class RichDocxBuilder:
         if not self.footnotes and not self.endnotes:
             return
         tmp_path = docx_path.with_suffix(".notes.tmp.docx")
-        with zipfile.ZipFile(docx_path, "r") as source, zipfile.ZipFile(
-            tmp_path,
-            "w",
-            compression=zipfile.ZIP_DEFLATED,
-        ) as target:
+        with (
+            zipfile.ZipFile(docx_path, "r") as source,
+            zipfile.ZipFile(
+                tmp_path,
+                "w",
+                compression=zipfile.ZIP_DEFLATED,
+            ) as target,
+        ):
             content_types = source.read("[Content_Types].xml").decode("utf-8")
             rels = source.read("word/_rels/document.xml.rels").decode("utf-8")
             content_types = _ensure_override(
@@ -1497,8 +1581,13 @@ class RichDocxBuilder:
                     target.writestr(item, source.read(item.filename))
             target.writestr("[Content_Types].xml", content_types)
             target.writestr("word/_rels/document.xml.rels", rels)
-            target.writestr("word/footnotes.xml", _notes_xml("footnotes", "footnote", self.footnotes))
-            target.writestr("word/endnotes.xml", _notes_xml("endnotes", "endnote", self.endnotes))
+            target.writestr(
+                "word/footnotes.xml",
+                _notes_xml("footnotes", "footnote", self.footnotes),
+            )
+            target.writestr(
+                "word/endnotes.xml", _notes_xml("endnotes", "endnote", self.endnotes)
+            )
         shutil.move(str(tmp_path), str(docx_path))
 
 
@@ -1548,18 +1637,37 @@ def generate_rich_dataset(
             objects=builder.objects,
             relations=builder.relations,
         )
-        write_json(dataset_path / "facts.json", {"dataset_id": dataset_id, "language": request.language, "facts": builder.facts})
+        write_json(
+            dataset_path / "facts.json",
+            {
+                "dataset_id": dataset_id,
+                "language": request.language,
+                "facts": builder.facts,
+            },
+        )
         write_json(
             dataset_path / "questions.json",
-            {"dataset_id": dataset_id, "language": request.language, "questions": builder.questions},
+            {
+                "dataset_id": dataset_id,
+                "language": request.language,
+                "questions": builder.questions,
+            },
         )
         write_json(
             dataset_path / "objects.json",
-            {"dataset_id": dataset_id, "language": request.language, "objects": builder.objects},
+            {
+                "dataset_id": dataset_id,
+                "language": request.language,
+                "objects": builder.objects,
+            },
         )
         write_json(
             dataset_path / "relations.json",
-            {"dataset_id": dataset_id, "language": request.language, "relations": builder.relations},
+            {
+                "dataset_id": dataset_id,
+                "language": request.language,
+                "relations": builder.relations,
+            },
         )
         write_json(dataset_path / "oracle.json", oracle)
     files: list[GeneratedFile] = [
@@ -1570,7 +1678,13 @@ def generate_rich_dataset(
     files.append(pdf_record)
     if companion_docx is not None:
         files.append(_file_record(companion_docx, "docx", role="source_document"))
-    for name in ("facts.json", "questions.json", "objects.json", "relations.json", "oracle.json"):
+    for name in (
+        "facts.json",
+        "questions.json",
+        "objects.json",
+        "relations.json",
+        "oracle.json",
+    ):
         files.append(_file_record(dataset_path / name, "json"))
     for asset_path in sorted(dataset_path.glob("*.png")):
         files.append(_file_record(asset_path, "png"))

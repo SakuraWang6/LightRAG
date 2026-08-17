@@ -56,9 +56,7 @@ def test_table_views_emit_view_chunks_with_sidecar(monkeypatch) -> None:
     content = "Intro paragraph.\n" + _table(_rows()) + "\nOutro paragraph."
     chunks = chunking_by_fixed_token(_tok(), content, chunk_token_size=400)
     table_views = [
-        chunk
-        for chunk in chunks
-        if chunk["content"].startswith("Object Type: Table\n")
+        chunk for chunk in chunks if chunk["content"].startswith("Object Type: Table\n")
     ]
     row_views = [
         chunk for chunk in chunks if "Object Type: Table Row" in chunk["content"]
@@ -79,7 +77,9 @@ def test_row_view_only_skips_table_summary(monkeypatch) -> None:
     monkeypatch.setenv("LIGHTRAG_TABLE_ROW_VIEW", "1")
     content = _table(_rows())
     chunks = chunking_by_fixed_token(_tok(), content, chunk_token_size=400)
-    assert all(not chunk["content"].startswith("Object Type: Table\n") for chunk in chunks)
+    assert all(
+        not chunk["content"].startswith("Object Type: Table\n") for chunk in chunks
+    )
     assert len([c for c in chunks if "Object Type: Table Row" in c["content"]]) == 2
 
 
@@ -99,7 +99,9 @@ def test_long_table_rows_stay_row_safe_with_views(monkeypatch) -> None:
     content = "Table LONG-TBL-APP: many rows.\n" + _table(rows, "LONG-TBL-APP")
     chunks = chunking_by_fixed_token(_tok(), content, chunk_token_size=240)
     row_chunks = [
-        chunk["content"] for chunk in chunks if "Object Type: Table Row" in chunk["content"]
+        chunk["content"]
+        for chunk in chunks
+        if "Object Type: Table Row" in chunk["content"]
     ]
     assert any("FACT-00055" in chunk for chunk in row_chunks)
     for chunk in row_chunks:

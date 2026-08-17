@@ -374,7 +374,9 @@ def _find_evidence_span(content: str, witness: str) -> tuple[int, int] | None:
     return offsets[normalized_start], offsets[normalized_end] + 1
 
 
-def _excerpt_bounds(content_chars: int, match_start: int, match_end: int) -> tuple[int, int]:
+def _excerpt_bounds(
+    content_chars: int, match_start: int, match_end: int
+) -> tuple[int, int]:
     """Return a bounded excerpt centred on the answer-bearing evidence."""
     if content_chars <= _HIT_EVIDENCE_EXCERPT_CHARS:
         return 0, content_chars

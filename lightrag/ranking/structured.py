@@ -40,9 +40,7 @@ def _structured_ids(text: str, pattern: re.Pattern[str]) -> set[str]:
 
 def _structured_overlap(query: str, chunk: dict[str, Any]) -> int:
     query_tokens = {
-        token.lower()
-        for token in _STRUCTURED_TOKEN_RE.findall(query)
-        if len(token) > 1
+        token.lower() for token in _STRUCTURED_TOKEN_RE.findall(query) if len(token) > 1
     }
     content_tokens = {
         token.lower()
@@ -72,9 +70,17 @@ def _structured_rank(query: str, chunks: list[dict[str, Any]]) -> list[dict[str,
         candidate_type = _structured_candidate_type(chunk)
         if query_fact_ids and candidate_fact_ids & query_fact_ids:
             tier = 0
-        elif query_table_ids and candidate_table_ids & query_table_ids and candidate_type == "row_view":
+        elif (
+            query_table_ids
+            and candidate_table_ids & query_table_ids
+            and candidate_type == "row_view"
+        ):
             tier = 1
-        elif query_table_ids and candidate_table_ids & query_table_ids and candidate_type in {"table_view", "raw"}:
+        elif (
+            query_table_ids
+            and candidate_table_ids & query_table_ids
+            and candidate_type in {"table_view", "raw"}
+        ):
             tier = 2
         elif query_table_ids and candidate_table_ids & query_table_ids:
             tier = 3

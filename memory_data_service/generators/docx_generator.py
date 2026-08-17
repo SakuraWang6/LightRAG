@@ -69,7 +69,10 @@ def generate_dataset(
             pdf_record = _skipped("pdf")
 
         oracle = OraclePayload(
-            dataset_id=dataset_id, language=request.language, facts=facts, questions=questions
+            dataset_id=dataset_id,
+            language=request.language,
+            facts=facts,
+            questions=questions,
         )
         write_json(
             dataset_path / "facts.json",
@@ -77,10 +80,20 @@ def generate_dataset(
         )
         write_json(
             dataset_path / "questions.json",
-            {"dataset_id": dataset_id, "language": request.language, "questions": questions},
+            {
+                "dataset_id": dataset_id,
+                "language": request.language,
+                "questions": questions,
+            },
         )
-        write_json(dataset_path / "objects.json", {"dataset_id": dataset_id, "language": request.language, "objects": []})
-        write_json(dataset_path / "relations.json", {"dataset_id": dataset_id, "language": request.language, "relations": []})
+        write_json(
+            dataset_path / "objects.json",
+            {"dataset_id": dataset_id, "language": request.language, "objects": []},
+        )
+        write_json(
+            dataset_path / "relations.json",
+            {"dataset_id": dataset_id, "language": request.language, "relations": []},
+        )
         write_json(dataset_path / "oracle.json", oracle)
     files: list[GeneratedFile] = [
         _file_record(docx_path, "docx", role="source_document")
@@ -93,7 +106,13 @@ def generate_dataset(
         files.append(_skipped("pdf"))
     if companion_docx is not None:
         files.append(_file_record(companion_docx, "docx", role="source_document"))
-    for name in ("facts.json", "questions.json", "objects.json", "relations.json", "oracle.json"):
+    for name in (
+        "facts.json",
+        "questions.json",
+        "objects.json",
+        "relations.json",
+        "oracle.json",
+    ):
         files.append(_file_record(dataset_path / name, "json"))
     for asset_path in sorted(dataset_path.glob("*.png")):
         files.append(_file_record(asset_path, "png"))
@@ -277,7 +296,9 @@ def _write_docx(
         if "equations" in request.modalities and page % 4 == 0:
             equation_fact_id = f"FACT-{fact_counter:05d}"
             fact_counter += 1
-            equation = f"{equation_fact_id}: E_{{{page}}} = P_{{{page}}} * T_{{{page}}} / eta"
+            equation = (
+                f"{equation_fact_id}: E_{{{page}}} = P_{{{page}}} * T_{{{page}}} / eta"
+            )
             doc.add_paragraph(equation)
             facts.append(
                 FactRecord(

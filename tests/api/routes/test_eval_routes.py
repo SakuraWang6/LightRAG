@@ -47,7 +47,9 @@ def datasets_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def client(runs_root: Path, datasets_root: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def client(
+    runs_root: Path, datasets_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> TestClient:
     monkeypatch.setattr(utils_api, "auth_configured", False)
     app = FastAPI()
     app.include_router(
@@ -209,9 +211,7 @@ def test_create_job_defaults_vlm_to_auto(
         return {"id": "run-job", "status": "pending"}
 
     monkeypatch.setattr(eval_routes.eval_jobs, "start_run_job", start_run_job)
-    response = client.post(
-        "/eval/jobs", json={"kind": "run", "dataset": "sample"}
-    )
+    response = client.post("/eval/jobs", json={"kind": "run", "dataset": "sample"})
     assert response.status_code == 200
     assert captured["params"].vlm is None
 

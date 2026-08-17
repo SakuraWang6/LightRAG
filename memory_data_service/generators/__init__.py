@@ -25,7 +25,11 @@ def generate_dataset(
     force: bool = False,
 ) -> DatasetManifest:
     dataset_path = root / request.dataset_id if request.dataset_id else None
-    if dataset_path is not None and (dataset_path / "manifest.json").exists() and not force:
+    if (
+        dataset_path is not None
+        and (dataset_path / "manifest.json").exists()
+        and not force
+    ):
         raise ValueError(
             f"dataset already exists: {request.dataset_id} at {dataset_path} "
             "(pass force=True to overwrite)"

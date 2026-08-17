@@ -282,9 +282,9 @@ async def test_status_lines_do_not_grow_with_the_number_of_truncated_chunks(
     (and the glean continuation recovers them) must not flood the bounded
     ``history_messages`` ring with one line per chunk."""
     config = _make_global_config(gleaning=1)
-    config["role_llm_funcs"]["extract"].side_effect = (
-        _truncated_initial_complete_glean()
-    )
+    config["role_llm_funcs"][
+        "extract"
+    ].side_effect = _truncated_initial_complete_glean()
 
     tally = TokenLimitTruncationTally()
     await extract_entities(
@@ -307,9 +307,9 @@ async def test_every_occurrence_still_reaches_the_server_log(
     """Aggregation trims the status ring, not the log: the per-chunk detail
     an operator needs for diagnosis stays one line per event."""
     config = _make_global_config(gleaning=1)
-    config["role_llm_funcs"]["extract"].side_effect = (
-        _truncated_initial_complete_glean()
-    )
+    config["role_llm_funcs"][
+        "extract"
+    ].side_effect = _truncated_initial_complete_glean()
 
     with caplog.at_level("WARNING", logger="lightrag"):
         await extract_entities(chunks=_make_chunks(count=3), global_config=config)

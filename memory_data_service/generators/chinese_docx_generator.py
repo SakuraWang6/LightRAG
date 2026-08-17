@@ -112,11 +112,27 @@ _PARAMETER_PROFILES = (
     ("转人工阈值", "分", lambda p, r: f"{25 + p + r.randint(0, 4)}"),
     ("校准窗口", "小时", lambda p, r: f"{4 + (p % 4) * 3 + r.randint(0, 2)}"),
     ("标准标定上限", "QMU", lambda p, r: f"{1000 + p * 7 + r.randint(0, 6)}"),
-    ("冗余系数", "", lambda p, r: f"{1.1 + (p % 5) * 0.1 + r.randint(0, 2) * 0.05:.2f}"),
+    (
+        "冗余系数",
+        "",
+        lambda p, r: f"{1.1 + (p % 5) * 0.1 + r.randint(0, 2) * 0.05:.2f}",
+    ),
     ("保留期限", "天", lambda p, r: f"{30 + p * 3 + r.randint(0, 5)}"),
-    ("缓存命中率下限", "%", lambda p, r: f"{82 + (p % 8) * 0.5 + r.randint(0, 3) * 0.5:.1f}"),
-    ("平均召回率", "%", lambda p, r: f"{88 + (p % 6) * 0.3 + r.randint(0, 5) * 0.1:.1f}"),
-    ("单次查询成本", "元", lambda p, r: f"{0.02 + p * 0.001 + r.randint(0, 5) * 0.001:.3f}"),
+    (
+        "缓存命中率下限",
+        "%",
+        lambda p, r: f"{82 + (p % 8) * 0.5 + r.randint(0, 3) * 0.5:.1f}",
+    ),
+    (
+        "平均召回率",
+        "%",
+        lambda p, r: f"{88 + (p % 6) * 0.3 + r.randint(0, 5) * 0.1:.1f}",
+    ),
+    (
+        "单次查询成本",
+        "元",
+        lambda p, r: f"{0.02 + p * 0.001 + r.randint(0, 5) * 0.001:.3f}",
+    ),
     ("每日备份窗口", "分钟", lambda p, r: f"{5 + (p % 6) * 5 + r.randint(0, 3)}"),
     ("灰度观察期", "天", lambda p, r: f"{3 + (p % 5) * 2 + r.randint(0, 2)}"),
     ("模型评分阈值", "分", lambda p, r: f"{70 + p * 0.2 + r.randint(0, 9)}"),
@@ -188,10 +204,7 @@ _NARRATIVE_TEMPLATES = (
         "为确保口径可追溯，{workstream}的{param}在本页被记为 "
         "{value} {unit}，关联档案 {record_code}。"
     ),
-    (
-        "第 {page} 页将{workstream}的{param}同步到运行基线，"
-        "生效值为 {value} {unit}。"
-    ),
+    ("第 {page} 页将{workstream}的{param}同步到运行基线，生效值为 {value} {unit}。"),
 )
 
 _CONTROL_TEMPLATES = (
@@ -226,7 +239,7 @@ _TABLE_THEMES = (
             ("重排耗时", f"{p * 0.4:.1f}", f"{p * 1.2:.1f}"),
             ("生成耗时", f"{p * 0.8:.1f}", f"{p * 2.4:.1f}"),
             ("首 token 时延", f"{p * 0.6:.1f}", f"{p * 1.6:.1f}"),
-            (fact_id, f"标准行标记（时延阈值）", answer),
+            (fact_id, "标准行标记（时延阈值）", answer),
         ],
     ),
     (
@@ -240,7 +253,7 @@ _TABLE_THEMES = (
             ("重排并发", f"{p * 6}", f"{p * 10}"),
             ("批处理", f"{p * 4}", f"{p * 8}"),
             ("缓存命中", f"{p * 30}", f"{p * 44}"),
-            (fact_id, f"标准行标记（吞吐配额）", answer),
+            (fact_id, "标准行标记（吞吐配额）", answer),
         ],
     ),
     (
@@ -254,7 +267,7 @@ _TABLE_THEMES = (
             ("重排错误", f"{p * 0.05:.2f}", f"{p * 0.1:.2f}"),
             ("生成错误", f"{p * 0.08:.2f}", f"{p * 0.16:.2f}"),
             ("超时率", f"{p * 0.04:.2f}", f"{p * 0.08:.2f}"),
-            (fact_id, f"标准行标记（错误率预算）", answer),
+            (fact_id, "标准行标记（错误率预算）", answer),
         ],
     ),
     (
@@ -267,7 +280,7 @@ _TABLE_THEMES = (
             ("核心问答", f"{99 + (p % 4) * 0.1:.1f}%", f"{99 + (p % 4) * 0.15:.2f}%"),
             ("管理接口", f"{99 + (p % 3) * 0.2:.1f}%", f"{99 + (p % 3) * 0.25:.2f}%"),
             ("批量任务", f"{99 + (p % 2) * 0.3:.1f}%", f"{99 + (p % 2) * 0.35:.2f}%"),
-            (fact_id, f"标准行标记（可用性目标）", answer),
+            (fact_id, "标准行标记（可用性目标）", answer),
         ],
     ),
     (
@@ -280,7 +293,7 @@ _TABLE_THEMES = (
             ("查询成本", f"{p * 40}", f"{p * 50}"),
             ("存储成本", f"{p * 8}", f"{p * 12}"),
             ("缓存复用", f"{p * 15}", f"{p * 20}"),
-            (fact_id, f"标准行标记（成本配额）", answer),
+            (fact_id, "标准行标记（成本配额）", answer),
         ],
     ),
     (
@@ -293,7 +306,7 @@ _TABLE_THEMES = (
             ("检索失败", "5 分钟", f"{3 + (p % 4)}"),
             ("生成失败", "5 分钟", f"{3 + (p % 5)}"),
             ("人工转接", "10 分钟", f"{2 + (p % 3)}"),
-            (fact_id, f"标准行标记（告警升级阈值）", answer),
+            (fact_id, "标准行标记（告警升级阈值）", answer),
         ],
     ),
 )
@@ -315,11 +328,23 @@ _FIGURE_STATES = (
 )
 
 _EQUATION_POOL = (
-    ("响应时延", "L = L_r + L_k + L_g", "L_r 为检索耗时，L_k 为关键词与重排序耗时，L_g 为生成耗时"),
-    ("吞吐配额", "T = W ÷ (t_s + t_o)", "W 为并行工作数，t_s 为单请求服务耗时，t_o 为固定开销"),
+    (
+        "响应时延",
+        "L = L_r + L_k + L_g",
+        "L_r 为检索耗时，L_k 为关键词与重排序耗时，L_g 为生成耗时",
+    ),
+    (
+        "吞吐配额",
+        "T = W ÷ (t_s + t_o)",
+        "W 为并行工作数，t_s 为单请求服务耗时，t_o 为固定开销",
+    ),
     ("服务可用性", "A = M ÷ (M + R)", "M 为平均无故障时间，R 为平均修复时间"),
     ("证据召回率", "R = H ÷ (H + M)", "H 为命中证据数，M 为未命中证据数"),
-    ("单位服务成本", "C = Q × C_q + S × C_s", "Q 为查询量，C_q 为单次查询成本，S 为存储量，C_s 为单单位存储成本"),
+    (
+        "单位服务成本",
+        "C = Q × C_q + S × C_s",
+        "Q 为查询量，C_q 为单次查询成本，S 为存储量，C_s 为单单位存储成本",
+    ),
 )
 
 
@@ -398,7 +423,13 @@ def generate_chinese_dataset(
     files.append(pdf_record)
     if companion_docx is not None:
         files.append(_file_record(companion_docx, "docx", role="source_document"))
-    for name in ("facts.json", "questions.json", "objects.json", "relations.json", "oracle.json"):
+    for name in (
+        "facts.json",
+        "questions.json",
+        "objects.json",
+        "relations.json",
+        "oracle.json",
+    ):
         files.append(_file_record(dataset_path / name, "json"))
     for asset_path in sorted(dataset_path.glob("*.png")):
         files.append(_file_record(asset_path, "png"))
@@ -569,9 +600,7 @@ def _write_docx(
     for page in range(1, pages + 1):
         chapter = (page - 1) // 10 + 1
         unit = (page - 1) // 2 + 1
-        workstream_title, _ = _WORKSTREAMS[
-            (page - 1) % len(_WORKSTREAMS)
-        ]
+        workstream_title, _ = _WORKSTREAMS[(page - 1) % len(_WORKSTREAMS)]
         chapter_title = f"第 {chapter} 章：星桥项目——{workstream_title}"
         section_title = f"第 {chapter}.{unit} 节：实施单元 {unit:04d}"
         section = f"{chapter_title} / {section_title} / 第 {page} 页"
@@ -774,9 +803,7 @@ def _write_docx(
             caption = f"表 {page}：{workstream_title}的{theme}"
             document.add_paragraph(caption)
             table_fact_answer = f"{table_answer} {table_unit}".strip()
-            rows = table_rows_fn(
-                page, table_fact_id, table_fact_answer, table_unit
-            )
+            rows = table_rows_fn(page, table_fact_id, table_fact_answer, table_unit)
             table = document.add_table(rows=len(rows), cols=3)
             table.style = "Table Grid"
             for row_index, row_values in enumerate(rows):
@@ -854,7 +881,9 @@ def _write_docx(
                     section=section,
                     page=page,
                     object_type="figure",
-                    object_id_hint=figure_id if request.profile == "rich" else f"图 {page}",
+                    object_id_hint=figure_id
+                    if request.profile == "rich"
+                    else f"图 {page}",
                 )
             )
             questions.append(
@@ -897,7 +926,9 @@ def _write_docx(
                     section=section,
                     page=page,
                     object_type="equation",
-                    object_id_hint=equation_id if request.profile == "rich" else f"公式 {page}",
+                    object_id_hint=equation_id
+                    if request.profile == "rich"
+                    else f"公式 {page}",
                 )
             )
             questions.append(
@@ -1043,17 +1074,26 @@ def _write_figure(
             x = xs[index]
             fill = (232, 240, 248) if index != 2 else (233, 244, 238)
             outline = blue if index != 2 else green
-            draw.rounded_rectangle((x, 200, x + 170, 300), radius=16, fill=fill, outline=outline, width=4)
+            draw.rounded_rectangle(
+                (x, 200, x + 170, 300), radius=16, fill=fill, outline=outline, width=4
+            )
             draw.text((x + 85 - 30, 240), label, fill=ink, font=label_font)
             if index < 3:
                 x1 = x + 170
                 y1 = 250
                 x2 = xs[index + 1] - 10
                 draw.line((x1, y1, x2, y1), fill=ink, width=4)
-                draw.polygon([(x2 - 14, y1 - 8), (x2 + 4, y1), (x2 - 14, y1 + 8)], fill=ink)
+                draw.polygon(
+                    [(x2 - 14, y1 - 8), (x2 + 4, y1), (x2 - 14, y1 + 8)], fill=ink
+                )
     elif kind == 1:
         # Bar chart
-        values = [max(4, int(page * 1.2)), max(6, int(page * 1.8)), max(5, int(page * 1.5)), max(7, int(page * 2.4))]
+        values = [
+            max(4, int(page * 1.2)),
+            max(6, int(page * 1.8)),
+            max(5, int(page * 1.5)),
+            max(7, int(page * 2.4)),
+        ]
         labels = ("检索", "重排", "生成", "引用")
         x0, y0, bw = 90, 320, 150
         draw.line((x0, y0, x0, y0 - 230), fill=ink, width=3)
@@ -1073,10 +1113,15 @@ def _write_figure(
         draw.line((x0, y0, x0, y0 - 230), fill=ink, width=3)
         draw.line((x0, y0, 850, y0), fill=ink, width=3)
         max_y = max(p[1] for p in points) * 1.2
-        coords = [(x0 + 90 + i * 90, y0 - int(210 * p[1] / max_y)) for i, p in enumerate(points)]
+        coords = [
+            (x0 + 90 + i * 90, y0 - int(210 * p[1] / max_y))
+            for i, p in enumerate(points)
+        ]
         draw.line(coords, fill=blue, width=4, joint="curve")
         for index, (x, y) in enumerate(coords):
-            draw.ellipse((x - 6, y - 6, x + 6, y + 6), fill=orange, outline=ink, width=2)
+            draw.ellipse(
+                (x - 6, y - 6, x + 6, y + 6), fill=orange, outline=ink, width=2
+            )
             draw.text((x - 16, y + 8), str(points[index][1]), fill=ink, font=small_font)
         draw.text((60, 336), "时间窗口", fill=ink, font=label_font)
     else:
@@ -1089,7 +1134,13 @@ def _write_figure(
         )
         y = 180
         for label, color in layers:
-            draw.rounded_rectangle((120, y, 760, y + 52), radius=12, fill=(240, 244, 248), outline=color, width=3)
+            draw.rounded_rectangle(
+                (120, y, 760, y + 52),
+                radius=12,
+                fill=(240, 244, 248),
+                outline=color,
+                width=3,
+            )
             draw.text((150, y + 12), label, fill=ink, font=label_font)
             y += 64
     image.save(path)

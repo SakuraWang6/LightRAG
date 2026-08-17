@@ -24,8 +24,7 @@ def source_document_names(manifest: dict[str, Any]) -> list[str]:
     """
     files = [item for item in manifest.get("files") or [] if isinstance(item, dict)]
     has_roles = any(
-        item.get("role") in {"source_document", "evaluation_artifact"}
-        for item in files
+        item.get("role") in {"source_document", "evaluation_artifact"} for item in files
     )
     names: list[str] = []
     for item in files:
@@ -91,7 +90,9 @@ def upload_dataset_files(
             "file_name": path.name,
             "format": file_info.get("format"),
             "content_sha256": content_sha256,
-            "upload_started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "upload_started_at": datetime.now(timezone.utc).isoformat(
+                timespec="seconds"
+            ),
         }
         if confirmed_hashes and content_sha256 in confirmed_hashes:
             uploaded.append(
@@ -99,7 +100,11 @@ def upload_dataset_files(
                     **receipt,
                     "status": "success",
                     "reused": True,
-                    "track_status": {"terminal": True, "passed": True, "status": "processed"},
+                    "track_status": {
+                        "terminal": True,
+                        "passed": True,
+                        "status": "processed",
+                    },
                 }
             )
             if progress_callback:
@@ -158,6 +163,7 @@ def _upload_file(
         access_token=access_token,
         process_options=process_options,
     )
+
 
 def _wait_track_status(
     track_id: str,

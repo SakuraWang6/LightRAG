@@ -91,7 +91,15 @@ def _snapshot_dataset_meta(
         return {}
     values = {
         key: captured.get(key)
-        for key in ("pages", "tier", "profile", "language", "formats", "title", "display_name")
+        for key in (
+            "pages",
+            "tier",
+            "profile",
+            "language",
+            "formats",
+            "title",
+            "display_name",
+        )
         if captured.get(key) not in (None, "")
     }
     dataset_id = captured.get("dataset_id") or dataset
@@ -260,9 +268,7 @@ def _merge_end_to_end_case_methods(
     return {**answer_method, "results": merged_rows}
 
 
-def _hydrate_case_questions_from_trace(
-    run_dir: Path, cases: dict[str, Any]
-) -> None:
+def _hydrate_case_questions_from_trace(run_dir: Path, cases: dict[str, Any]) -> None:
     """Backfill question text for runs created before answer rows stored it."""
     try:
         traces = _read_json(run_dir / "case_trace.json").get("cases") or []
@@ -295,7 +301,9 @@ def _hydrate_case_questions_from_trace(
         evidence_facts = oracle.get("evidence_facts") or []
         if evidence_facts and isinstance(evidence_facts, list):
             row.setdefault("detail", {})["evidence_facts"] = evidence_facts
-    if hydrated and not any(column.get("key") == "question" for column in cases.get("columns") or []):
+    if hydrated and not any(
+        column.get("key") == "question" for column in cases.get("columns") or []
+    ):
         cases["columns"].insert(0, {"key": "question", "label": "Question"})
 
 
@@ -343,7 +351,9 @@ def _summary_metrics(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if isinstance(row, dict)
     ]
     if answer_rows:
-        values.setdefault("correct_cases", sum(bool(row.get("exact_match")) for row in answer_rows))
+        values.setdefault(
+            "correct_cases", sum(bool(row.get("exact_match")) for row in answer_rows)
+        )
         values["cases"] = len(answer_rows)
     metrics = []
     for key in ordered:
@@ -490,8 +500,10 @@ def _end_to_end_report_content(run_dir: Path, envelope: dict[str, Any]) -> str:
             diagnosis = value
     except (OSError, ValueError):
         pass
+
     def rate(value: Any) -> str:
         return f"{float(value):.1%}" if isinstance(value, (int, float)) else "—"
+
     lines = [
         "# 测评报告",
         "",
@@ -534,11 +546,13 @@ def _run_record(
 ) -> dict[str, Any]:
     evaluation = envelope.get("evaluation") or {}
     baseline = envelope.get("baseline") or {}
-    execution_dataset = ((envelope.get("execution_manifest") or {}).get("dataset") or {}).get(
-        "dataset_id"
-    )
-    dataset = baseline.get("dataset") or envelope.get("dataset") or (
-        execution_dataset if isinstance(execution_dataset, str) else None
+    execution_dataset = (
+        (envelope.get("execution_manifest") or {}).get("dataset") or {}
+    ).get("dataset_id")
+    dataset = (
+        baseline.get("dataset")
+        or envelope.get("dataset")
+        or (execution_dataset if isinstance(execution_dataset, str) else None)
     )
     methods = envelope.get("methods") or []
     dataset_meta = _snapshot_dataset_meta(
@@ -551,9 +565,7 @@ def _run_record(
         envelope.get("environment") or {},
         baseline,
         dataset_meta,
-        method_count=(
-            None
-        ),
+        method_count=(None),
     )
     progress = _read_progress(run_dir)
     run_id = envelope.get("run_id") or run_dir.name

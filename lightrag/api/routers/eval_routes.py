@@ -154,7 +154,9 @@ def _safe_dataset_file_path(dataset_dir: Path, name: str) -> Path:
     return path
 
 
-def _import_dataset_archive(*, archive: UploadFile, datasets_root: Path) -> dict[str, Any]:
+def _import_dataset_archive(
+    *, archive: UploadFile, datasets_root: Path
+) -> dict[str, Any]:
     """Import one generated-scenario zip after validating its executable contract.
 
     A scenario is portable only when its manifest, oracle, and every created
@@ -171,7 +173,9 @@ def _import_dataset_archive(*, archive: UploadFile, datasets_root: Path) -> dict
             while chunk := archive.file.read(1024 * 1024):
                 total += len(chunk)
                 if total > _MAX_DATASET_ARCHIVE_BYTES:
-                    raise ValueError("scenario package exceeds the 512 MiB import limit")
+                    raise ValueError(
+                        "scenario package exceeds the 512 MiB import limit"
+                    )
                 target.write(chunk)
         if not zipfile.is_zipfile(archive_path):
             raise ValueError("uploaded file is not a valid zip archive")
@@ -187,10 +191,14 @@ def _import_dataset_archive(*, archive: UploadFile, datasets_root: Path) -> dict
                 parts = _safe_archive_parts(entry.filename)
                 # Unix symlinks can escape the staging directory after extraction.
                 if (entry.external_attr >> 16) & 0o170000 == 0o120000:
-                    raise ValueError(f"scenario package contains a symbolic link: {entry.filename!r}")
+                    raise ValueError(
+                        f"scenario package contains a symbolic link: {entry.filename!r}"
+                    )
                 unpacked_bytes += entry.file_size
                 if unpacked_bytes > _MAX_DATASET_UNPACKED_BYTES:
-                    raise ValueError("scenario package exceeds the 2 GiB unpacked limit")
+                    raise ValueError(
+                        "scenario package exceeds the 2 GiB unpacked limit"
+                    )
                 output = staging.joinpath(*parts)
                 output.parent.mkdir(parents=True, exist_ok=True)
                 with source.open(entry) as input_file, output.open("wb") as output_file:
@@ -204,7 +212,9 @@ def _import_dataset_archive(*, archive: UploadFile, datasets_root: Path) -> dict
         dataset_id = _validate_dataset_id(manifest.dataset_id)
         oracle_path = _safe_dataset_file_path(source_dir, manifest.oracle_file)
         if not oracle_path.is_file():
-            raise ValueError(f"scenario package is missing oracle file: {manifest.oracle_file}")
+            raise ValueError(
+                f"scenario package is missing oracle file: {manifest.oracle_file}"
+            )
         oracle = load_oracle(source_dir)
         if oracle.dataset_id != dataset_id:
             raise ValueError("oracle dataset_id does not match manifest dataset_id")
@@ -213,7 +223,9 @@ def _import_dataset_archive(*, archive: UploadFile, datasets_root: Path) -> dict
                 continue
             document_path = _safe_dataset_file_path(source_dir, item.name)
             if not document_path.is_file():
-                raise ValueError(f"scenario package is missing created file: {item.name}")
+                raise ValueError(
+                    f"scenario package is missing created file: {item.name}"
+                )
 
         destination = datasets_root / dataset_id
         if destination.exists():
@@ -222,12 +234,19 @@ def _import_dataset_archive(*, archive: UploadFile, datasets_root: Path) -> dict
         destination.parent.resolve()
         shutil.move(str(source_dir), str(destination))
         try:
-            payload = json.loads((destination / "manifest.json").read_text(encoding="utf-8"))
+            payload = json.loads(
+                (destination / "manifest.json").read_text(encoding="utf-8")
+            )
             for item in payload.get("files") or []:
                 if item.get("status") == "created":
-                    item["path"] = str(_safe_dataset_file_path(destination, str(item.get("name") or "")))
+                    item["path"] = str(
+                        _safe_dataset_file_path(
+                            destination, str(item.get("name") or "")
+                        )
+                    )
             (destination / "manifest.json").write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
             )
         except Exception:
             # Keep a rejected package from looking importable on a retry.
@@ -327,10 +346,10 @@ def _configured_query_model() -> str:
 
 def _configured_query_provider() -> str:
     return (
-        os.getenv("QUERY_LLM_BINDING")
-        or os.getenv("LLM_BINDING")
-        or "ollama"
-    ).strip().lower()
+        (os.getenv("QUERY_LLM_BINDING") or os.getenv("LLM_BINDING") or "ollama")
+        .strip()
+        .lower()
+    )
 
 
 def _configured_ollama_url() -> str:
@@ -580,9 +599,7 @@ def create_eval_routes(
 
     @router.get("/runs", dependencies=[Depends(combined_auth)])
     async def list_runs(
-        dataset: str | None = Query(
-            default=None, description="Filter by dataset id"
-        ),
+        dataset: str | None = Query(default=None, description="Filter by dataset id"),
         q: str | None = Query(
             default=None, description="Search label / dataset / artifact titles"
         ),
@@ -663,7 +680,9 @@ def create_eval_routes(
             try:
                 unit = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
-                raise HTTPException(status_code=404, detail="execution unit not found") from None
+                raise HTTPException(
+                    status_code=404, detail="execution unit not found"
+                ) from None
             if not isinstance(unit, dict):
                 raise HTTPException(status_code=404, detail="execution unit not found")
             return {"execution_unit": unit}
@@ -682,12 +701,20 @@ def create_eval_routes(
                 raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
             run_dir = Path(detail["run_dir"])
             try:
-                ingestion = json.loads((run_dir / "ingestion_receipt.json").read_text(encoding="utf-8"))
-                index = json.loads((run_dir / "index_receipt.json").read_text(encoding="utf-8"))
+                ingestion = json.loads(
+                    (run_dir / "ingestion_receipt.json").read_text(encoding="utf-8")
+                )
+                index = json.loads(
+                    (run_dir / "index_receipt.json").read_text(encoding="utf-8")
+                )
             except (OSError, ValueError):
-                raise HTTPException(status_code=404, detail="ingestion receipts not found") from None
+                raise HTTPException(
+                    status_code=404, detail="ingestion receipts not found"
+                ) from None
             if not isinstance(ingestion, dict) or not isinstance(index, dict):
-                raise HTTPException(status_code=404, detail="ingestion receipts not found")
+                raise HTTPException(
+                    status_code=404, detail="ingestion receipts not found"
+                )
             return {"ingestion_receipt": ingestion, "index_receipt": index}
         except HTTPException:
             raise
@@ -704,12 +731,20 @@ def create_eval_routes(
                 raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
             run_dir = Path(detail["run_dir"])
             try:
-                traces = json.loads((run_dir / "case_trace.json").read_text(encoding="utf-8"))
-                diagnosis = json.loads((run_dir / "diagnosis.json").read_text(encoding="utf-8"))
+                traces = json.loads(
+                    (run_dir / "case_trace.json").read_text(encoding="utf-8")
+                )
+                diagnosis = json.loads(
+                    (run_dir / "diagnosis.json").read_text(encoding="utf-8")
+                )
             except (OSError, ValueError):
-                raise HTTPException(status_code=404, detail="case trace and diagnosis not found") from None
+                raise HTTPException(
+                    status_code=404, detail="case trace and diagnosis not found"
+                ) from None
             if not isinstance(traces, dict) or not isinstance(diagnosis, dict):
-                raise HTTPException(status_code=404, detail="case trace and diagnosis not found")
+                raise HTTPException(
+                    status_code=404, detail="case trace and diagnosis not found"
+                )
             return {"case_trace": traces, "diagnosis": diagnosis}
         except HTTPException:
             raise
@@ -717,7 +752,9 @@ def create_eval_routes(
             logger.error(f"Error loading eval run diagnosis '{run_id}': {exc}")
             raise internal_server_error(exc)
 
-    @router.get("/runs/{run_id:path}/diagnosis.csv", dependencies=[Depends(combined_auth)])
+    @router.get(
+        "/runs/{run_id:path}/diagnosis.csv", dependencies=[Depends(combined_auth)]
+    )
     async def export_run_diagnosis(run_id: str) -> Response:
         try:
             require_eval()
@@ -726,10 +763,14 @@ def create_eval_routes(
                 raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
             try:
                 diagnosis = json.loads(
-                    (Path(detail["run_dir"]) / "diagnosis.json").read_text(encoding="utf-8")
+                    (Path(detail["run_dir"]) / "diagnosis.json").read_text(
+                        encoding="utf-8"
+                    )
                 )
             except (OSError, ValueError):
-                raise HTTPException(status_code=404, detail="diagnosis not found") from None
+                raise HTTPException(
+                    status_code=404, detail="diagnosis not found"
+                ) from None
             cases = diagnosis.get("cases") if isinstance(diagnosis, dict) else None
             if not isinstance(cases, list):
                 raise HTTPException(status_code=404, detail="diagnosis not found")
@@ -737,8 +778,15 @@ def create_eval_routes(
             writer = csv.DictWriter(
                 output,
                 fieldnames=[
-                    "question_id", "question_type", "modality", "retrieval_mode",
-                    "primary_cause", "confidence", "review_required", "rule_version", "evidence",
+                    "question_id",
+                    "question_type",
+                    "modality",
+                    "retrieval_mode",
+                    "primary_cause",
+                    "confidence",
+                    "review_required",
+                    "rule_version",
+                    "evidence",
                 ],
             )
             writer.writeheader()
@@ -756,7 +804,9 @@ def create_eval_routes(
             return Response(
                 content=output.getvalue(),
                 media_type="text/csv; charset=utf-8",
-                headers={"Content-Disposition": f'attachment; filename="{run_id}-diagnosis.csv"'},
+                headers={
+                    "Content-Disposition": f'attachment; filename="{run_id}-diagnosis.csv"'
+                },
             )
         except HTTPException:
             raise
@@ -826,8 +876,16 @@ def create_eval_routes(
             for run_id in request.run_ids:
                 detail = load_run(root, run_id)
                 if detail is None:
-                    raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
-                runs.append(json.loads((Path(detail["run_dir"]) / "run.json").read_text(encoding="utf-8")))
+                    raise HTTPException(
+                        status_code=404, detail=f"Run not found: {run_id}"
+                    )
+                runs.append(
+                    json.loads(
+                        (Path(detail["run_dir"]) / "run.json").read_text(
+                            encoding="utf-8"
+                        )
+                    )
+                )
             return eval_comparison.compare_contract(runs)
         except HTTPException:
             raise
@@ -1064,7 +1122,8 @@ def create_eval_routes(
                 for job in eval_jobs.list_jobs(runs_root=root, datasets_root=datasets)
                 if job.get("kind") == "run"
                 and job.get("output_dir") == str(run_dir)
-                and job.get("status") in {"claiming", "running", "cancelling", "pending"}
+                and job.get("status")
+                in {"claiming", "running", "cancelling", "pending"}
             ]
             for job in matching:
                 canceled = eval_jobs.cancel_job(

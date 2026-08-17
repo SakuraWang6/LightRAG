@@ -301,7 +301,12 @@ def _references_with_chunk_content(
                 continue
             reference_id = chunk.get("reference_id")
             content = chunk.get("content")
-            if isinstance(reference_id, str) and reference_id and isinstance(content, str) and content:
+            if (
+                isinstance(reference_id, str)
+                and reference_id
+                and isinstance(content, str)
+                and content
+            ):
                 content_by_reference.setdefault(reference_id, []).append(content)
     enriched: list[dict[str, Any]] = []
     if not isinstance(references, list):
@@ -603,7 +608,9 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
                     response_time=response_time,
                     response_truncated=response_truncated,
                     evaluation_trace=(
-                        result.get("evaluation_trace") if request.evaluation_trace else None
+                        result.get("evaluation_trace")
+                        if request.evaluation_trace
+                        else None
                     ),
                 )
             else:
@@ -613,7 +620,9 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
                     response_time=response_time,
                     response_truncated=response_truncated,
                     evaluation_trace=(
-                        result.get("evaluation_trace") if request.evaluation_trace else None
+                        result.get("evaluation_trace")
+                        if request.evaluation_trace
+                        else None
                     ),
                 )
         except Exception as e:

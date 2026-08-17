@@ -314,7 +314,9 @@ class JsonKVStorage(BaseKVStorage):
         async with self._storage_lock:
             results: list[dict[str, Any]] = []
             for key, data in self._data.items():
-                content = str(data.get("content") or "") if isinstance(data, dict) else ""
+                content = (
+                    str(data.get("content") or "") if isinstance(data, dict) else ""
+                )
                 if content and any(substring in content for substring in substrings):
                     result = copy.deepcopy(data)
                     result.setdefault("create_time", 0)

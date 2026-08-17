@@ -15,7 +15,9 @@ from lightrag.ranking.structured import _structured_rank
 _STRATEGIES = {"none", "structured"}
 
 
-def apply_ranking_strategy(query: str, chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def apply_ranking_strategy(
+    query: str, chunks: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     """Apply the configured ranking strategy to a candidate pool.
 
     With ``LIGHTRAG_RANKING_STRATEGY`` unset or ``none`` the candidate list is

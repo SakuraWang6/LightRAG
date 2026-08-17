@@ -67,7 +67,9 @@ def _launch_params(
     return params
 
 
-def _parameter_sources(args: argparse.Namespace, baseline: dict[str, Any]) -> dict[str, str]:
+def _parameter_sources(
+    args: argparse.Namespace, baseline: dict[str, Any]
+) -> dict[str, str]:
     """Make default/template/user provenance explicit for every launch value."""
     sources = {key: "default" for key in baseline}
     for key, value in (
@@ -205,7 +207,9 @@ def main() -> None:
         "--run-id", default=None, help="Optional run id (default: output-dir name)"
     )
     parser.add_argument(
-        "--label", default=None, help="User-facing evaluation name stored in the envelope."
+        "--label",
+        default=None,
+        help="User-facing evaluation name stored in the envelope.",
     )
     parser.add_argument("--model", default=None)
     parser.add_argument("--mode", default=None)

@@ -37,7 +37,9 @@ def estimate_generation_resources(
             + max(1, pages // 8)
             + 6
         )
-        object_count = 8 + pages * 15 + table_count * 4 + figure_count * 3 + equation_count * 4
+        object_count = (
+            8 + pages * 15 + table_count * 4 + figure_count * 3 + equation_count * 4
+        )
         relation_count = object_count + fact_count * 3
     else:
         fact_count = pages + table_count + figure_count + equation_count

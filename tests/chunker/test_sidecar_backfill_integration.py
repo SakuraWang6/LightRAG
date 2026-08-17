@@ -218,12 +218,10 @@ def test_oversized_table_pieces_carry_sidecar_and_do_not_fail_backfill(
     table_chunks = [chunk for chunk in chunks if "<table" in chunk["content"]]
     assert len(table_chunks) > 1
     assert all(
-        chunk.get("sidecar", {}).get("type") == "table"
-        for chunk in table_chunks
+        chunk.get("sidecar", {}).get("type") == "table" for chunk in table_chunks
     )
     assert all(
-        chunk.get("sidecar", {}).get("id") == "LONG-TBL-APP"
-        for chunk in table_chunks
+        chunk.get("sidecar", {}).get("id") == "LONG-TBL-APP" for chunk in table_chunks
     )
 
 

@@ -8,7 +8,6 @@ import json
 import os
 import signal
 import sys
-import threading
 import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -23,7 +22,6 @@ from memory_eval_tests.artifacts import (
     build_failure,
     capture_environment,
     read_progress,
-    redact_launch_extra,
     redact_sensitive_text,
     selected_case_ids,
     write_envelope,
@@ -280,13 +278,19 @@ def _runner(context: RunContext) -> dict[str, Any]:
         baseline["process_options"] = _recall_process_options(baseline, context.extra)
         ingestion_timeout = 1800
         try:
-            ingestion_timeout = int(context.extra.get("ingestion_timeout_seconds") or 1800)
+            ingestion_timeout = int(
+                context.extra.get("ingestion_timeout_seconds") or 1800
+            )
         except (TypeError, ValueError):
             pass
         baseline["ingestion_timeout_seconds"] = ingestion_timeout
         context.progress("running", 1, 1, "runtime", "独立运行环境已就绪")
         context.progress(
-            "running", 0, len(source_documents), "ingestion", "正在上传、解析并建立文档索引"
+            "running",
+            0,
+            len(source_documents),
+            "ingestion",
+            "正在上传、解析并建立文档索引",
         )
         upload = upload_dataset_files(
             dataset_source=str(context.dataset),
@@ -312,7 +316,11 @@ def _runner(context: RunContext) -> dict[str, Any]:
         ingestion, index = _receipt(upload, unit)
         allow_partial, threshold = _allow_partial(context)
         total_documents = len(ingestion["documents"])
-        success_rate = ingestion["successful_documents"] / total_documents if total_documents else 0.0
+        success_rate = (
+            ingestion["successful_documents"] / total_documents
+            if total_documents
+            else 0.0
+        )
         ingestion.update(
             {
                 "allow_partial_ingestion": allow_partial,
@@ -330,14 +338,14 @@ def _runner(context: RunContext) -> dict[str, Any]:
         if not ingestion["passed"] and not (
             allow_partial and ingestion["meets_success_threshold"]
         ):
-            raise RuntimeError("required dataset documents did not meet the ingestion success threshold")
+            raise RuntimeError(
+                "required dataset documents did not meet the ingestion success threshold"
+            )
 
         top_k = int(baseline.get("top_k") or 20)
         chunk_top_k = int(baseline.get("chunk_top_k") or 20)
         enable_rerank = _rerank_enabled(profile)
-        context.progress(
-            "running", 0, 1, "retrieval", "正在评测召回与 ranking"
-        )
+        context.progress("running", 0, 1, "retrieval", "正在评测召回与 ranking")
         recall = evaluate_recall(
             dataset_source=str(context.dataset),
             rag_api_url=unit["runtime_endpoint"],
@@ -417,7 +425,9 @@ def _runner(context: RunContext) -> dict[str, Any]:
         outcome = "failed"
         raise
     finally:
-        finalize_execution_unit(output_dir=context.output_dir, unit=unit, outcome=outcome)
+        finalize_execution_unit(
+            output_dir=context.output_dir, unit=unit, outcome=outcome
+        )
 
 
 definition = EvaluationDefinition(
@@ -535,9 +545,7 @@ def main(argv: list[str] | None = None) -> None:
         started_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
     parameter_sources = {
-        key: "user"
-        if getattr(args, key, None) is not None
-        else "default"
+        key: "user" if getattr(args, key, None) is not None else "default"
         for key in ("model", "mode", "top_k", "chunk_top_k", "engine")
     }
     context.execution_manifest = build_execution_manifest(
@@ -566,7 +574,9 @@ def main(argv: list[str] | None = None) -> None:
         resolved_to_yaml(resolved), encoding="utf-8"
     )
     _install_sigterm_handler(args.output_dir)
-    _log(args.output_dir, f"starting recall_only run_id={run_id} dataset={args.dataset}")
+    _log(
+        args.output_dir, f"starting recall_only run_id={run_id} dataset={args.dataset}"
+    )
     append_run_event(
         args.output_dir,
         phase="starting",
@@ -603,7 +613,9 @@ def main(argv: list[str] | None = None) -> None:
             _log(args.output_dir, f"finished status={status} cases={len(methods)}")
             saved = read_progress(args.output_dir)
             total = int(saved.get("total") or 1)
-            context.progress(status, total, total, "complete", f"run finished with status {status}")
+            context.progress(
+                status, total, total, "complete", f"run finished with status {status}"
+            )
         except Exception as exc:
             _log(args.output_dir, f"failed {type(exc).__name__}: {exc}")
             offset = append_run_event(

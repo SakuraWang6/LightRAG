@@ -7,7 +7,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 DATASET_SCHEMA_VERSION = "1.4"
-_SUPPORTED_SCHEMA_VERSIONS = frozenset({"1.0", "1.1", "1.2", "1.3", DATASET_SCHEMA_VERSION})
+_SUPPORTED_SCHEMA_VERSIONS = frozenset(
+    {"1.0", "1.1", "1.2", "1.3", DATASET_SCHEMA_VERSION}
+)
 
 DEFAULT_SYNTHETIC_DOCUMENT_TITLE = "LightRAG Synthetic Rich Memory Document"
 
@@ -191,8 +193,8 @@ class DatasetManifest(BaseModel):
     files: list[GeneratedFile] = Field(default_factory=list)
     generation_time_seconds: float | None = None
     generation_peak_memory_mb: float | None = None
-    generation_resource_estimate: dict[str, str | int | float | bool | list[str]] = Field(
-        default_factory=dict
+    generation_resource_estimate: dict[str, str | int | float | bool | list[str]] = (
+        Field(default_factory=dict)
     )
     facts_file: str = "facts.json"
     questions_file: str = "questions.json"

@@ -78,15 +78,29 @@ def build_stage_matrix(case_traces: list[dict[str, Any]]) -> dict[str, Any]:
         rows.append(
             {
                 "question_id": _string(trace.get("question_id")),
-                "question_type": _string(oracle.get("question_type") or trace.get("question_type")),
+                "question_type": _string(
+                    oracle.get("question_type") or trace.get("question_type")
+                ),
                 "question": question[:140],
-                "expected": _string(oracle.get("answer") or answer_row.get("expected"))[:120],
-                "answer": _string(answer_row.get("text") or answer_row.get("response"))[:160],
+                "expected": _string(oracle.get("answer") or answer_row.get("expected"))[
+                    :120
+                ],
+                "answer": _string(answer_row.get("text") or answer_row.get("response"))[
+                    :160
+                ],
                 "retrieval": retrieval,
                 "answer_outcome": answer,
                 "recall": (trace.get("retrieval") or {}).get("recall_at_k"),
-                "hit_facts": [str(i) for i in ((trace.get("retrieval") or {}).get("hit_fact_ids") or [])],
-                "expected_facts": [str(i) for i in ((trace.get("retrieval") or {}).get("expected_fact_ids") or [])],
+                "hit_facts": [
+                    str(i)
+                    for i in ((trace.get("retrieval") or {}).get("hit_fact_ids") or [])
+                ],
+                "expected_facts": [
+                    str(i)
+                    for i in (
+                        (trace.get("retrieval") or {}).get("expected_fact_ids") or []
+                    )
+                ],
                 "missing_in_context": _context_missing(trace),
                 "cause": _string((trace.get("diagnosis") or {}).get("primary_cause")),
             }
@@ -147,14 +161,21 @@ async def _ollama_chat(
         response = await client.chat(
             model=model,
             messages=messages,
-            options={"num_ctx": 16384, "num_predict": 4096, "temperature": 0, "think": False},
+            options={
+                "num_ctx": 16384,
+                "num_predict": 4096,
+                "temperature": 0,
+                "think": False,
+            },
         )
         return str(response["message"]["content"] or "")
     finally:
         try:
             await client._client.aclose()
         except Exception:
-            logger.debug("failed to close Ollama client after analysis call", exc_info=True)
+            logger.debug(
+                "failed to close Ollama client after analysis call", exc_info=True
+            )
 
 
 def _overview_prompt(matrix: dict[str, Any], run_summary: dict[str, Any]) -> str:
@@ -204,7 +225,9 @@ def _case_prompt(rows: list[dict[str, Any]]) -> str:
         lines.append(f"- 问题：{row['question']}")
         lines.append(f"- 期望答案：{row['expected']}")
         lines.append(f"- 模型回答：{row['answer']}")
-        lines.append(f"- 检索：期望 {','.join(row['expected_facts']) or '无'}，命中 {','.join(row['hit_facts']) or '无'}（recall={row['recall']}）")
+        lines.append(
+            f"- 检索：期望 {','.join(row['expected_facts']) or '无'}，命中 {','.join(row['hit_facts']) or '无'}（recall={row['recall']}）"
+        )
         lines.append(f"- 最终上下文缺失：{','.join(row['missing_in_context']) or '无'}")
         lines.append("")
     return "\n".join(lines)
@@ -254,7 +277,8 @@ async def generate_run_analysis(
     failed_rows = [
         row
         for row in matrix["rows"]
-        if row["answer_outcome"] == "fail" and row["retrieval"] not in {"not_applicable", "unavailable"}
+        if row["answer_outcome"] == "fail"
+        and row["retrieval"] not in {"not_applicable", "unavailable"}
     ]
     sections = ["## 总体分析（本地 LLM）", "", overview.strip(), ""]
     if failed_rows:
@@ -328,8 +352,6 @@ async def analyze_run(
         case_traces=traces, run_summary=run_summary, model=model, host=host
     )
     meta["elapsed_seconds"] = round(time.perf_counter() - started, 1)
-    (output_dir / "analysis_report.md").write_text(
-        analysis_md, encoding="utf-8"
-    )
+    (output_dir / "analysis_report.md").write_text(analysis_md, encoding="utf-8")
     extra = write_analysis_artifacts(output_dir, analysis_md, meta)
     return analysis_md, extra

@@ -9,7 +9,6 @@ identifier and prepends the matches.
 
 from __future__ import annotations
 
-import pytest
 
 from lightrag.base import QueryParam
 from lightrag.operate import (
@@ -121,12 +120,18 @@ async def test_explicit_id_recall_ignores_table_and_other_object_ids() -> None:
     """TBL/FIG object ids in a question are not stable fact evidence.  Treating
     them as explicit recall keys can crowd answer-bearing vector chunks out of
     top-k (observed as table_cell retrieval regressions)."""
-    assert await _explicit_id_recall(
-        "In TBL-0003, what is the maximum value?", _FakeChunksVdb(), 5
-    ) == []
-    assert await _explicit_id_recall(
-        "According to FIG-0004, what is the state?", _FakeChunksVdb(), 5
-    ) == []
+    assert (
+        await _explicit_id_recall(
+            "In TBL-0003, what is the maximum value?", _FakeChunksVdb(), 5
+        )
+        == []
+    )
+    assert (
+        await _explicit_id_recall(
+            "According to FIG-0004, what is the state?", _FakeChunksVdb(), 5
+        )
+        == []
+    )
 
 
 async def test_get_vector_context_prepends_explicit_id_chunks() -> None:
@@ -146,9 +151,7 @@ async def test_get_vector_context_prepends_explicit_id_chunks() -> None:
 
 async def test_get_vector_context_unchanged_without_identifiers() -> None:
     vdb = _FakeChunksVdb()
-    chunks = await _get_vector_context(
-        "what is the calibration limit?", vdb, _param()
-    )
+    chunks = await _get_vector_context("what is the calibration limit?", vdb, _param())
     assert vdb.calls == ["what is the calibration limit?"]
     assert all(c["source_type"] == "vector" for c in chunks)
 
@@ -162,9 +165,7 @@ async def test_explicit_id_recall_when_normal_search_is_empty() -> None:
             return []
 
     vdb = _EmptyNormalVdb()
-    chunks = await _get_vector_context(
-        "what is FACT-GOV-00001?", vdb, _param()
-    )
+    chunks = await _get_vector_context("what is FACT-GOV-00001?", vdb, _param())
     assert [c["chunk_id"] for c in chunks] == ["c-gov"]
 
 
@@ -192,7 +193,9 @@ async def test_explicit_id_recall_prefers_search_values_capability() -> None:
             return [
                 value
                 for key, value in self.data.items()
-                if any(substring in value.get("content", "") for substring in substrings)
+                if any(
+                    substring in value.get("content", "") for substring in substrings
+                )
             ]
 
     class _NoHitVdb(_FakeChunksVdb):

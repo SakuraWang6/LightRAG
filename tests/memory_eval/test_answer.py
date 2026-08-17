@@ -73,9 +73,7 @@ def test_evaluate_answers_requests_concise_single_paragraph(monkeypatch) -> None
     monkeypatch.setattr(answer, "DatasetClient", FakeDatasetClient)
     monkeypatch.setattr(answer, "_post_json", fake_post_json)
 
-    report = answer.evaluate_answers(
-        dataset_source="dataset", rag_api_url="http://rag"
-    )
+    report = answer.evaluate_answers(dataset_source="dataset", rag_api_url="http://rag")
     assert report["results"][0]["response_type"] == "Single Paragraph"
     assert "不要复述问题" in report["results"][0]["user_prompt"]
     assert captured[0]["response_type"] == "Single Paragraph"

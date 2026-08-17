@@ -38,9 +38,7 @@ class IngestionFailure(RuntimeError):
     retryable = True
 
 
-def _int_option(
-    extra: dict[str, Any] | None, key: str, default: int
-) -> int:
+def _int_option(extra: dict[str, Any] | None, key: str, default: int) -> int:
     raw = (extra or {}).get(key)
     try:
         return int(raw) if raw is not None else int(default)
@@ -63,9 +61,7 @@ def _effective_vlm(baseline: dict[str, Any], dataset: Path) -> bool:
     if explicit is not None:
         return bool(explicit)
     try:
-        manifest = json.loads(
-            (dataset / "manifest.json").read_text(encoding="utf-8")
-        )
+        manifest = json.loads((dataset / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     if "figures" in (manifest.get("modalities") or []):
@@ -97,9 +93,7 @@ def _ingestion_process_options(
 def _dataset_pages(dataset: Path) -> int:
     """Return the source-document page count from the dataset manifest."""
     try:
-        manifest = json.loads(
-            (dataset / "manifest.json").read_text(encoding="utf-8")
-        )
+        manifest = json.loads((dataset / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return 0
     pages = manifest.get("pages")
@@ -112,9 +106,7 @@ def _dataset_pages(dataset: Path) -> int:
 def _dataset_figure_count(dataset: Path) -> int:
     """Return the number of figure assets declared by the dataset manifest."""
     try:
-        manifest = json.loads(
-            (dataset / "manifest.json").read_text(encoding="utf-8")
-        )
+        manifest = json.loads((dataset / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return 0
     count = 0
@@ -160,9 +152,7 @@ def _ingestion_timeout_seconds(
     return min(max(5400, pages * 90 + figures * 180), 43200)
 
 
-def _ingestion_wait_progress(
-    context: RunContext, total_documents: int
-) -> Any:
+def _ingestion_wait_progress(context: RunContext, total_documents: int) -> Any:
     """Return a live-progress callback for the ingestion wait loop.
 
     The upload itself reports per-file progress, but the wait for parsing and
@@ -220,9 +210,7 @@ def _runtime_options(
     """Return answer controls plus extraction-specific integrity safeguards."""
     answer_num_predict = int(baseline.get("num_predict") or 4096)
     answer_num_ctx = int(baseline.get("num_ctx") or 16384)
-    extraction_timeout = int(
-        baseline.get("extraction_llm_timeout_seconds") or 1800
-    )
+    extraction_timeout = int(baseline.get("extraction_llm_timeout_seconds") or 1800)
     extraction_max_async = _int_option(
         extra, "extraction_max_async", int(baseline.get("extraction_max_async") or 2)
     )
@@ -296,7 +284,9 @@ def _profile(context: RunContext) -> dict[str, Any]:
     }
 
 
-def _receipt(upload: dict[str, Any], unit: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _receipt(
+    upload: dict[str, Any], unit: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
     uploaded = upload.get("uploaded") or []
     terminal = [item.get("track_status") or {} for item in uploaded]
     waited = bool(upload.get("waited"))
@@ -313,18 +303,28 @@ def _receipt(upload: dict[str, Any], unit: dict[str, Any]) -> tuple[dict[str, An
     for item in uploaded:
         track = item.get("track_status") or {}
         failure_reason = (
-            track.get("error")
-            or track.get("message")
-            or item.get("message")
+            track.get("error") or track.get("message") or item.get("message")
         )
         documents.append(
             {
-                "file_name": item.get("file_name", {"value": "unknown", "reason": "upload response omitted file name"}),
-                "content_sha256": item.get("content_sha256", {"value": "unknown", "reason": "upload did not record a content hash"}),
-                "upload_id": item.get("track_id") or item.get("id") or {"value": "unknown", "reason": "upload response omitted an id"},
+                "file_name": item.get(
+                    "file_name",
+                    {"value": "unknown", "reason": "upload response omitted file name"},
+                ),
+                "content_sha256": item.get(
+                    "content_sha256",
+                    {
+                        "value": "unknown",
+                        "reason": "upload did not record a content hash",
+                    },
+                ),
+                "upload_id": item.get("track_id")
+                or item.get("id")
+                or {"value": "unknown", "reason": "upload response omitted an id"},
                 "upload_status": item.get("status"),
                 "processing_status": track,
-                "parse_time": track.get("parse_time") or {"value": "unknown", "reason": "track status omits parse time"},
+                "parse_time": track.get("parse_time")
+                or {"value": "unknown", "reason": "track status omits parse time"},
                 "failure_reason": failure_reason,
                 "reused": bool(item.get("reused")),
             }
@@ -355,10 +355,19 @@ def _receipt(upload: dict[str, Any], unit: dict[str, Any]) -> tuple[dict[str, An
         "chunk_count": (
             chunk_count
             if chunk_count
-            else {"value": "unknown", "reason": "current API track status omits chunk count"}
+            else {
+                "value": "unknown",
+                "reason": "current API track status omits chunk count",
+            }
         ),
-        "entity_count": {"value": "unknown", "reason": "current API track status omits entity count"},
-        "relation_count": {"value": "unknown", "reason": "current API track status omits relation count"},
+        "entity_count": {
+            "value": "unknown",
+            "reason": "current API track status omits entity count",
+        },
+        "relation_count": {
+            "value": "unknown",
+            "reason": "current API track status omits relation count",
+        },
     }
     return ingestion, index
 
@@ -366,7 +375,9 @@ def _receipt(upload: dict[str, Any], unit: dict[str, Any]) -> tuple[dict[str, An
 def _confirmed_hashes(output_dir: Path) -> set[str]:
     """Reuse only receipts that already reached a confirmed processed state."""
     try:
-        receipt = json.loads((output_dir / "ingestion_receipt.json").read_text(encoding="utf-8"))
+        receipt = json.loads(
+            (output_dir / "ingestion_receipt.json").read_text(encoding="utf-8")
+        )
     except (OSError, ValueError):
         return set()
     confirmed: set[str] = set()
@@ -380,7 +391,10 @@ def _confirmed_hashes(output_dir: Path) -> set[str]:
 
 def _allow_partial(context: RunContext) -> tuple[bool, float]:
     allow = str(context.extra.get("allow_partial_ingestion") or "false").lower() in {
-        "1", "true", "yes", "on"
+        "1",
+        "true",
+        "yes",
+        "on",
     }
     try:
         threshold = float(context.extra.get("ingestion_success_threshold") or 1.0)
@@ -396,17 +410,23 @@ def _source_documents(dataset: Path) -> list[str]:
     try:
         manifest = json.loads((dataset / "manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        raise IngestionFailure("dataset manifest is unreadable; cannot identify source documents")
+        raise IngestionFailure(
+            "dataset manifest is unreadable; cannot identify source documents"
+        )
     names = source_document_names(manifest)
     if not names:
-        raise IngestionFailure("dataset manifest declares no source documents to ingest")
+        raise IngestionFailure(
+            "dataset manifest declares no source documents to ingest"
+        )
     return names
 
 
 def _rerank_enabled(profile: dict[str, Any]) -> bool:
     """Use reranking only when this server profile actually configures it."""
     reranker = (profile.get("configuration") or {}).get("reranker")
-    return isinstance(reranker, dict) and str(reranker.get("provider") or "").lower() not in {
+    return isinstance(reranker, dict) and str(
+        reranker.get("provider") or ""
+    ).lower() not in {
         "",
         "null",
         "none",
@@ -455,7 +475,9 @@ def _report_markdown(
     total = int(answer.get("cases") or 0)
     correct = answer.get("correct_cases")
     if not isinstance(correct, int):
-        correct = sum(bool(row.get("exact_match")) for row in answer.get("results") or [])
+        correct = sum(
+            bool(row.get("exact_match")) for row in answer.get("results") or []
+        )
     uncertain = int(answer.get("uncertain_answers") or 0)
     results = answer.get("results") or []
     failed = [row for row in results if not bool(row.get("exact_match"))]
@@ -508,10 +530,14 @@ def _report_markdown(
         ):
             label = _CAUSE_LABELS.get(cause, cause)
             lines.append(f"- **{label}（{len(qids)} 题）**：{'、'.join(qids)}")
-    unavailable = (diagnosis.get("trace_availability") or {}).get("context_unavailable", 0)
+    unavailable = (diagnosis.get("trace_availability") or {}).get(
+        "context_unavailable", 0
+    )
     if unavailable:
         lines.append(f"- {unavailable} 题缺少最终上下文记录，需人工复核")
-    lines.append("- 归因基于最终模型可见上下文与检索候选的确定性判定；逐题证据见“逐题详情”。")
+    lines.append(
+        "- 归因基于最终模型可见上下文与检索候选的确定性判定；逐题证据见“逐题详情”。"
+    )
 
     if failed:
         lines.extend(
@@ -556,7 +582,12 @@ def _prepare(context: RunContext) -> None:
         "profile": unit.get("profile"),
         "retention_policy": unit.get("retention_policy"),
         "configuration_fingerprint": hashlib.sha256(
-            json.dumps(profile.get("configuration") or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            json.dumps(
+                profile.get("configuration") or {},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
         ).hexdigest(),
         "effective_configuration": profile.get("configuration"),
     }
@@ -570,7 +601,9 @@ def _runner(context: RunContext) -> dict[str, Any]:
     outcome = "interrupted"
     try:
         source_documents = _source_documents(context.dataset)
-        oracle = json.loads((context.dataset / "oracle.json").read_text(encoding="utf-8"))
+        oracle = json.loads(
+            (context.dataset / "oracle.json").read_text(encoding="utf-8")
+        )
         max_cases = int(context.baseline.get("max_cases") or 0) or None
         all_questions = list(oracle.get("questions") or [])
         selected_types = context.baseline.get("question_types") or []
@@ -598,7 +631,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
             unit=unit,
             api_key=context.environment.get("api_key"),
             access_token=context.environment.get("access_token"),
-        runtime_options=_runtime_options(context.baseline, context.extra),
+            runtime_options=_runtime_options(context.baseline, context.extra),
         )
         context.execution_unit = unit
         context.environment["rag_api_url"] = unit["runtime_endpoint"]
@@ -625,7 +658,11 @@ def _runner(context: RunContext) -> dict[str, Any]:
         baseline["ingestion_timeout_seconds"] = ingestion_timeout
         context.progress("running", 1, 1, "runtime", "独立运行环境已就绪")
         context.progress(
-            "running", 0, len(source_documents), "ingestion", "正在上传、解析并建立文档索引"
+            "running",
+            0,
+            len(source_documents),
+            "ingestion",
+            "正在上传、解析并建立文档索引",
         )
         upload = upload_dataset_files(
             dataset_source=str(context.dataset),
@@ -651,7 +688,11 @@ def _runner(context: RunContext) -> dict[str, Any]:
         ingestion, index = _receipt(upload, unit)
         allow_partial, threshold = _allow_partial(context)
         total_documents = len(ingestion["documents"])
-        success_rate = ingestion["successful_documents"] / total_documents if total_documents else 0.0
+        success_rate = (
+            ingestion["successful_documents"] / total_documents
+            if total_documents
+            else 0.0
+        )
         ingestion.update(
             {
                 "allow_partial_ingestion": allow_partial,
@@ -669,7 +710,9 @@ def _runner(context: RunContext) -> dict[str, Any]:
         if not ingestion["passed"] and not (
             allow_partial and ingestion["meets_success_threshold"]
         ):
-            raise IngestionFailure("required dataset documents did not meet the ingestion success threshold")
+            raise IngestionFailure(
+                "required dataset documents did not meet the ingestion success threshold"
+            )
         if retrieval_question_count:
             context.progress(
                 "running", 0, retrieval_question_count, "retrieval", "正在评测检索结果"
@@ -814,7 +857,9 @@ def _runner(context: RunContext) -> dict[str, Any]:
         outcome = "failed"
         raise
     finally:
-        finalize_execution_unit(output_dir=context.output_dir, unit=unit, outcome=outcome)
+        finalize_execution_unit(
+            output_dir=context.output_dir, unit=unit, outcome=outcome
+        )
 
 
 definition = EvaluationDefinition(

@@ -58,7 +58,7 @@ def test_evaluate_recall_single_fact_ranking(
     chunks = []
     for index in range(10):
         content = (
-            f"FACT-00006 authoritative maximum 33.75 ms"
+            "FACT-00006 authoritative maximum 33.75 ms"
             if index == gold_index
             else f"distractor chunk {index}"
         )
@@ -94,7 +94,13 @@ def test_evaluate_recall_miss(monkeypatch, tmp_path):
         retrieval,
         "post_json",
         lambda *a, **k: _response(
-            [{"content": "nothing relevant", "file_path": "doc.docx", "chunk_id": "c-0"}]
+            [
+                {
+                    "content": "nothing relevant",
+                    "file_path": "doc.docx",
+                    "chunk_id": "c-0",
+                }
+            ]
         ),
     )
 

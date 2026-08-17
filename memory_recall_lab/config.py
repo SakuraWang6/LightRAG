@@ -129,20 +129,20 @@ def _coerce_bool(value: Any, path: str) -> bool:
     raise ConfigError(f"{path}: expected a boolean, got {value!r}")
 
 
-def _coerce_str_list(value: Any, path: str, allowed: tuple[str, ...]) -> tuple[str, ...]:
+def _coerce_str_list(
+    value: Any, path: str, allowed: tuple[str, ...]
+) -> tuple[str, ...]:
     if isinstance(value, str):
         values = [item.strip().upper() for item in value.split(",") if item.strip()]
     elif isinstance(value, (list, tuple)):
         values = [str(item).strip().upper() for item in value]
     else:
         raise ConfigError(f"{path}: expected a list of identifiers, got {value!r}")
-    unknown = (
-        [item for item in values if item not in allowed]
-        if allowed
-        else []
-    )
+    unknown = [item for item in values if item not in allowed] if allowed else []
     if unknown:
-        raise ConfigError(f"{path}: unsupported identifier type(s): {', '.join(unknown)}")
+        raise ConfigError(
+            f"{path}: unsupported identifier type(s): {', '.join(unknown)}"
+        )
     seen: list[str] = []
     for item in values:
         if item not in seen:
@@ -202,42 +202,80 @@ def _validate(cfg: ExperimentConfig) -> None:
     runtime = cfg.runtime
     meta = cfg.experiment
 
-    _require(table.mode in VALID_TABLE_MODES, f"chunking.table.mode must be one of {VALID_TABLE_MODES}")
+    _require(
+        table.mode in VALID_TABLE_MODES,
+        f"chunking.table.mode must be one of {VALID_TABLE_MODES}",
+    )
     if table.mode == "fixed_token":
         _require(
-            meta.legacy_mode and meta.historical and not meta.reproducible_from_current_code,
+            meta.legacy_mode
+            and meta.historical
+            and not meta.reproducible_from_current_code,
             "chunking.table.mode=fixed_token is the legacy A0 behaviour that is not "
             "reproducible from the current chunker; set experiment.legacy_mode=true, "
             "experiment.historical=true and experiment.reproducible_from_current_code=false "
             "and reproduce it from the recorded git commit instead",
         )
     if table.mode != "fixed_token":
-        _require(table.atomic, "chunking.table.atomic must stay true: the atomic table is a stable Evidence Layer capability")
-        _require(table.row_safe_split, "chunking.table.row_safe_split must stay true: row-safe long-table splitting is a stable capability")
-        _require(table.sidecar_backfill, "chunking.table.sidecar_backfill must stay true: sidecar correctness is a stable capability")
+        _require(
+            table.atomic,
+            "chunking.table.atomic must stay true: the atomic table is a stable Evidence Layer capability",
+        )
+        _require(
+            table.row_safe_split,
+            "chunking.table.row_safe_split must stay true: row-safe long-table splitting is a stable capability",
+        )
+        _require(
+            table.sidecar_backfill,
+            "chunking.table.sidecar_backfill must stay true: sidecar correctness is a stable capability",
+        )
     if rep.raw and rep.structured_envelope:
-        raise ConfigError("representation.table.raw and representation.table.structured_envelope are mutually exclusive")
+        raise ConfigError(
+            "representation.table.raw and representation.table.structured_envelope are mutually exclusive"
+        )
     if rep.table_view or rep.row_view:
-        _require(table.atomic, "table views require the atomic table (chunking.table.atomic)")
+        _require(
+            table.atomic, "table views require the atomic table (chunking.table.atomic)"
+        )
 
     if exact.enabled:
-        _require(len(exact.types) > 0, "retrieval.exact_id.types must not be empty when exact_id is enabled")
+        _require(
+            len(exact.types) > 0,
+            "retrieval.exact_id.types must not be empty when exact_id is enabled",
+        )
     else:
-        _require(len(exact.types) == 0, "retrieval.exact_id.types must be empty when exact_id is disabled")
+        _require(
+            len(exact.types) == 0,
+            "retrieval.exact_id.types must be empty when exact_id is disabled",
+        )
 
-    _require(ranking.strategy in VALID_RANKING_STRATEGIES, f"ranking.strategy must be one of {VALID_RANKING_STRATEGIES}")
+    _require(
+        ranking.strategy in VALID_RANKING_STRATEGIES,
+        f"ranking.strategy must be one of {VALID_RANKING_STRATEGIES}",
+    )
     if ranking.strategy == "structured":
-        _require(exact.enabled, "ranking.strategy=structured requires retrieval.exact_id.enabled=true")
+        _require(
+            exact.enabled,
+            "ranking.strategy=structured requires retrieval.exact_id.enabled=true",
+        )
         _require(
             rep.table_view or rep.row_view,
             "ranking.strategy=structured requires a table view or row view so candidate types can be tiered",
         )
     if ranking.lexical_overlap:
-        _require(ranking.strategy == "structured", "ranking.lexical_overlap only applies to ranking.strategy=structured")
+        _require(
+            ranking.strategy == "structured",
+            "ranking.lexical_overlap only applies to ranking.strategy=structured",
+        )
 
-    _require(runtime.mode in VALID_RUNTIME_MODES, f"runtime.mode must be one of {VALID_RUNTIME_MODES}")
+    _require(
+        runtime.mode in VALID_RUNTIME_MODES,
+        f"runtime.mode must be one of {VALID_RUNTIME_MODES}",
+    )
     if runtime.skip_kg:
-        _require(runtime.mode == "naive", "runtime.skip_kg=true requires runtime.mode=naive")
+        _require(
+            runtime.mode == "naive", "runtime.skip_kg=true requires runtime.mode=naive"
+        )
     _require(runtime.top_k > 0, "runtime.top_k must be positive")
     _require(runtime.chunk_top_k > 0, "runtime.chunk_top_k must be positive")
 
@@ -331,7 +369,9 @@ def load_config(
     table_raw = chunking_section.get("table", {})
     if not isinstance(table_raw, dict):
         raise ConfigError("chunking.table: expected a mapping")
-    chunking = Chunking(table=_build_dataclass(TableChunking, table_raw, "chunking.table"))
+    chunking = Chunking(
+        table=_build_dataclass(TableChunking, table_raw, "chunking.table")
+    )
     representation_section = _section(payload, "representation", "representation")
     rep_raw = representation_section.get("table", {})
     if not isinstance(rep_raw, dict):
@@ -353,7 +393,9 @@ def load_config(
         EXACT_ID_PREFIXES,
     )
     exact = ExactIdRetrieval(
-        enabled=_coerce_bool(exact_raw.get("enabled", True), "retrieval.exact_id.enabled"),
+        enabled=_coerce_bool(
+            exact_raw.get("enabled", True), "retrieval.exact_id.enabled"
+        ),
         types=exact_types,
     )
     ranking = _build_dataclass(
@@ -425,7 +467,9 @@ def apply_to_environment(cfg: ExperimentConfig) -> dict[str, str]:
     table = cfg.representation.table
     exact = cfg.retrieval.exact_id
     return {
-        "LIGHTRAG_TABLE_PRECEDING_CONTEXT": "1" if cfg.chunking.table.preceding_context else "0",
+        "LIGHTRAG_TABLE_PRECEDING_CONTEXT": "1"
+        if cfg.chunking.table.preceding_context
+        else "0",
         "LIGHTRAG_TABLE_STRUCTURED_ENVELOPE": "1" if table.structured_envelope else "0",
         "LIGHTRAG_TABLE_VIEW": "1" if table.table_view else "0",
         "LIGHTRAG_TABLE_ROW_VIEW": "1" if table.row_view else "0",

@@ -44,11 +44,19 @@ def test_minimum_chunk_budget_scales_with_max_total_tokens() -> None:
 def test_truncate_kg_context_to_budget_keeps_entities_first() -> None:
     tokenizer = _tok()
     entities = [
-        {"entity": f"E-{i:02d}", "type": "concept", "description": "answer-bearing entity " * 3}
+        {
+            "entity": f"E-{i:02d}",
+            "type": "concept",
+            "description": "answer-bearing entity " * 3,
+        }
         for i in range(20)
     ]
     relations = [
-        {"entity1": f"E-{i:02d}", "entity2": f"E-{i + 1:02d}", "description": "edge " * 3}
+        {
+            "entity1": f"E-{i:02d}",
+            "entity2": f"E-{i + 1:02d}",
+            "description": "edge " * 3,
+        }
         for i in range(20)
     ]
     budget = 500
@@ -65,8 +73,7 @@ def test_truncate_kg_context_to_budget_keeps_entities_first() -> None:
     assert len(kept_entities) > len(kept_relations)
     # The rendered KG text fits the budget.
     rendered = "\n".join(
-        json.dumps(item, ensure_ascii=False)
-        for item in kept_entities + kept_relations
+        json.dumps(item, ensure_ascii=False) for item in kept_entities + kept_relations
     )
     assert len(tokenizer.encode(rendered)) <= budget
 
@@ -125,7 +132,11 @@ async def test_build_context_str_reserves_chunk_budget_floor(
         for i in range(60)
     ]
     chunks = [
-        {"content": f"evidence chunk {i} with FACT-{i:05d}", "file_path": "doc.docx", "chunk_id": f"c{i}"}
+        {
+            "content": f"evidence chunk {i} with FACT-{i:05d}",
+            "file_path": "doc.docx",
+            "chunk_id": f"c{i}",
+        }
         for i in range(5)
     ]
     query_param = QueryParam(max_total_tokens=12000)

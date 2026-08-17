@@ -41,7 +41,9 @@ def add_cross_document_case(
     companion = dataset_path / f"{dataset_id}-companion.docx"
     document = Document()
     document.core_properties.title = (
-        "LightRAG 合成辅助证据" if is_chinese else "LightRAG Synthetic Companion Evidence"
+        "LightRAG 合成辅助证据"
+        if is_chinese
+        else "LightRAG Synthetic Companion Evidence"
     )
     section = "辅助证据登记" if is_chinese else "Companion Evidence Register"
     expected_text = (

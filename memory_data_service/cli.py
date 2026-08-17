@@ -38,9 +38,7 @@ def generate(
     title: Annotated[
         str, typer.Option(help="User-facing document title")
     ] = "LightRAG Synthetic Rich Memory Document",
-    display_name: Annotated[
-        str, typer.Option(help="User-facing dataset name")
-    ] = "",
+    display_name: Annotated[str, typer.Option(help="User-facing dataset name")] = "",
     allow_oversized_generation: Annotated[
         bool,
         typer.Option(

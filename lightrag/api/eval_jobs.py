@@ -143,13 +143,19 @@ def _claim_file_lock(runs_root: Path):
             import fcntl
 
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            unlock = lambda: fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+            def unlock() -> None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
         except ImportError:  # pragma: no cover - exercised on Windows only
             import msvcrt
 
             handle.seek(0)
             msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-            unlock = lambda: msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+            def unlock() -> None:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
         try:
             yield
         finally:
@@ -204,9 +210,9 @@ def _probe_process_start(pid: int) -> int | None:
             check=False,
         ).stdout.strip()
         if out:
-            started = datetime.strptime(
-                out, "%a %b %d %H:%M:%S %Y"
-            ).replace(tzinfo=timezone.utc)
+            started = datetime.strptime(out, "%a %b %d %H:%M:%S %Y").replace(
+                tzinfo=timezone.utc
+            )
             return int(started.timestamp())
     except (OSError, subprocess.SubprocessError, ValueError):
         pass
@@ -333,9 +339,7 @@ def _refresh_job(
         job.pop("claim", None)
         job["lease_expires_at"] = None
         job["recovered_at"] = _now_iso()
-    if job["status"] in _TERMINAL_STATUSES and not job.get(
-        "finished_at"
-    ):
+    if job["status"] in _TERMINAL_STATUSES and not job.get("finished_at"):
         job["finished_at"] = _now_iso()
     _write_job(jobs_root(runs_root), job)
     return job
@@ -398,9 +402,10 @@ def _renew_job_lease(
             if job is None:
                 return
             claim = job.get("claim") or {}
-            if job.get("status") not in {"running", "cancelling"} or claim.get(
-                "owner_id"
-            ) != owner_id:
+            if (
+                job.get("status") not in {"running", "cancelling"}
+                or claim.get("owner_id") != owner_id
+            ):
                 return
             claim["lease_expires_at"] = _lease_expires_at()
             job["claim"] = claim
@@ -531,9 +536,17 @@ def _write_queued_run_envelope(*, runs_root: Path, params: RunParams) -> None:
                 **{
                     key: baseline[key]
                     for key in (
-                        "model", "mode", "top_k", "chunk_top_k", "max_cases",
-                        "num_ctx", "num_predict", "max_total_tokens", "temperature",
-                        "engine", "kg",
+                        "model",
+                        "mode",
+                        "top_k",
+                        "chunk_top_k",
+                        "max_cases",
+                        "num_ctx",
+                        "num_predict",
+                        "max_total_tokens",
+                        "temperature",
+                        "engine",
+                        "kg",
                     )
                     if key in baseline
                 },
@@ -575,9 +588,10 @@ def _spawn_run_job(
     job = _read_job(jobs, job_id)
     if job is None:
         raise KeyError(f"job {job_id} not found")
-    if job.get("status") != "claiming" or (job.get("claim") or {}).get(
-        "owner_id"
-    ) != owner_id:
+    if (
+        job.get("status") != "claiming"
+        or (job.get("claim") or {}).get("owner_id") != owner_id
+    ):
         raise RuntimeError(f"job {job_id} is no longer claimed by this worker")
     params.output_dir = Path(job["output_dir"])
     params.output_dir.mkdir(parents=True, exist_ok=True)
@@ -636,9 +650,10 @@ def _spawn_dataset_job(
     job = _read_job(jobs, job_id)
     if job is None:
         raise KeyError(f"job {job_id} not found")
-    if job.get("status") != "claiming" or (job.get("claim") or {}).get(
-        "owner_id"
-    ) != owner_id:
+    if (
+        job.get("status") != "claiming"
+        or (job.get("claim") or {}).get("owner_id") != owner_id
+    ):
         raise RuntimeError(f"job {job_id} is no longer claimed by this worker")
     job_dir = jobs / job_id
     cmd = [
@@ -895,11 +910,7 @@ def start_run_job(
     output_dir: Path | None = None,
 ) -> dict[str, Any]:
     jobs_root(runs_root).mkdir(parents=True, exist_ok=True)
-    params.output_dir = (
-        Path(output_dir)
-        if output_dir
-        else _unique_run_dir(runs_root)
-    )
+    params.output_dir = Path(output_dir) if output_dir else _unique_run_dir(runs_root)
     params.output_dir.mkdir(parents=True, exist_ok=True)
     _write_queued_run_envelope(runs_root=runs_root, params=params)
     job = {
@@ -964,8 +975,7 @@ def start_dataset_job(
                 existing = [
                     summary
                     for summary in list_datasets(datasets_root)
-                    if (summary.display_name or "").strip()
-                    == display_name.strip()
+                    if (summary.display_name or "").strip() == display_name.strip()
                 ]
             except (OSError, ValueError):
                 existing = []
@@ -1060,7 +1070,9 @@ def _tracked_child_pids(job: dict[str, Any]) -> list[int]:
     if not isinstance(output_dir, str):
         return []
     try:
-        payload = json.loads((Path(output_dir) / ".supervise-child.json").read_text(encoding="utf-8"))
+        payload = json.loads(
+            (Path(output_dir) / ".supervise-child.json").read_text(encoding="utf-8")
+        )
     except (OSError, ValueError):
         return []
     if not isinstance(payload, dict):

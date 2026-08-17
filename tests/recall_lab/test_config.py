@@ -49,7 +49,9 @@ def test_cli_overrides_are_applied() -> None:
 
 def test_unknown_field_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "bad.yaml"
-    path.write_text("chunking:\n  table:\n    atomic: true\n    mystery: 1\n", encoding="utf-8")
+    path.write_text(
+        "chunking:\n  table:\n    atomic: true\n    mystery: 1\n", encoding="utf-8"
+    )
     with pytest.raises(ConfigError, match="unknown field"):
         load_config(path)
 

@@ -41,6 +41,7 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     )
     temporary.replace(path)
 
+
 BASELINE_DEFAULTS: dict[str, Any] = {
     "mode": "mix",
     "top_k": 5,
@@ -262,8 +263,7 @@ def _source_document_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     """Select source documents without ever fingerprinting answer artefacts."""
     files = [item for item in manifest.get("files") or [] if isinstance(item, dict)]
     has_roles = any(
-        item.get("role") in {"source_document", "evaluation_artifact"}
-        for item in files
+        item.get("role") in {"source_document", "evaluation_artifact"} for item in files
     )
     return [
         item
@@ -291,7 +291,9 @@ def selected_case_ids(dataset: Path | None, max_cases: int | None) -> list[str] 
         if not isinstance(questions, list):
             return None
         selected = sample_evenly(questions, max_cases)
-        case_ids = [str(question["id"]) for question in selected if isinstance(question, dict)]
+        case_ids = [
+            str(question["id"]) for question in selected if isinstance(question, dict)
+        ]
         return case_ids if len(case_ids) == len(selected) else None
     except (OSError, ValueError, KeyError, TypeError):
         return None
@@ -371,7 +373,9 @@ def build_execution_manifest(
                     (manifest.get("generation_provenance") or {}).get(
                         "generator_code_version"
                     )
-                    or _manifest_value(manifest, "generator_version", "generator_code_version")
+                    or _manifest_value(
+                        manifest, "generator_version", "generator_code_version"
+                    )
                 )
                 if manifest
                 else _unknown(manifest_error or "dataset manifest is unavailable")
@@ -389,7 +393,8 @@ def build_execution_manifest(
             "random_seed": (
                 (
                     (manifest.get("generation_provenance") or {}).get("seed")
-                    if (manifest.get("generation_provenance") or {}).get("seed") is not None
+                    if (manifest.get("generation_provenance") or {}).get("seed")
+                    is not None
                     else _manifest_value(manifest, "random_seed", "seed")
                 )
                 if manifest
@@ -440,7 +445,7 @@ def _existing_runtime_snapshot(output_dir: Path) -> dict[str, Any] | None:
 
 def _dataset_id_from_manifest(execution_manifest: dict[str, Any]) -> str | None:
     """Extract the stable dataset id from the immutable execution manifest."""
-    value = ((execution_manifest.get("dataset") or {}).get("dataset_id"))
+    value = (execution_manifest.get("dataset") or {}).get("dataset_id")
     return value if isinstance(value, str) and value.strip() else None
 
 
@@ -496,7 +501,9 @@ def capture_runtime_snapshot(
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except (OSError, ValueError, urllib.error.URLError) as exc:
-        return _runtime_unavailable(f"health snapshot request failed: {type(exc).__name__}")
+        return _runtime_unavailable(
+            f"health snapshot request failed: {type(exc).__name__}"
+        )
 
     configuration = payload.get("configuration")
     if not isinstance(configuration, dict):
@@ -525,7 +532,8 @@ def capture_runtime_snapshot(
         "llm": {
             "provider": configuration.get("llm_binding")
             or _unknown("health response omitted llm_binding"),
-            "model": effective_model or _unknown("health response omitted effective LLM model"),
+            "model": effective_model
+            or _unknown("health response omitted effective LLM model"),
             "endpoint": _endpoint_identifier(configuration.get("llm_binding_host")),
         },
         "embedding": {
@@ -533,7 +541,9 @@ def capture_runtime_snapshot(
             or _unknown("health response omitted embedding_binding"),
             "model": configuration.get("embedding_model")
             or _unknown("health response omitted embedding_model"),
-            "endpoint": _endpoint_identifier(configuration.get("embedding_binding_host")),
+            "endpoint": _endpoint_identifier(
+                configuration.get("embedding_binding_host")
+            ),
         },
         "vlm": {
             "enabled": bool(configuration.get("vlm_process_enable")),
@@ -582,7 +592,11 @@ def _model_identity(
     declared = baseline.get("model") or _unknown("run has no declared model")
     effective = (runtime_snapshot.get("llm") or {}).get("model")
     if not isinstance(declared, str) or not isinstance(effective, str):
-        return declared, effective or _unknown("runtime snapshot has no effective model"), None
+        return (
+            declared,
+            effective or _unknown("runtime snapshot has no effective model"),
+            None,
+        )
     return declared, effective, declared != effective
 
 
@@ -784,7 +798,9 @@ def write_envelope(
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    execution_manifest = _existing_execution_manifest(output_dir) or context.execution_manifest
+    execution_manifest = (
+        _existing_execution_manifest(output_dir) or context.execution_manifest
+    )
     if not execution_manifest:
         execution_manifest = build_execution_manifest(
             dataset=context.dataset,
@@ -822,7 +838,9 @@ def write_envelope(
         ),
         {},
     )
-    scorers = answer_summary.get("scorers") if isinstance(answer_summary, dict) else None
+    scorers = (
+        answer_summary.get("scorers") if isinstance(answer_summary, dict) else None
+    )
     run_label = (context.label or "").strip() or context.definition.label
     envelope: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,

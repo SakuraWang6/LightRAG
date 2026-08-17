@@ -68,7 +68,12 @@ def resolve_scenario_quotas(
 
 
 def build_provenance(
-    *, request: DatasetCreateRequest, pages: int, generator: str, template_version: str, source_file: Path
+    *,
+    request: DatasetCreateRequest,
+    pages: int,
+    generator: str,
+    template_version: str,
+    source_file: Path,
 ) -> tuple[str, GenerationProvenance]:
     code_version = hashlib.sha256(source_file.read_bytes()).hexdigest()
     inputs: dict[str, Any] = {
@@ -92,7 +97,10 @@ def build_provenance(
     )
     fingerprint = hashlib.sha256(
         json.dumps(
-            {**provenance.model_dump(), "oracle_schema_version": DATASET_SCHEMA_VERSION},
+            {
+                **provenance.model_dump(),
+                "oracle_schema_version": DATASET_SCHEMA_VERSION,
+            },
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),

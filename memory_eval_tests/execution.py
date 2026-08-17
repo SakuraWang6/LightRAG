@@ -50,7 +50,9 @@ def allocate_execution_unit(
     mode = str(configuration.get("execution_mode") or "managed_local")
     endpoint = configuration.get("runtime_endpoint")
     if mode not in {"managed_local", "assigned"}:
-        raise ValueError("environment profile execution_mode must be managed_local or assigned")
+        raise ValueError(
+            "environment profile execution_mode must be managed_local or assigned"
+        )
     if mode == "assigned" and not isinstance(endpoint, str):
         raise ValueError("assigned environment profile requires runtime_endpoint")
     unit = {
@@ -68,7 +70,9 @@ def allocate_execution_unit(
         "runtime_endpoint": endpoint if mode == "assigned" else None,
     }
     if unit["retention_policy"] not in {"retain", "archive", "cleanup"}:
-        raise ValueError("environment profile retention_policy must be retain, archive, or cleanup")
+        raise ValueError(
+            "environment profile retention_policy must be retain, archive, or cleanup"
+        )
     workspace_dir.mkdir(parents=True, exist_ok=False)
     input_dir.mkdir(parents=True, exist_ok=False)
     _write_unit(output_dir, unit)
@@ -78,7 +82,9 @@ def allocate_execution_unit(
 def load_execution_unit(output_dir: Path) -> dict[str, Any] | None:
     """Load the sole execution unit owned by this run, if allocation survived a restart."""
     try:
-        value = json.loads((output_dir / "execution_unit.json").read_text(encoding="utf-8"))
+        value = json.loads(
+            (output_dir / "execution_unit.json").read_text(encoding="utf-8")
+        )
     except (OSError, ValueError):
         return None
     return value if isinstance(value, dict) else None
@@ -212,7 +218,11 @@ def _profile_environment(
     # WebUI mount and frontend-build scan keeps each test start minimal.
     env["LIGHTRAG_DISABLE_WEBUI"] = "1"
     _set_role_environment(env, primary, prefix="LLM")
-    for name, prefix in (("extraction", "EXTRACT_LLM"), ("query", "QUERY_LLM"), ("vlm", "VLM_LLM")):
+    for name, prefix in (
+        ("extraction", "EXTRACT_LLM"),
+        ("query", "QUERY_LLM"),
+        ("vlm", "VLM_LLM"),
+    ):
         role = config.get(name)
         if isinstance(role, dict):
             _set_role_environment(env, role, prefix=prefix)
@@ -297,7 +307,9 @@ def _profile_environment(
     return env
 
 
-def _set_role_environment(env: dict[str, str], role: dict[str, Any], *, prefix: str) -> None:
+def _set_role_environment(
+    env: dict[str, str], role: dict[str, Any], *, prefix: str
+) -> None:
     """Set one provider/model pair without accepting profile-supplied endpoints.
 
     Endpoint and secret references are rejected when the profile is saved.  The
@@ -326,7 +338,9 @@ def _has_provider_credential(*, provider: str, prefix: str) -> bool:
     elif provider == "gemini":
         names.append("GEMINI_API_KEY")
     elif provider == "bedrock":
-        names.extend(["AWS_ACCESS_KEY_ID", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE"])
+        names.extend(
+            ["AWS_ACCESS_KEY_ID", "AWS_PROFILE", "AWS_WEB_IDENTITY_TOKEN_FILE"]
+        )
     return any(bool(os.getenv(name)) for name in names)
 
 
@@ -350,7 +364,10 @@ def preflight_execution_unit(profile: dict[str, Any]) -> None:
     if configuration.get("execution_mode", "managed_local") != "managed_local":
         return
     roles = {
-        "LLM": (configuration.get("query") or configuration.get("extraction") or {}, "LLM"),
+        "LLM": (
+            configuration.get("query") or configuration.get("extraction") or {},
+            "LLM",
+        ),
         "embedding": (configuration.get("embedding") or {}, "EMBEDDING"),
     }
     blockers: list[str] = []
@@ -362,7 +379,9 @@ def preflight_execution_unit(profile: dict[str, Any]) -> None:
             if not _ollama_reachable(endpoint):
                 blockers.append(f"{label} uses Ollama but {endpoint} is unreachable")
         elif not _has_provider_credential(provider=provider, prefix=prefix):
-            blockers.append(f"{label} uses {provider} but its API credential is not configured")
+            blockers.append(
+                f"{label} uses {provider} but its API credential is not configured"
+            )
     if blockers:
         raise ExecutionUnitPrerequisiteError("; ".join(blockers))
 
@@ -370,14 +389,20 @@ def preflight_execution_unit(profile: dict[str, Any]) -> None:
 def _write_unit(output_dir: Path, unit: dict[str, Any]) -> None:
     path = output_dir / "execution_unit.json"
     tmp = output_dir / "execution_unit.json.tmp"
-    tmp.write_text(json.dumps(unit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.write_text(
+        json.dumps(unit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     tmp.replace(path)
 
 
 def _ensure_run_input_dir(unit: dict[str, Any]) -> Path:
     """Backfill pre-1.2 units while keeping every upload inside its run."""
     configured = unit.get("input_dir")
-    input_dir = Path(str(configured)) if configured else Path(str(unit["storage_dir"])) / "inputs"
+    input_dir = (
+        Path(str(configured))
+        if configured
+        else Path(str(unit["storage_dir"])) / "inputs"
+    )
     input_dir.mkdir(parents=True, exist_ok=True)
     unit["input_dir"] = str(input_dir)
     return input_dir
@@ -400,7 +425,9 @@ def start_execution_unit(
             rag_api_url=endpoint, api_key=api_key, access_token=access_token
         )
         if snapshot.get("status") != "captured":
-            raise RuntimeError(f"assigned execution unit is unavailable: {snapshot.get('reason')}")
+            raise RuntimeError(
+                f"assigned execution unit is unavailable: {snapshot.get('reason')}"
+            )
         unit.update(
             {
                 "started_at": unit.get("started_at") or _now(),
@@ -468,7 +495,9 @@ def start_execution_unit(
         snapshot: dict[str, Any] = {}
         while time.monotonic() < deadline:
             if proc.poll() is not None:
-                raise RuntimeError(f"managed execution unit exited with code {proc.returncode}")
+                raise RuntimeError(
+                    f"managed execution unit exited with code {proc.returncode}"
+                )
             snapshot = capture_runtime_snapshot(
                 rag_api_url=endpoint,
                 api_key=api_key,
@@ -489,7 +518,9 @@ def start_execution_unit(
                 return unit
             time.sleep(0.5)
         proc.terminate()
-        raise TimeoutError("managed execution unit did not become healthy before timeout")
+        raise TimeoutError(
+            "managed execution unit did not become healthy before timeout"
+        )
     except Exception as exc:
         unit.update({"lifecycle_status": "failed", "failure": str(exc)})
         _write_unit(output_dir, unit)
@@ -533,7 +564,9 @@ def finalize_execution_unit(
         isolated_root = (output_dir / "isolated").resolve()
         try:
             target = storage_dir.resolve()
-            allowed = target.parent == isolated_root and target.name == str(unit.get("storage_id"))
+            allowed = target.parent == isolated_root and target.name == str(
+                unit.get("storage_id")
+            )
         except OSError:
             allowed = False
         if allowed and target.exists():
@@ -542,7 +575,9 @@ def finalize_execution_unit(
             unit["lifecycle_status"] = "cleaned"
         else:
             unit["lifecycle_status"] = "cleanup_skipped"
-            unit["cleanup_reason"] = "storage target was absent or outside this run's isolated root"
+            unit["cleanup_reason"] = (
+                "storage target was absent or outside this run's isolated root"
+            )
     elif policy == "archive":
         unit["lifecycle_status"] = "archived"
     else:

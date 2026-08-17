@@ -47,8 +47,20 @@ def test_retrieval_groups_multiple_fact_matches_in_one_full_chunk(
     id_only_chunk = "FACT-LONG-TABLE marks the appendix stress-table row."
     responses = iter(
         [
-            {"data": {"references": [{"file_path": "source.docx", "content": [chunk_with_both_facts]}]}},
-            {"data": {"references": [{"file_path": "source.docx", "content": [id_only_chunk]}]}},
+            {
+                "data": {
+                    "references": [
+                        {"file_path": "source.docx", "content": [chunk_with_both_facts]}
+                    ]
+                }
+            },
+            {
+                "data": {
+                    "references": [
+                        {"file_path": "source.docx", "content": [id_only_chunk]}
+                    ]
+                }
+            },
         ]
     )
 
@@ -61,7 +73,9 @@ def test_retrieval_groups_multiple_fact_matches_in_one_full_chunk(
             return {"facts": facts, "questions": questions}
 
     monkeypatch.setattr(retrieval, "DatasetClient", FakeDatasetClient)
-    monkeypatch.setattr(retrieval, "_post_json", lambda *_args, **_kwargs: next(responses))
+    monkeypatch.setattr(
+        retrieval, "_post_json", lambda *_args, **_kwargs: next(responses)
+    )
 
     report = retrieval.evaluate_api(dataset_source="dataset", rag_api_url="http://rag")
     multi, long_table = report["results"]
@@ -91,12 +105,18 @@ def test_fact_identifier_alone_is_not_retrieval_evidence() -> None:
         "expected_text": "FACT-00027 authoritative final rollover latency 54.99 ms",
     }
 
-    assert retrieval._content_contains_fact(
-        "FACT-00027 marks the authoritative final rollover latency.", fact
-    ) is False
-    assert retrieval._content_contains_fact(
-        "The table row is [\"A-089\", \"54.99 ms\", \"FACT-00027\"].", fact
-    ) is True
+    assert (
+        retrieval._content_contains_fact(
+            "FACT-00027 marks the authoritative final rollover latency.", fact
+        )
+        is False
+    )
+    assert (
+        retrieval._content_contains_fact(
+            'The table row is ["A-089", "54.99 ms", "FACT-00027"].', fact
+        )
+        is True
+    )
 
 
 def test_repeated_answer_attributed_to_expected_text_instance(monkeypatch) -> None:
@@ -148,7 +168,9 @@ def test_repeated_answer_attributed_to_expected_text_instance(monkeypatch) -> No
             return {"facts": [fact], "questions": questions}
 
     monkeypatch.setattr(retrieval, "DatasetClient", FakeDatasetClient)
-    monkeypatch.setattr(retrieval, "_post_json", lambda *_args, **_kwargs: next(responses))
+    monkeypatch.setattr(
+        retrieval, "_post_json", lambda *_args, **_kwargs: next(responses)
+    )
 
     report = retrieval.evaluate_api(dataset_source="dataset", rag_api_url="http://rag")
     row = report["results"][0]

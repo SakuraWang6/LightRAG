@@ -4010,7 +4010,9 @@ async def extract_entities(
                 cache_type="extract",
                 chunk_id=chunk_key,
                 cache_keys_collector=cache_keys_collector,
-                response_format=({"type": "json_object"} if use_json_extraction else None),
+                response_format=(
+                    {"type": "json_object"} if use_json_extraction else None
+                ),
                 llm_cache_identity=get_llm_cache_identity(global_config, "extract"),
             )
         except Exception as _exc:
@@ -4032,9 +4034,7 @@ async def extract_entities(
                 else None
             )
             _truncated = (
-                is_truncated_response(final_result)
-                if _extract_error is None
-                else None
+                is_truncated_response(final_result) if _extract_error is None else None
             )
             # tenacity attaches its retry state to the final exception after
             # the last attempt; fall back to 1 when it is not available.
@@ -4043,8 +4043,7 @@ async def extract_entities(
             )
             _attempts = (
                 _retry_state.attempt_number
-                if _retry_state is not None
-                and hasattr(_retry_state, "attempt_number")
+                if _retry_state is not None and hasattr(_retry_state, "attempt_number")
                 else 1
             )
             logger.info(
@@ -5013,9 +5012,7 @@ async def _get_vector_context(
             f"Naive query: 0 chunks (chunk_top_k:{search_top_k} cosine:{cosine_threshold})"
         )
         if explicit_chunks:
-            logger.info(
-                f"Naive query: {len(explicit_chunks)} explicit-id chunks"
-            )
+            logger.info(f"Naive query: {len(explicit_chunks)} explicit-id chunks")
             return apply_ranking_strategy(query, explicit_chunks)
         return []
 
@@ -5040,15 +5037,12 @@ async def _get_vector_context(
             f"Naive query: prepending {len(explicit_chunks)} explicit-id chunks"
         )
         explicit_ids = {
-            chunk.get("chunk_id")
-            for chunk in explicit_chunks
-            if chunk.get("chunk_id")
+            chunk.get("chunk_id") for chunk in explicit_chunks if chunk.get("chunk_id")
         }
         deduped = [
             chunk
             for chunk in valid_chunks
-            if not chunk.get("chunk_id")
-            or chunk["chunk_id"] not in explicit_ids
+            if not chunk.get("chunk_id") or chunk["chunk_id"] not in explicit_ids
         ]
         return apply_ranking_strategy(query, explicit_chunks + deduped)
     return apply_ranking_strategy(query, valid_chunks)
@@ -5070,16 +5064,12 @@ def _explicit_id_re() -> re.Pattern[str] | None:
         types = _DEFAULT_EXACT_ID_TYPES
     else:
         types = tuple(
-            token.strip().upper()
-            for token in raw.split(",")
-            if token.strip()
+            token.strip().upper() for token in raw.split(",") if token.strip()
         )
     if not types:
         return None
     prefix_alternation = "|".join(re.escape(token) for token in types)
-    return re.compile(
-        rf"\b(?:{prefix_alternation})(?:-[A-Z0-9]+)*\d{{2,}}\b"
-    )
+    return re.compile(rf"\b(?:{prefix_alternation})(?:-[A-Z0-9]+)*\d{{2,}}\b")
 
 
 async def _explicit_id_recall(
@@ -5135,9 +5125,7 @@ async def _explicit_id_recall(
                 exact_chunks = await search(identifiers)
             else:
                 keys = await text_chunks_db.all_keys()
-                exact_chunks = (
-                    await text_chunks_db.get_by_ids(keys) if keys else []
-                )
+                exact_chunks = await text_chunks_db.get_by_ids(keys) if keys else []
         except Exception:  # noqa: BLE001 - backend cannot scan; skip exact recall
             exact_chunks = []
         for chunk in exact_chunks or []:
@@ -5735,7 +5723,10 @@ async def _truncate_kg_context_to_budget(
     """
     if max_kg_tokens <= 0:
         return [], []
-    key = lambda item: json.dumps(item, ensure_ascii=False)
+
+    def key(item: Any) -> str:
+        return json.dumps(item, ensure_ascii=False)
+
     entities = await atruncate_list_by_token_size(
         entities_context,
         key=key,

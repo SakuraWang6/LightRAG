@@ -24,7 +24,9 @@ def _default_runs_root() -> Path:
 
 
 def _json_bytes(payload: Any, status: int = HTTPStatus.OK) -> tuple[int, bytes]:
-    return status, (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    return status, (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode(
+        "utf-8"
+    )
 
 
 def _run_summary(run_dir: Path) -> dict[str, Any]:
@@ -141,7 +143,9 @@ class RecallLabHandler(BaseHTTPRequestHandler):
         if not target.is_file():
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        content_type = (
+            mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        )
         if target.suffix == ".js":
             content_type = "text/javascript; charset=utf-8"
         self._serve_file(target, content_type)
@@ -185,7 +189,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     RecallLabHandler.runs_root.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer((args.host, args.port), RecallLabHandler)
-    print(f"Recall Lab: http://{args.host}:{args.port}  runs={RecallLabHandler.runs_root}")
+    print(
+        f"Recall Lab: http://{args.host}:{args.port}  runs={RecallLabHandler.runs_root}"
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

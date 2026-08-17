@@ -117,7 +117,10 @@ class TestQueryRouteJsonOnly:
                     # ``LightRAG.aquery_llm`` returns raw retrieval data in
                     # ``data`` but attaches the controlled trace at the result
                     # top level. Keep this mock faithful to that real contract.
-                    "evaluation_trace": {"status": "observed", "final_context": "controlled"},
+                    "evaluation_trace": {
+                        "status": "observed",
+                        "final_context": "controlled",
+                    },
                 }
 
         app = FastAPI()
@@ -433,7 +436,9 @@ async def test_query_data_includes_chunk_content_when_requested():
             }
 
     router = create_query_routes(DataRag())
-    endpoint = next(route.endpoint for route in router.routes if route.path == "/query/data")
+    endpoint = next(
+        route.endpoint for route in router.routes if route.path == "/query/data"
+    )
     response = await endpoint(
         QueryRequest(query="test", mode="mix", include_chunk_content=True)
     )

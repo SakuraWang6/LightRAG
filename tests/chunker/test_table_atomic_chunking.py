@@ -54,14 +54,10 @@ def test_small_table_keeps_preceding_context_in_one_chunk() -> None:
 
 
 def test_oversized_table_splits_at_row_boundaries() -> None:
-    rows: list[list[str]] = [
-        ["Row", "Scenario", "Latency", "Status"]
-    ]
+    rows: list[list[str]] = [["Row", "Scenario", "Latency", "Status"]]
     for index in range(1, 90):
         if index == 89:
-            rows.append(
-                ["A-089", "appendix rollover stress", "62.99 ms", "FACT-00055"]
-            )
+            rows.append(["A-089", "appendix rollover stress", "62.99 ms", "FACT-00055"])
         else:
             rows.append(
                 [
@@ -111,9 +107,13 @@ def test_text_between_tables_is_chunked_normally() -> None:
     rows = [["A", "1"], ["FACT-00001", "value"]]
     filler = "filler " * 300
     content = (
-        "start " + _table(rows, "tb-1") + "\n"
-        + filler + "\n"
-        + _table(rows, "tb-2") + "\nend"
+        "start "
+        + _table(rows, "tb-1")
+        + "\n"
+        + filler
+        + "\n"
+        + _table(rows, "tb-2")
+        + "\nend"
     )
     chunks = chunking_by_fixed_token(_tok(), content, chunk_token_size=200)
     assert chunks

@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +20,9 @@ _FIGURE_ID_RE = re.compile(r"\bFIG-\d+\b", re.IGNORECASE)
 
 
 def _ids(text: str, pattern: re.Pattern[str]) -> list[str]:
-    return list(dict.fromkeys(match.group(0).upper() for match in pattern.finditer(text)))
+    return list(
+        dict.fromkeys(match.group(0).upper() for match in pattern.finditer(text))
+    )
 
 
 def _candidate_table_id(candidate: dict[str, Any]) -> str | None:
@@ -67,7 +69,9 @@ def _classify_case(query: str, candidates: list[dict[str, Any]]) -> dict[str, An
         candidate for candidate in candidates if candidate["rank"] == gold_rank
     )
     query_table_ids = _ids(query, _TABLE_ID_RE)
-    gold_table_id = query_table_ids[0] if query_table_ids else _candidate_table_id(gold_candidate)
+    gold_table_id = (
+        query_table_ids[0] if query_table_ids else _candidate_table_id(gold_candidate)
+    )
     gold_fact_ids = _candidate_fact_ids(gold_candidate)
 
     ahead = candidates[: gold_rank - 1]
@@ -152,7 +156,7 @@ def audit_report(report: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "question_type": "table_cell",
-        "cases": len(cases),
+        "case_count": len(cases),
         "category_distribution": dict(sorted(category_counts.items())),
         "gold_rank_distribution": {
             "1": sum(rank == 1 for rank in gold_ranks),
