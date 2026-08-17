@@ -83,11 +83,18 @@ def _ingestion_process_options(
     VLM-enabled runs request image analysis (``Fi``); other runs keep plain
     fixed chunking.  An explicit ``extra.process_options`` override wins so
     callers can add tables/equations (e.g. ``Fit``) without code changes.
+    When KG extraction is disabled the ``!`` flag is encoded here directly:
+    an explicit per-file ``process_options`` is authoritative and would
+    otherwise shadow the ``LIGHTRAG_PARSER=*:native-!`` routing fallback,
+    silently running LLM extraction on skip-KG runs.
     """
     override = (extra or {}).get("process_options")
     if override:
         return str(override)
-    return "Fi" if bool(baseline.get("vlm")) else "F"
+    options = "Fi" if bool(baseline.get("vlm")) else "F"
+    if not bool(baseline.get("kg", True)):
+        options += "!"
+    return options
 
 
 def _dataset_pages(dataset: Path) -> int:

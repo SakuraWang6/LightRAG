@@ -454,6 +454,10 @@ def test_effective_vlm_auto_detects_figures_from_manifest(
 def test_ingestion_process_options_reflects_vlm_and_override() -> None:
     assert workflow._ingestion_process_options({"vlm": True}) == "Fi"
     assert workflow._ingestion_process_options({"vlm": False}) == "F"
+    # KG disabled must encode ``!`` directly; an explicit per-file option is
+    # authoritative and would otherwise shadow the parser-routing fallback.
+    assert workflow._ingestion_process_options({"vlm": False, "kg": False}) == "F!"
+    assert workflow._ingestion_process_options({"vlm": True, "kg": False}) == "Fi!"
     assert (
         workflow._ingestion_process_options({"vlm": True}, {"process_options": "Fit"})
         == "Fit"
