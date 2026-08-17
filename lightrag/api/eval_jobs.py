@@ -43,6 +43,7 @@ DEFAULT_DATASET_PAGE_CAP = 1000
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _DISPATCH_LOCK = threading.Lock()
 _DISPATCH_LOOP_STARTED = False
+_DISPATCH_INTERVAL_SECONDS = 15
 _CLAIM_LOCK_FILE = ".claim.lock"
 _TERMINAL_STATUSES = frozenset({"complete", "failed", "cancelled", "stale"})
 _ACTIVE_STATUSES = frozenset({"claiming", "running", "cancelling"})
@@ -86,6 +87,20 @@ def _lease_expires_at() -> str:
     return datetime.fromtimestamp(
         time.time() + _lease_seconds(), timezone.utc
     ).isoformat(timespec="seconds")
+
+
+def _dispatch_interval_seconds() -> int:
+    """Return the fallback dispatch poll interval.
+
+    New job submission, completion and resume all call ``_dispatch()``
+    directly, so this periodic loop only re-checks queued jobs after a process
+    restart or once the ``MEMORY_EVAL_WAIT_FOR_RUN`` hold gate clears.  The env
+    override follows the module's ``MEMORY_EVAL_*`` tuning pattern.
+    """
+    raw = os.getenv("MEMORY_EVAL_DISPATCH_INTERVAL_SECONDS")
+    if raw and raw.strip().isdigit():
+        return max(1, int(raw.strip()))
+    return _DISPATCH_INTERVAL_SECONDS
 
 
 def _lease_is_expired(claim: Any) -> bool:
@@ -833,7 +848,7 @@ def _start_dispatch_loop(runs_root: Path, datasets_root: Path | None = None) -> 
 
     def _loop() -> None:
         while True:
-            time.sleep(60)
+            time.sleep(_dispatch_interval_seconds())
             try:
                 _dispatch(runs_root, datasets_root)
             except Exception as exc:  # noqa: BLE001 - keep the loop alive
