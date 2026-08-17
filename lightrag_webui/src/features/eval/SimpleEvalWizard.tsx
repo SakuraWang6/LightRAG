@@ -60,8 +60,15 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
   const [name, setName] = useState(() => initial?.name ?? '')
   const [dataset, setDataset] = useState(() => initial?.dataset ?? '')
   const [model, setModel] = useState(() => stringParam(initial?.params, 'model', 'qwen3:8b'))
-  const [evaluationType, setEvaluationType] = useState(() =>
-    stringParam(initial?.params, 'evaluation_type', 'answer')
+  const [evaluationScope, setEvaluationScope] = useState(() =>
+    stringParam(initial?.params, 'evaluation_scope', 'end_to_end') === 'retrieval_only'
+      ? 'retrieval_only'
+      : 'end_to_end'
+  )
+  const [retrievalDiagnostics, setRetrievalDiagnostics] = useState(() =>
+    stringParam(initial?.params, 'retrieval_diagnostics', 'summary') === 'detailed'
+      ? 'detailed'
+      : 'summary'
   )
   const [mode, setMode] = useState(() => stringParam(initial?.params, 'mode', 'mix'))
   const [topK, setTopK] = useState(() => numberParam(initial?.params, 'top_k', 5))
@@ -198,7 +205,8 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
         dataset,
         params: {
           model: model.trim() || undefined,
-          evaluation_type: evaluationType,
+          evaluation_scope: evaluationScope,
+          retrieval_diagnostics: retrievalDiagnostics,
           mode: effectiveMode,
           ...numericParams,
           temperature: parsedTemperature,
@@ -219,7 +227,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
     } finally {
       setSubmitting(false)
     }
-  }, [chunkTopK, dataset, datasetInfo, effectiveMode, engine, evaluationType, extractionMaxAsync, kg, maxCases, maxTotalTokens, model, name, numCtx, numPredict, onStarted, optionsError, optionsLoading, queryMaxAsync, questionTypes, t, temperature, topK, vlm])
+  }, [chunkTopK, dataset, datasetInfo, effectiveMode, engine, evaluationScope, extractionMaxAsync, kg, maxCases, maxTotalTokens, model, name, numCtx, numPredict, onStarted, optionsError, optionsLoading, queryMaxAsync, questionTypes, retrievalDiagnostics, t, temperature, topK, vlm])
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -271,17 +279,29 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
             <CardHeader className="pb-2"><CardTitle className="text-sm">{t('eval.retrievalSettings')}</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
               <label className="space-y-1.5 md:col-span-2">
-                <span className="text-sm font-medium">测评类型</span>
-                <Select value={evaluationType} onValueChange={setEvaluationType}>
+                <span className="text-sm font-medium">测评范围</span>
+                <Select value={evaluationScope} onValueChange={setEvaluationScope}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="answer">Answer Evaluation（回答 + 检索指标）</SelectItem>
-                    <SelectItem value="recall">Recall Evaluation（仅召回）</SelectItem>
-                    <SelectItem value="answer_recall">Answer + Recall（回答 + 完整召回报告）</SelectItem>
+                    <SelectItem value="retrieval_only">Retrieval Only（仅召回）</SelectItem>
+                    <SelectItem value="end_to_end">End-to-End（回答 + 检索）</SelectItem>
                   </SelectContent>
                 </Select>
                 <span className="text-muted-foreground block text-xs">
-                  Recall 复用现有任务队列/状态/报告；仅召回时不生成回答。
+                  Retrieval Only 不生成回答；End-to-End 会执行回答生成与评分。
+                </span>
+              </label>
+              <label className="space-y-1.5 md:col-span-2">
+                <span className="text-sm font-medium">检索诊断</span>
+                <Select value={retrievalDiagnostics} onValueChange={setRetrievalDiagnostics}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="summary">Summary（Recall@K / MRR 汇总）</SelectItem>
+                    <SelectItem value="detailed">Detailed（+ gold rank / Top-K candidates / ranking audit）</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span className="text-muted-foreground block text-xs">
+                  Detailed 额外生成 recall_report.json / ranking.json / ranking_audit。
                 </span>
               </label>
               <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramModel')}</span><Select value={model} onValueChange={setModel} disabled={optionsLoading || modelOptions.length === 0 || optionsError !== null}><SelectTrigger><SelectValue placeholder={t('eval.paramModelPick')} /></SelectTrigger><SelectContent>{modelOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">{t('eval.modelHint')}</span></label>
@@ -299,16 +319,18 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
                 </Select>
                 <span className="text-muted-foreground block text-xs">KG 抽取并行数，本地内存小请用 1</span>
               </label>
-              <label className="space-y-1.5">
-                <span className="text-sm font-medium">回答并发</span>
-                <Select value={queryMaxAsync} onValueChange={setQueryMaxAsync}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {[1, 2, 3, 4].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <span className="text-muted-foreground block text-xs">逐题回答并行数，内存小请用 1</span>
-              </label>
+              {evaluationScope === 'end_to_end' ? (
+                <label className="space-y-1.5">
+                  <span className="text-sm font-medium">回答并发</span>
+                  <Select value={queryMaxAsync} onValueChange={setQueryMaxAsync}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[1, 2, 3, 4].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <span className="text-muted-foreground block text-xs">逐题回答并行数，内存小请用 1</span>
+                </label>
+              ) : null}
               <label className="flex items-center gap-2 self-center rounded-md border px-3 py-2.5"><Checkbox checked={kg} onCheckedChange={(checked) => setKg(checked === true)} /><span className="text-sm font-medium">{t('eval.paramKg')}</span></label>
               <label className="flex items-center gap-2 self-center rounded-md border px-3 py-2.5"><Checkbox checked={vlm} onCheckedChange={(checked) => setVlm(checked === true)} /><span className="text-sm font-medium">{t('eval.paramVlm')}</span></label>
             </CardContent>
@@ -340,16 +362,18 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
             </Card>
           ) : null}
 
-          <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-sm">{t('eval.wizardParams')}</CardTitle></CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramNumCtx')}</span><Input type="number" min="1" value={numCtx} onChange={(event) => setNumCtx(event.target.value)} /></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.maxTotalTokens')}</span><Input type="number" min="1" value={maxTotalTokens} onChange={(event) => setMaxTotalTokens(event.target.value)} /></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramNumPredict')}</span><Input type="number" min="1" value={numPredict} onChange={(event) => setNumPredict(event.target.value)} /><span className="text-muted-foreground block text-xs">{t('eval.numPredictHint')}</span></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramTemperature')}</span><Input type="number" min="0" max="2" step="0.1" value={temperature} onChange={(event) => setTemperature(event.target.value)} /></label>
-              <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramEngine')}</span><Select value={engine} onValueChange={setEngine} disabled={optionsLoading || engineOptions.length === 0}><SelectTrigger><SelectValue placeholder={t('eval.enginePick')} /></SelectTrigger><SelectContent>{engineOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">{t('eval.engineHint')}</span></label>
-            </CardContent>
-          </Card>
+          {evaluationScope === 'end_to_end' ? (
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">{t('eval.wizardParams')}</CardTitle></CardHeader>
+              <CardContent className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramNumCtx')}</span><Input type="number" min="1" value={numCtx} onChange={(event) => setNumCtx(event.target.value)} /></label>
+                <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.maxTotalTokens')}</span><Input type="number" min="1" value={maxTotalTokens} onChange={(event) => setMaxTotalTokens(event.target.value)} /></label>
+                <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramNumPredict')}</span><Input type="number" min="1" value={numPredict} onChange={(event) => setNumPredict(event.target.value)} /><span className="text-muted-foreground block text-xs">{t('eval.numPredictHint')}</span></label>
+                <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramTemperature')}</span><Input type="number" min="0" max="2" step="0.1" value={temperature} onChange={(event) => setTemperature(event.target.value)} /></label>
+                <label className="space-y-1.5"><span className="text-sm font-medium">{t('eval.paramEngine')}</span><Select value={engine} onValueChange={setEngine} disabled={optionsLoading || engineOptions.length === 0}><SelectTrigger><SelectValue placeholder={t('eval.enginePick')} /></SelectTrigger><SelectContent>{engineOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select><span className="text-muted-foreground block text-xs">{t('eval.engineHint')}</span></label>
+              </CardContent>
+            </Card>
+          ) : null}
 
           {optionsError ? <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{optionsError}</p> : null}
           <Button onClick={() => void start()} disabled={submitting || optionsLoading || Boolean(optionsError)}>

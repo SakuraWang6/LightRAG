@@ -74,6 +74,10 @@ export type EvalArtifact = {
 export type EvalRun = {
   id: string
   run_dir?: string
+  evaluation_scope?: 'retrieval_only' | 'end_to_end' | null
+  retrieval_diagnostics?: 'summary' | 'detailed' | null
+  retrieval_evaluation?: { enabled?: boolean } | null
+  answer_evaluation?: { enabled?: boolean } | null
   restarts?: number
   last_restart_resume?: boolean | null
   label: string
@@ -278,6 +282,28 @@ export async function deleteEvalRun(runId: string): Promise<{ deleted: string }>
 export type RunComparisonContract = {
   comparable: boolean
   ranking_permitted: boolean
+  ranking_reasons?: string[]
+  domains?: {
+    retrieval?: {
+      available: boolean[]
+      comparable: boolean
+      comparable_cases: number
+      reason?: string | null
+    }
+    answer?: {
+      available: boolean[]
+      comparable: boolean
+      comparable_cases: number
+      reason?: string | null
+    }
+  }
+  common_metrics?: Record<string, string[]>
+  metrics_unavailable?: Array<{
+    run_index: number
+    run_id: string
+    domain: string
+    reason: string
+  }>
   incompatible_fields: string[]
   observed_values: Record<string, unknown[]>
 }

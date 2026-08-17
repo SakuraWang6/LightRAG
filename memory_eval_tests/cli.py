@@ -212,10 +212,22 @@ def main() -> None:
         help="User-facing evaluation name stored in the envelope.",
     )
     parser.add_argument(
+        "--evaluation-scope",
+        choices=("retrieval_only", "end_to_end"),
+        default="end_to_end",
+        help="Evaluation scope: retrieval-only or end-to-end (answer).",
+    )
+    parser.add_argument(
+        "--retrieval-diagnostics",
+        choices=("summary", "detailed"),
+        default="summary",
+        help="Retrieval diagnostics level: summary metrics or detailed ranking artifacts.",
+    )
+    parser.add_argument(
         "--evaluation-type",
         choices=("answer", "recall", "answer_recall"),
-        default="answer",
-        help="What to run: answer generation, retrieval-only recall, or both.",
+        default=None,
+        help="Deprecated legacy alias; mapped to scope + diagnostics.",
     )
     parser.add_argument("--model", default=None)
     parser.add_argument("--mode", default=None)
@@ -293,8 +305,18 @@ def main() -> None:
     args = parser.parse_args()
     baseline = dict(definition.default_baseline)
     baseline.update({k: v for k, v in BASELINE_DEFAULTS.items() if k not in baseline})
+    if args.evaluation_type is not None:
+        # Legacy alias: answer -> end-to-end + summary; recall -> retrieval-only
+        # + detailed; answer_recall -> end-to-end + detailed.
+        args.evaluation_scope = (
+            "retrieval_only" if args.evaluation_type == "recall" else "end_to_end"
+        )
+        args.retrieval_diagnostics = (
+            "summary" if args.evaluation_type == "answer" else "detailed"
+        )
     for key, value in (
-        ("evaluation_type", args.evaluation_type),
+        ("evaluation_scope", args.evaluation_scope),
+        ("retrieval_diagnostics", args.retrieval_diagnostics),
         ("model", args.model),
         ("mode", args.mode),
         ("top_k", args.top_k),

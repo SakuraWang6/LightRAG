@@ -569,9 +569,31 @@ def _run_record(
     )
     progress = _read_progress(run_dir)
     run_id = envelope.get("run_id") or run_dir.name
+    manifest = envelope.get("execution_manifest") or {}
+    scope = manifest.get("evaluation_scope")
+    if scope is None:
+        # Backward-compatible inference: product runs without the field are
+        # end-to-end (they carry an answer method); anything else is retrieval.
+        scope = (
+            "end_to_end"
+            if any(
+                isinstance(method, dict) and method.get("method") == "answer"
+                for method in methods
+            )
+            else "retrieval_only"
+        )
+    diagnostics = manifest.get("retrieval_diagnostics")
+    if diagnostics is None:
+        diagnostics = (
+            "detailed" if (run_dir / "recall_report.json").exists() else "summary"
+        )
     record: dict[str, Any] = {
         "id": run_id,
         "run_dir": str(run_dir),
+        "evaluation_scope": scope,
+        "retrieval_diagnostics": diagnostics,
+        "retrieval_evaluation": {"enabled": True},
+        "answer_evaluation": {"enabled": scope == "end_to_end"},
         "restarts": int(envelope.get("restarts") or 0),
         "last_restart_resume": envelope.get("last_restart_resume"),
         "launch_params": envelope.get("launch_params"),

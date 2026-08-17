@@ -17,7 +17,8 @@ import {
   refreshEvalIndex,
   validateRunComparison,
   type EvalRun,
-  type EvalRunDetail
+  type EvalRunDetail,
+  type RunComparisonContract
 } from '@/api/eval'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -40,6 +41,7 @@ import {
   buildReproduceDraft,
   compareCompatible,
   formatDate,
+  formatMetricValue,
 } from '@/features/eval/utils'
 import { useEvalPolling } from '@/features/eval/useEvalPolling'
 
@@ -66,6 +68,7 @@ export default function EvalConsole() {
   const [comparing, setComparing] = useState(false)
   const [compareRuns, setCompareRuns] = useState<EvalRunDetail[]>([])
   const [compareLoading, setCompareLoading] = useState(false)
+  const [compareContract, setCompareContract] = useState<RunComparisonContract | null>(null)
   const [view, setView] = useState<'runs' | 'new' | 'datasets' | 'jobs'>('runs')
   const [simpleDraft, setSimpleDraft] = useState<SimpleEvalDraft | null>(null)
 
@@ -210,10 +213,7 @@ export default function EvalConsole() {
     setCompareLoading(true)
     try {
       const contract = await validateRunComparison(ids)
-      if (!contract.ranking_permitted) {
-        toast.error(`不可并列排名：${contract.incompatible_fields.join('、')}`)
-        return
-      }
+      setCompareContract(contract)
       setComparing(true)
       const loaded = await Promise.all(
         ids.map(async (id) => {
@@ -236,6 +236,7 @@ export default function EvalConsole() {
   const stopCompare = useCallback(() => {
     setComparing(false)
     setCompareRuns([])
+    setCompareContract(null)
   }, [])
 
   if (comparing) {
@@ -244,7 +245,7 @@ export default function EvalConsole() {
         {compareLoading ? (
           <div className="flex h-full items-center justify-center text-sm">{t('eval.loading')}</div>
         ) : (
-          <EvalCompare runs={compareRuns} onBack={stopCompare} />
+          <EvalCompare runs={compareRuns} contract={compareContract} onBack={stopCompare} />
         )}
       </div>
     )
@@ -378,6 +379,14 @@ export default function EvalConsole() {
                           <span className="truncate text-sm font-medium" title={run.id}>
                             {run.label}
                           </span>
+                          {run.evaluation_scope ? (
+                            <Badge
+                              variant={run.evaluation_scope === 'retrieval_only' ? 'secondary' : 'default'}
+                              className="text-[10px]"
+                            >
+                              {run.evaluation_scope === 'retrieval_only' ? 'RETRIEVAL' : 'END-TO-END'}
+                            </Badge>
+                          ) : null}
                           {run.progress?.status === 'running' ? (
                             <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                               <span className="bg-emerald-500 size-1.5 animate-pulse rounded-full" />
@@ -422,6 +431,24 @@ export default function EvalConsole() {
                         </div>
                         <div className="mt-1.5">
                           <ConditionChips conditions={run.conditions} limit={3} />
+                          {run.status === 'complete' || run.status === 'succeeded' ? (
+                            <div className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-muted-foreground">
+                              {(() => {
+                                const headline = run.headline ?? {}
+                                const keys =
+                                  run.evaluation_scope === 'retrieval_only'
+                                    ? (['recall_at_1', 'recall_at_5', 'mrr'] as const)
+                                    : (['answer_accuracy', 'recall_at_5', 'groundedness'] as const)
+                                return keys
+                                  .filter((key) => headline[key]?.value != null)
+                                  .map((key) => (
+                                    <span key={key}>
+                                      {headline[key]?.label ?? key}: {formatMetricValue(headline[key]!.value)}
+                                    </span>
+                                  ))
+                              })()}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     </div>

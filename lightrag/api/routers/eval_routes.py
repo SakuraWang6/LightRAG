@@ -92,6 +92,8 @@ class CompareRunsRequest(BaseModel):
 
 
 _GENERIC_PARAM_KEYS = {
+    "evaluation_scope",
+    "retrieval_diagnostics",
     "evaluation_type",
     "model",
     "mode",
@@ -494,9 +496,17 @@ def _build_run_params(
             mode = "naive"
         elif mode != "naive":
             raise ValueError("mode must be naive when KG extraction is disabled")
-    evaluation_type = params.get("evaluation_type", "answer")
-    if evaluation_type not in {"answer", "recall", "answer_recall"}:
-        raise ValueError("evaluation_type must be one of answer/recall/answer_recall")
+    legacy_type = params.get("evaluation_type")
+    evaluation_scope = params.get("evaluation_scope")
+    if evaluation_scope is None:
+        evaluation_scope = "retrieval_only" if legacy_type == "recall" else "end_to_end"
+    retrieval_diagnostics = params.get("retrieval_diagnostics")
+    if retrieval_diagnostics is None:
+        retrieval_diagnostics = "summary" if legacy_type == "answer" else "detailed"
+    if evaluation_scope not in {"retrieval_only", "end_to_end"}:
+        raise ValueError("evaluation_scope must be retrieval_only or end_to_end")
+    if retrieval_diagnostics not in {"summary", "detailed"}:
+        raise ValueError("retrieval_diagnostics must be summary or detailed")
     env = os.environ
     max_cases = params.get("max_cases", 0)
     if isinstance(max_cases, bool):
@@ -527,7 +537,8 @@ def _build_run_params(
         dataset=dataset_dir,
         output_dir=Path("."),
         label=_run_label(name),
-        evaluation_type=evaluation_type,
+        evaluation_scope=evaluation_scope,
+        retrieval_diagnostics=retrieval_diagnostics,
         model=model,
         mode=mode,
         top_k=top_k,

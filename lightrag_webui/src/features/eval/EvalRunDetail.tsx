@@ -181,7 +181,13 @@ function RunHeader({
   )
 }
 
-function ArtifactMetricsCard({ artifact }: { artifact: EvalArtifact }) {
+function ArtifactMetricsCard({
+  artifact,
+  scope
+}: {
+  artifact: EvalArtifact
+  scope?: string | null
+}) {
   const visibleMetrics = artifact.metrics.filter(
     (metric) => !HIDDEN_DIAGNOSTIC_METRIC_KEYS.has(metric.key)
   )
@@ -195,6 +201,14 @@ function ArtifactMetricsCard({ artifact }: { artifact: EvalArtifact }) {
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
           {artifact.title}
+          {scope ? (
+            <Badge
+              variant={scope === 'retrieval_only' ? 'secondary' : 'default'}
+              className="text-[10px]"
+            >
+              {scope === 'retrieval_only' ? 'RETRIEVAL' : 'END-TO-END'}
+            </Badge>
+          ) : null}
           <Badge variant="outline" className="text-xs">{artifact.kind}</Badge>
         </CardTitle>
         <CardDescription className="text-xs">
@@ -206,14 +220,18 @@ function ArtifactMetricsCard({ artifact }: { artifact: EvalArtifact }) {
           <p className="text-destructive text-sm">{artifact.error}</p>
         ) : artifact.kind === 'summary' && (answerMetrics.length > 0 || retrievalMetrics.length > 0) ? (
           <div className="grid gap-4 xl:grid-cols-2">
-            <section>
-              <h3 className="mb-2 text-sm font-semibold">回答测评指标</h3>
-              <MetricCards metrics={answerMetrics} />
-            </section>
-            <section>
-              <h3 className="mb-2 text-sm font-semibold">检索测评指标</h3>
-              <MetricCards metrics={retrievalMetrics} />
-            </section>
+            {answerMetrics.length > 0 ? (
+              <section>
+                <h3 className="mb-2 text-sm font-semibold">回答测评指标</h3>
+                <MetricCards metrics={answerMetrics} />
+              </section>
+            ) : null}
+            {retrievalMetrics.length > 0 ? (
+              <section>
+                <h3 className="mb-2 text-sm font-semibold">检索测评指标</h3>
+                <MetricCards metrics={retrievalMetrics} />
+              </section>
+            ) : null}
             {remainingMetrics.length > 0 ? (
               <section className="xl:col-span-2">
                 <h3 className="mb-2 text-sm font-semibold">其他运行指标</h3>
@@ -285,7 +303,11 @@ function StandardRunView({ run, active }: { run: EvalRunDetail; active: boolean 
 
         <TabsContent value="metrics" forceMount={false} className="mt-3 space-y-3">
           {metricArtifacts.map((artifact) => (
-            <ArtifactMetricsCard key={artifact.rel_path} artifact={artifact} />
+            <ArtifactMetricsCard
+              key={artifact.rel_path}
+              artifact={artifact}
+              scope={run.evaluation_scope}
+            />
           ))}
         </TabsContent>
 

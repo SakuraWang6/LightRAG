@@ -22,27 +22,43 @@ def test_run_command_uses_only_the_product_cli(tmp_path: Path) -> None:
     assert "--storage-dir" not in command
 
 
-def test_build_run_command_includes_evaluation_type(tmp_path: Path) -> None:
+def test_build_run_command_includes_scope_and_diagnostics(tmp_path: Path) -> None:
     command = build_run_command(
         RunParams(
             dataset=tmp_path / "dataset",
             output_dir=tmp_path / "output",
-            evaluation_type="recall",
+            evaluation_scope="retrieval_only",
+            retrieval_diagnostics="detailed",
         )
     )
-    assert "--evaluation-type" in command
-    assert command[command.index("--evaluation-type") + 1] == "recall"
+    assert "--evaluation-scope" in command
+    assert command[command.index("--evaluation-scope") + 1] == "retrieval_only"
+    assert "--retrieval-diagnostics" in command
+    assert command[command.index("--retrieval-diagnostics") + 1] == "detailed"
 
 
-def test_run_params_roundtrip_keeps_evaluation_type(tmp_path: Path) -> None:
+def test_run_params_roundtrip_keeps_scope_and_diagnostics(tmp_path: Path) -> None:
     params = RunParams(
         dataset=tmp_path / "d",
         output_dir=tmp_path / "o",
-        evaluation_type="answer_recall",
+        evaluation_scope="end_to_end",
+        retrieval_diagnostics="detailed",
     )
     payload = eval_jobs._params_to_json(params)
     restored = eval_jobs._params_from_json(payload)
-    assert restored.evaluation_type == "answer_recall"
+    assert restored.evaluation_scope == "end_to_end"
+    assert restored.retrieval_diagnostics == "detailed"
+
+
+def test_legacy_evaluation_type_maps_to_scope_and_diagnostics(tmp_path: Path) -> None:
+    payload = {
+        "dataset": str(tmp_path / "d"),
+        "output_dir": str(tmp_path / "o"),
+        "evaluation_type": "recall",
+    }
+    restored = eval_jobs._params_from_json(payload)
+    assert restored.evaluation_scope == "retrieval_only"
+    assert restored.retrieval_diagnostics == "detailed"
 
 
 def test_build_run_command_serializes_vlm(tmp_path: Path) -> None:

@@ -609,6 +609,79 @@ def _recall_report_markdown(retrieval: dict[str, Any], baseline: dict[str, Any])
     return "\n".join(lines)
 
 
+def _recall_diagnostics_markdown(
+    retrieval: dict[str, Any], baseline: dict[str, Any]
+) -> str:
+    """Retrieval diagnostics section appended to end-to-end detailed reports."""
+    summary = (retrieval.get("recall_summary") or {}).get("overall") or {}
+    distribution = summary.get("gold_rank_distribution") or {}
+    lines = ["## 召回诊断", ""]
+    for key, label in (
+        ("1", "Rank 1"),
+        ("2", "Rank 2"),
+        ("3", "Rank 3"),
+        ("4_5", "Rank 4-5"),
+        ("6_10", "Rank 6-10"),
+        ("11_plus", "Rank 11+"),
+        ("miss", "未命中"),
+    ):
+        lines.append(f"- {label}：{distribution.get(key, 0)}")
+    failed = [
+        row
+        for row in retrieval.get("results") or []
+        if row.get("first_evidence_rank") is None
+        or row.get("first_evidence_rank", 0) > 5
+    ]
+    lines.extend(["", "### 检索失败问题", ""])
+    if not failed:
+        lines.append("所有问题在 Top-5 内命中首个证据。")
+    else:
+        for row in failed:
+            lines.append(
+                f"- **{row.get('question_id')}**（{row.get('question_type')}）："
+                f"Gold rank {row.get('first_evidence_rank') or '未命中'}，"
+                f"期望证据 {', '.join(row.get('expected_fact_ids') or []) or '—'}"
+            )
+        lines.append("")
+        lines.append("完整候选与 ranking 明细见 ranking.json / recall_report.json。")
+    return "\n".join(lines)
+
+
+def _evaluation_scope(baseline: dict[str, Any]) -> str:
+    """Resolve the evaluation scope with legacy ``evaluation_type`` mapping."""
+    raw = baseline.get("evaluation_scope")
+    if raw is None and baseline.get("evaluation_type"):
+        raw = {
+            "answer": "end_to_end",
+            "recall": "retrieval_only",
+            "answer_recall": "end_to_end",
+        }.get(str(baseline.get("evaluation_type")), "end_to_end")
+    scope = str(raw or "end_to_end")
+    if scope not in {"retrieval_only", "end_to_end"}:
+        raise ValueError(
+            f"evaluation_scope must be one of retrieval_only/end_to_end, got {scope!r}"
+        )
+    return scope
+
+
+def _retrieval_diagnostics(baseline: dict[str, Any]) -> str:
+    """Resolve retrieval diagnostics level with legacy ``evaluation_type``."""
+    raw = baseline.get("retrieval_diagnostics")
+    if raw is None and baseline.get("evaluation_type"):
+        raw = {
+            "answer": "summary",
+            "recall": "detailed",
+            "answer_recall": "detailed",
+        }.get(str(baseline.get("evaluation_type")), "summary")
+    diagnostics = str(raw or "summary")
+    if diagnostics not in {"summary", "detailed"}:
+        raise ValueError(
+            "retrieval_diagnostics must be one of summary/detailed, "
+            f"got {diagnostics!r}"
+        )
+    return diagnostics
+
+
 def _report_markdown(
     answer: dict[str, Any],
     diagnosis: dict[str, Any],
@@ -792,12 +865,23 @@ def _runner(context: RunContext) -> dict[str, Any]:
         context.environment["rag_api_url"] = unit["runtime_endpoint"]
         context.runtime_snapshot = unit["runtime_snapshot"]
         baseline = context.baseline
-        evaluation_type = str(baseline.get("evaluation_type") or "answer")
-        if evaluation_type not in {"answer", "recall", "answer_recall"}:
-            raise ValueError(
-                "evaluation_type must be one of answer/recall/answer_recall, "
-                f"got {evaluation_type!r}"
-            )
+        evaluation_scope = _evaluation_scope(baseline)
+        retrieval_diagnostics = _retrieval_diagnostics(baseline)
+        detailed_retrieval = retrieval_diagnostics == "detailed"
+        baseline["evaluation_scope"] = evaluation_scope
+        baseline["retrieval_diagnostics"] = retrieval_diagnostics
+        context.execution_manifest.update(
+            {
+                "evaluation_scope": evaluation_scope,
+                "retrieval_diagnostics": retrieval_diagnostics,
+                "retrieval_evaluation": {"enabled": True},
+                "answer_evaluation": {"enabled": evaluation_scope == "end_to_end"},
+                "retrieval_scorers": [
+                    {"name": "recall@k", "version": "1"},
+                    {"name": "mrr", "version": "1"},
+                ],
+            }
+        )
         # VLM image analysis: an explicit run parameter wins, otherwise
         # auto-enable for datasets whose manifest declares figures.  Persist
         # the effective value so run.json / reports reflect what actually ran.
@@ -902,7 +986,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
         )
         recall_extra: dict[str, Any] = {}
         recall_method: dict[str, Any] | None = None
-        if evaluation_type in {"recall", "answer_recall"}:
+        if evaluation_scope == "retrieval_only" or detailed_retrieval:
             recall_report = _recall_report(retrieval, baseline, chunk_top_k)
             (context.output_dir / "recall_report.json").write_text(
                 json.dumps(recall_report, ensure_ascii=False, indent=2) + "\n",
@@ -937,7 +1021,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
                 "summary": (retrieval.get("recall_summary") or {}).get("overall") or {},
                 "results": recall_report["results"],
             }
-        if evaluation_type == "recall":
+        if evaluation_scope == "retrieval_only":
             context.progress("running", 0, 1, "report", "正在汇总召回结果并生成报告")
             report = _recall_report_markdown(retrieval, baseline)
             context.progress("running", 1, 1, "report", "召回报告已生成")
@@ -1001,6 +1085,7 @@ def _runner(context: RunContext) -> dict[str, Any]:
                 "正在生成回答并评分",
             ),
         )
+        context.execution_manifest["answer_scorers"] = answer.get("scorers") or []
         context.progress("running", 0, 1, "report", "正在汇总评分结果并生成报告")
         case_traces = build_case_traces(
             oracle=oracle,
@@ -1022,6 +1107,8 @@ def _runner(context: RunContext) -> dict[str, Any]:
             json.dumps(diagnosis, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
         report = _report_markdown(answer, diagnosis, retrieval)
+        if detailed_retrieval:
+            report = report + "\n\n" + _recall_diagnostics_markdown(retrieval, baseline)
         analysis_extra: dict[str, Any] = {}
         try:
             answer_rows = answer.get("results") or []
@@ -1101,7 +1188,8 @@ definition = EvaluationDefinition(
     description="在独立 LightRAG 工作空间内完成文档入库、索引、检索、回答与评分。",
     default_baseline={
         "mode": "mix",
-        "evaluation_type": "answer",
+        "evaluation_scope": "end_to_end",
+        "retrieval_diagnostics": "summary",
         "top_k": 5,
         "chunk_top_k": 5,
         "max_total_tokens": 8192,

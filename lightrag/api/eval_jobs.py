@@ -432,6 +432,16 @@ def _params_from_json(payload: dict[str, Any]) -> RunParams:
         if data.get(key) is not None:
             data[key] = Path(data[key])
     data["extra"] = list(data.get("extra") or [])
+    legacy = data.pop("evaluation_type", None)
+    if legacy is not None:
+        if data.get("evaluation_scope") is None:
+            data["evaluation_scope"] = (
+                "retrieval_only" if legacy == "recall" else "end_to_end"
+            )
+        if data.get("retrieval_diagnostics") is None:
+            data["retrieval_diagnostics"] = (
+                "summary" if legacy == "answer" else "detailed"
+            )
     return RunParams(**data)
 
 
@@ -462,7 +472,8 @@ def _write_queued_run_envelope(*, runs_root: Path, params: RunParams) -> None:
     parameter_sources = {key: "default" for key in baseline}
     for key in (
         "model",
-        "evaluation_type",
+        "evaluation_scope",
+        "retrieval_diagnostics",
         "mode",
         "top_k",
         "chunk_top_k",

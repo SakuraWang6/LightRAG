@@ -868,6 +868,15 @@ def write_envelope(
         # A completed run may use one or more deterministic/semantic scorers.
         # Persist their full inventory at the envelope level for comparison.
         "scorers": scorers if isinstance(scorers, list) else [],
+        "evaluation_scope": execution_manifest.get("evaluation_scope")
+        or context.baseline.get("evaluation_scope"),
+        "retrieval_diagnostics": execution_manifest.get("retrieval_diagnostics")
+        or context.baseline.get("retrieval_diagnostics"),
+        "retrieval_evaluation": execution_manifest.get("retrieval_evaluation"),
+        "answer_evaluation": execution_manifest.get("answer_evaluation"),
+        "retrieval_scorers": execution_manifest.get("retrieval_scorers"),
+        "answer_scorers": execution_manifest.get("answer_scorers")
+        or (scorers if isinstance(scorers, list) else None),
     }
     if status in {"complete", "failed"}:
         envelope["finished_at"] = now

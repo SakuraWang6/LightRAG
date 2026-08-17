@@ -152,6 +152,24 @@ def test_comparison_requires_exact_case_set_and_scorer_inventory() -> None:
     base = {
         "status": "complete",
         "evaluation": {"id": "end_to_end_baseline"},
+        "methods": [
+            {
+                "method": "retrieval",
+                "summary": {"cases": 2, "recall_at_1": 0.5, "mrr": 0.6},
+                "results": [
+                    {"question_id": "Q-1", "recall_at_1": 0.5, "mrr": 0.6},
+                    {"question_id": "Q-2", "recall_at_1": 0.5, "mrr": 0.6},
+                ],
+            },
+            {
+                "method": "answer",
+                "summary": {"cases": 2, "answer_accuracy": 0.8},
+                "results": [
+                    {"question_id": "Q-1", "exact_match": True},
+                    {"question_id": "Q-2", "exact_match": True},
+                ],
+            },
+        ],
         "execution_manifest": {
             "dataset": {"manifest_sha256": "dataset-sha"},
             "case_selection": {"case_ids": ["Q-1", "Q-2"]},
@@ -161,6 +179,8 @@ def test_comparison_requires_exact_case_set_and_scorer_inventory() -> None:
             },
         },
         "scorers": [{"name": "deterministic-answer-rules", "version": "1.1"}],
+        "answer_scorers": [{"name": "deterministic-answer-rules", "version": "1.1"}],
+        "retrieval_scorers": [{"name": "recall@k", "version": "1"}],
     }
     assert eval_comparison.compare_contract([base, dict(base)])["comparable"] is True
 
@@ -170,20 +190,44 @@ def test_comparison_requires_exact_case_set_and_scorer_inventory() -> None:
             **base["execution_manifest"],
             "case_selection": {"case_ids": ["Q-1"]},
         },
+        "methods": [
+            {
+                "method": "retrieval",
+                "summary": {"cases": 1, "recall_at_1": 1.0, "mrr": 1.0},
+                "results": [{"question_id": "Q-1", "recall_at_1": 1.0, "mrr": 1.0}],
+            },
+            {
+                "method": "answer",
+                "summary": {"cases": 1, "answer_accuracy": 1.0},
+                "results": [{"question_id": "Q-1", "exact_match": True}],
+            },
+        ],
     }
     result = eval_comparison.compare_contract([base, changed_cases])
-    assert result["comparable"] is False
+    # Different case sets shrink the comparable question intersection but do
+    # not block viewing the common metrics; ranking eligibility is lost.
+    assert result["domains"]["retrieval"]["comparable"] is True
+    assert result["ranking_permitted"] is False
     assert "case_set" in result["incompatible_fields"]
 
-    missing_scorers = {**base, "scorers": []}
+    missing_scorers = {**base, "scorers": [], "answer_scorers": []}
     result = eval_comparison.compare_contract([base, missing_scorers])
-    assert result["comparable"] is False
+    assert result["domains"]["answer"]["comparable"] is False
+    assert result["domains"]["retrieval"]["comparable"] is True
+    assert result["ranking_permitted"] is False
     assert "scorers" in result["incompatible_fields"]
+    # The retrieval domain remains comparable even when answer scorers are gone.
+    assert result["comparable"] is True
 
     result = eval_comparison.compare_contract(
-        [{**base, "scorers": []}, {**base, "scorers": []}]
+        [
+            {**base, "scorers": [], "answer_scorers": []},
+            {**base, "scorers": [], "answer_scorers": []},
+        ]
     )
-    assert result["comparable"] is False
+    assert result["domains"]["answer"]["comparable"] is False
+    assert result["domains"]["retrieval"]["comparable"] is True
+    assert result["comparable"] is True
     assert "scorers" in result["incompatible_fields"]
 
 
@@ -736,6 +780,27 @@ def test_answer_report_includes_recall_metrics_from_top_level() -> None:
     assert "## 检索指标" in report
     assert "Recall@1" in report
     assert "Gold Rank=1" in report
+
+
+def test_evaluation_scope_and_diagnostics_legacy_mapping() -> None:
+    assert (
+        workflow._evaluation_scope({"evaluation_scope": "retrieval_only"})
+        == "retrieval_only"
+    )
+    assert workflow._evaluation_scope({"evaluation_type": "recall"}) == "retrieval_only"
+    assert workflow._evaluation_scope({"evaluation_type": "answer"}) == "end_to_end"
+    assert (
+        workflow._evaluation_scope({"evaluation_type": "answer_recall"}) == "end_to_end"
+    )
+    assert workflow._retrieval_diagnostics({"evaluation_type": "answer"}) == "summary"
+    assert (
+        workflow._retrieval_diagnostics({"evaluation_type": "answer_recall"})
+        == "detailed"
+    )
+    with pytest.raises(ValueError):
+        workflow._evaluation_scope({"evaluation_scope": "bogus"})
+    with pytest.raises(ValueError):
+        workflow._retrieval_diagnostics({"retrieval_diagnostics": "bogus"})
 
 
 def test_disabling_kg_requires_vector_query_mode(

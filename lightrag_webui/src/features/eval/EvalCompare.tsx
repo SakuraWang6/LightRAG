@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeftIcon, DownloadIcon } from 'lucide-react'
 
-import type { EvalRunDetail, MetricItem } from '@/api/eval'
+import type { EvalRunDetail, MetricItem, RunComparisonContract } from '@/api/eval'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
@@ -31,8 +31,35 @@ import {
 
 interface EvalCompareProps {
   runs: EvalRunDetail[]
+  contract: RunComparisonContract | null
   onBack: () => void
 }
+
+const ANSWER_METRIC_KEYS = new Set([
+  'correct_cases',
+  'answer_accuracy',
+  'abstention_accuracy',
+  'numeric_unit_accuracy',
+  'formula_accuracy',
+  'table_cell_accuracy',
+  'groundedness',
+  'ungrounded_rate',
+  'citation_presence',
+  'citation_correctness'
+])
+
+const RETRIEVAL_METRIC_KEYS = new Set([
+  'retrieval_cases',
+  'recall_at_1',
+  'recall_at_3',
+  'recall_at_5',
+  'average_recall',
+  'mrr',
+  'mean_fact_mrr',
+  'context_precision',
+  'full_recall_cases',
+  'first_rank_one_cases'
+])
 
 function collectMetrics(run: EvalRunDetail): Map<string, MetricItem> {
   const map = new Map<string, MetricItem>()
@@ -49,7 +76,7 @@ function collectMetrics(run: EvalRunDetail): Map<string, MetricItem> {
   return map
 }
 
-export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
+export default function EvalCompare({ runs, contract, onBack }: EvalCompareProps) {
   const { t } = useTranslation()
   const [baselineId, setBaselineId] = useState<string | null>(null)
 
@@ -95,6 +122,45 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
       })
   }, [runs])
 
+  const sections = useMemo(() => {
+    const domainOf = (key: string) => {
+      if (ANSWER_METRIC_KEYS.has(key)) return 'answer'
+      if (RETRIEVAL_METRIC_KEYS.has(key)) return 'retrieval'
+      return 'other'
+    }
+    const answer = rows.filter((row) => domainOf(row.key) === 'answer')
+    const retrieval = rows.filter((row) => domainOf(row.key) === 'retrieval')
+    const other = rows.filter((row) => domainOf(row.key) === 'other')
+    return [
+      { title: '回答指标', rows: answer },
+      { title: '检索指标', rows: retrieval },
+      { title: '其他指标', rows: other }
+    ].filter((section) => section.rows.length > 0)
+  }, [rows])
+
+  const runScopeBadge = (run: EvalRunDetail) =>
+    run.evaluation_scope ? (
+      <Badge
+        variant={run.evaluation_scope === 'retrieval_only' ? 'secondary' : 'default'}
+        className="mt-0.5 w-fit text-[10px]"
+      >
+        {run.evaluation_scope === 'retrieval_only' ? 'RETRIEVAL' : 'END-TO-END'}
+      </Badge>
+    ) : null
+
+  const domainNote = (domain: 'retrieval' | 'answer') => {
+    const info = contract?.domains?.[domain]
+    if (!info) return null
+    if (info.comparable) return null
+    const reason = info.reason ?? '无公共指标'
+    return (
+      <p className="text-muted-foreground text-xs">
+        {domain === 'answer' ? '回答指标' : '检索指标'}不可直接对比：{reason}
+        {info.available.every(Boolean) ? '' : '（部分 run 未执行该域）'}
+      </p>
+    )
+  }
+
   const exportCsv = () => {
     const csv = buildCompareCsv(runs, rows, baselineIndex)
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
@@ -138,6 +204,25 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-4">
+        {contract ? (
+          <div className="mb-3 rounded-md border px-3 py-2 text-xs">
+            {contract.ranking_permitted ? (
+              <p className="text-emerald-600 dark:text-emerald-400">
+                这些 run 满足严格 benchmark 条件，可参与完整排名。
+              </p>
+            ) : (
+              <p className="text-amber-600 dark:text-amber-400">
+                不满足完整排名条件：{(contract.ranking_reasons ?? []).join('；') || '未知原因'}。
+                仍可查看共同指标差异。
+              </p>
+            )}
+            {contract.metrics_unavailable?.map((item, index) => (
+              <p key={index} className="text-muted-foreground">
+                {item.run_id}：{item.domain === 'answer' ? '回答指标' : '检索指标'}不可用（{item.reason}）
+              </p>
+            ))}
+          </div>
+        ) : null}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">{t('eval.compareMetrics')}</CardTitle>
@@ -153,8 +238,11 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
                         <TableHead className="px-3 py-2">{t('eval.condition')}</TableHead>
                         {runs.map((run) => (
                           <TableHead key={run.id} className="px-3 py-2">
-                            <span className="max-w-[160px] truncate font-semibold" title={run.label}>
-                              {run.label}
+                            <span className="flex flex-col gap-1">
+                              <span className="max-w-[160px] truncate font-semibold" title={run.label}>
+                                {run.label}
+                              </span>
+                              {runScopeBadge(run)}
                             </span>
                           </TableHead>
                         ))}
@@ -181,6 +269,10 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
                 </div>
               </div>
             ) : null}
+            <div className="space-y-2 py-2">
+              {domainNote('answer')}
+              {domainNote('retrieval')}
+            </div>
             <div className="overflow-auto rounded-md border">
               <Table className="min-w-full text-left text-sm">
                 <TableHeader className="sticky top-0 bg-background">
@@ -192,6 +284,7 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
                           <span className="max-w-[160px] truncate font-semibold" title={run.label}>
                             {run.label}
                           </span>
+                          {runScopeBadge(run)}
                           {runs.indexOf(run) === baselineIndex ? (
                             <Badge variant="outline" className="w-fit text-[10px]">
                               {t('eval.baselineSuffix')}
@@ -203,6 +296,13 @@ export default function EvalCompare({ runs, onBack }: EvalCompareProps) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {sections.map((section) => (
+                    <TableRow key={section.title}>
+                      <TableCell colSpan={runs.length + 1} className="bg-muted/40 px-3 py-1.5 text-xs font-semibold">
+                        {section.title}
+                      </TableCell>
+                    </TableRow>
+                  ))}
                   {rows.map((row) => (
                     <TableRow key={row.key}>
                       <TableCell className="text-muted-foreground whitespace-nowrap px-3 py-2">

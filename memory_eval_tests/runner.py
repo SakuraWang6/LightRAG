@@ -188,7 +188,10 @@ class RunParams:
     output_dir: Path
     run_id: str | None = None
     label: str | None = None
-    evaluation_type: str = "answer"
+    evaluation_scope: str = "end_to_end"
+    retrieval_diagnostics: str = "summary"
+    # Legacy alias; mapped to evaluation_scope / retrieval_diagnostics.
+    evaluation_type: str | None = None
     model: str | None = None
     mode: str | None = None
     top_k: int | None = None
@@ -218,7 +221,9 @@ def params_from_args(args: argparse.Namespace) -> RunParams:
         output_dir=args.output_dir,
         run_id=args.run_id,
         label=args.label,
-        evaluation_type=args.evaluation_type,
+        evaluation_scope=args.evaluation_scope,
+        retrieval_diagnostics=args.retrieval_diagnostics,
+        evaluation_type=getattr(args, "evaluation_type", None),
         model=args.model,
         mode=args.mode,
         top_k=args.top_k,
@@ -256,7 +261,8 @@ def build_run_command(params: RunParams) -> list[str]:
     ]
     for key in (
         "model",
-        "evaluation_type",
+        "evaluation_scope",
+        "retrieval_diagnostics",
         "mode",
         "top_k",
         "chunk_top_k",
@@ -335,7 +341,8 @@ def build_supervise_command(
     ]
     for key in (
         "model",
-        "evaluation_type",
+        "evaluation_scope",
+        "retrieval_diagnostics",
         "mode",
         "top_k",
         "chunk_top_k",
@@ -463,9 +470,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--label", default=None)
     parser.add_argument(
+        "--evaluation-scope",
+        choices=("retrieval_only", "end_to_end"),
+        default="end_to_end",
+    )
+    parser.add_argument(
+        "--retrieval-diagnostics",
+        choices=("summary", "detailed"),
+        default="summary",
+    )
+    parser.add_argument(
         "--evaluation-type",
         choices=("answer", "recall", "answer_recall"),
-        default="answer",
+        default=None,
+        help="Deprecated legacy alias; mapped to scope + diagnostics.",
     )
     parser.add_argument("--model", default=None)
     parser.add_argument("--mode", default=None)
