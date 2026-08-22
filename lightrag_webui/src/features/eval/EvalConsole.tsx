@@ -43,6 +43,8 @@ import {
   formatDate,
   formatMetricValue,
 } from '@/features/eval/utils'
+import { getRunCapabilities, getRunListSummary, runKindLabel } from '@/features/eval/runCapabilities'
+import { getRunProgressLabel } from '@/features/eval/runProgress'
 import { useEvalPolling } from '@/features/eval/useEvalPolling'
 
 type SimpleEvalDraft = {
@@ -349,6 +351,7 @@ export default function EvalConsole() {
               filteredRuns.map((run) => {
                 const selected = selectedId === run.id
                 const compareChecked = compareIds.has(run.id)
+                const capabilities = getRunCapabilities(run)
                 return (
                   <div
                     key={run.id}
@@ -379,19 +382,15 @@ export default function EvalConsole() {
                           <span className="truncate text-sm font-medium" title={run.id}>
                             {run.label}
                           </span>
-                          {run.evaluation_scope ? (
-                            <Badge
-                              variant={run.evaluation_scope === 'retrieval_only' ? 'secondary' : 'default'}
-                              className="text-[10px]"
-                            >
-                              {run.evaluation_scope === 'retrieval_only' ? 'RETRIEVAL' : 'END-TO-END'}
-                            </Badge>
-                          ) : null}
+                          <Badge variant={capabilities.hasAnswer ? 'default' : 'secondary'} className="text-[10px]">
+                            {runKindLabel(capabilities)}
+                          </Badge>
+                          {capabilities.hasDetailedDiagnostics ? <Badge variant="outline" className="text-[10px]">DETAILED</Badge> : null}
                           {run.progress?.status === 'running' ? (
                             <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                               <span className="bg-emerald-500 size-1.5 animate-pulse rounded-full" />
                               {t('eval.running')}
-                              <span className="tabular-nums">{run.progress.done ?? 0}/{run.progress.total ?? '?'}</span>
+                              <span className="text-muted-foreground">· {getRunProgressLabel(run.progress, capabilities)}</span>
                             </span>
                           ) : run.progress?.status === 'queued' ? (
                             <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
@@ -434,16 +433,10 @@ export default function EvalConsole() {
                           {run.status === 'complete' || run.status === 'succeeded' ? (
                             <div className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-muted-foreground">
                               {(() => {
-                                const headline = run.headline ?? {}
-                                const keys =
-                                  run.evaluation_scope === 'retrieval_only'
-                                    ? (['recall_at_1', 'recall_at_5', 'mrr'] as const)
-                                    : (['answer_accuracy', 'recall_at_5', 'groundedness'] as const)
-                                return keys
-                                  .filter((key) => headline[key]?.value != null)
-                                  .map((key) => (
-                                    <span key={key}>
-                                      {headline[key]?.label ?? key}: {formatMetricValue(headline[key]!.value)}
+                                return getRunListSummary(capabilities, run.headline)
+                                  .map((metric) => (
+                                    <span key={metric.key}>
+                                      {metric.label}: {formatMetricValue(metric.value)}
                                     </span>
                                   ))
                               })()}

@@ -28,38 +28,13 @@ import {
   metricStats,
   metricRank
 } from '@/features/eval/utils'
+import { getRunCapabilities, metricDomain, runKindLabel } from '@/features/eval/runCapabilities'
 
 interface EvalCompareProps {
   runs: EvalRunDetail[]
   contract: RunComparisonContract | null
   onBack: () => void
 }
-
-const ANSWER_METRIC_KEYS = new Set([
-  'correct_cases',
-  'answer_accuracy',
-  'abstention_accuracy',
-  'numeric_unit_accuracy',
-  'formula_accuracy',
-  'table_cell_accuracy',
-  'groundedness',
-  'ungrounded_rate',
-  'citation_presence',
-  'citation_correctness'
-])
-
-const RETRIEVAL_METRIC_KEYS = new Set([
-  'retrieval_cases',
-  'recall_at_1',
-  'recall_at_3',
-  'recall_at_5',
-  'average_recall',
-  'mrr',
-  'mean_fact_mrr',
-  'context_precision',
-  'full_recall_cases',
-  'first_rank_one_cases'
-])
 
 function collectMetrics(run: EvalRunDetail): Map<string, MetricItem> {
   const map = new Map<string, MetricItem>()
@@ -123,14 +98,9 @@ export default function EvalCompare({ runs, contract, onBack }: EvalCompareProps
   }, [runs])
 
   const sections = useMemo(() => {
-    const domainOf = (key: string) => {
-      if (ANSWER_METRIC_KEYS.has(key)) return 'answer'
-      if (RETRIEVAL_METRIC_KEYS.has(key)) return 'retrieval'
-      return 'other'
-    }
-    const answer = rows.filter((row) => domainOf(row.key) === 'answer')
-    const retrieval = rows.filter((row) => domainOf(row.key) === 'retrieval')
-    const other = rows.filter((row) => domainOf(row.key) === 'other')
+    const answer = rows.filter((row) => metricDomain(row.key) === 'answer')
+    const retrieval = rows.filter((row) => metricDomain(row.key) === 'retrieval')
+    const other = rows.filter((row) => metricDomain(row.key) === 'other')
     return [
       { title: '回答指标', rows: answer },
       { title: '检索指标', rows: retrieval },
@@ -138,17 +108,23 @@ export default function EvalCompare({ runs, contract, onBack }: EvalCompareProps
     ].filter((section) => section.rows.length > 0)
   }, [rows])
 
-  const runScopeBadge = (run: EvalRunDetail) =>
-    run.evaluation_scope ? (
-      <Badge
-        variant={run.evaluation_scope === 'retrieval_only' ? 'secondary' : 'default'}
-        className="mt-0.5 w-fit text-[10px]"
-      >
-        {run.evaluation_scope === 'retrieval_only' ? 'RETRIEVAL' : 'END-TO-END'}
-      </Badge>
-    ) : null
+  const runScopeBadge = (run: EvalRunDetail) => {
+    const capabilities = getRunCapabilities(run)
+    return (
+      <span className="flex flex-wrap gap-1">
+        <Badge variant={capabilities.hasAnswer ? 'default' : 'secondary'} className="mt-0.5 w-fit text-[10px]">
+          {runKindLabel(capabilities)}
+        </Badge>
+        {capabilities.hasDetailedDiagnostics ? <Badge variant="outline" className="mt-0.5 w-fit text-[10px]">DETAILED</Badge> : null}
+      </span>
+    )
+  }
 
   const domainNote = (domain: 'retrieval' | 'answer') => {
+    const relevant = domain === 'answer'
+      ? runs.some((run) => getRunCapabilities(run).hasAnswer)
+      : runs.some((run) => getRunCapabilities(run).hasRetrieval)
+    if (!relevant) return null
     const info = contract?.domains?.[domain]
     if (!info) return null
     if (info.comparable) return null
@@ -216,7 +192,7 @@ export default function EvalCompare({ runs, contract, onBack }: EvalCompareProps
                 仍可查看共同指标差异。
               </p>
             )}
-            {contract.metrics_unavailable?.map((item, index) => (
+            {contract.metrics_unavailable?.filter((item) => item.domain !== 'answer' || runs.some((run) => getRunCapabilities(run).hasAnswer)).map((item, index) => (
               <p key={index} className="text-muted-foreground">
                 {item.run_id}：{item.domain === 'answer' ? '回答指标' : '检索指标'}不可用（{item.reason}）
               </p>
@@ -296,41 +272,37 @@ export default function EvalCompare({ runs, contract, onBack }: EvalCompareProps
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sections.map((section) => (
+                  {sections.flatMap((section) => [
                     <TableRow key={section.title}>
                       <TableCell colSpan={runs.length + 1} className="bg-muted/40 px-3 py-1.5 text-xs font-semibold">
                         {section.title}
                       </TableCell>
-                    </TableRow>
-                  ))}
-                  {rows.map((row) => (
-                    <TableRow key={row.key}>
-                      <TableCell className="text-muted-foreground whitespace-nowrap px-3 py-2">
-                        <span>{row.label}</span>
-                        {(() => {
-                          const stats = metricStats(row.values)
-                          return stats.n > 0 ? (
-                            <span className="text-muted-foreground/70 block text-[10px]">
-                              n={stats.n}
-                              {stats.sigma != null
-                                ? ` σ=${Number(stats.sigma).toFixed(4).replace(/\.?0+$/, '')}`
-                                : ''}
-                            </span>
-                          ) : null
-                        })()}
-                      </TableCell>
-                      {row.values.map((value, index) => (
-                        <TableCell key={index} className="whitespace-nowrap px-3 py-2">
-                          {formatMetricCell(value)}
-                          {baselineIndex != null && index !== baselineIndex ? (
-                            <span className="text-muted-foreground ml-1 text-[10px]">
-                              {formatDelta(value, row.values[baselineIndex])}
-                            </span>
-                          ) : null}
+                    </TableRow>,
+                    ...section.rows.map((row) => (
+                      <TableRow key={row.key}>
+                        <TableCell className="text-muted-foreground whitespace-nowrap px-3 py-2">
+                          <span>{row.label}</span>
+                          {(() => {
+                            const stats = metricStats(row.values)
+                            return stats.n > 0 ? (
+                              <span className="text-muted-foreground/70 block text-[10px]">
+                                n={stats.n}
+                                {stats.sigma != null ? ` σ=${Number(stats.sigma).toFixed(4).replace(/\.?0+$/, '')}` : ''}
+                              </span>
+                            ) : null
+                          })()}
                         </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
+                        {row.values.map((value, index) => (
+                          <TableCell key={index} className="whitespace-nowrap px-3 py-2">
+                            {formatMetricCell(value)}
+                            {baselineIndex != null && index !== baselineIndex ? (
+                              <span className="text-muted-foreground ml-1 text-[10px]">{formatDelta(value, row.values[baselineIndex])}</span>
+                            ) : null}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))
+                  ])}
                   {rows.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={runs.length + 1} className="text-muted-foreground h-24 text-center">

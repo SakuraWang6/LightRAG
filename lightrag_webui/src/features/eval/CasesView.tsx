@@ -34,6 +34,7 @@ import {
   formatMetricValue,
   questionTypeLabel
 } from '@/features/eval/utils'
+import type { RunCapabilities } from '@/features/eval/runCapabilities'
 
 type Detail = Record<string, unknown>
 
@@ -62,7 +63,33 @@ function asList(value: unknown): Detail[] {
 }
 
 function detailValue(row: Record<string, unknown>, key: string): unknown {
-  return row[key] ?? asRecord(row.detail)[key]
+  const detail = asRecord(row.detail)
+  const nested = detail[key]
+  // Flattened retrieval-only artifacts retain structured values under detail
+  // while keeping a short string in the table cell. Prefer that real value.
+  if (nested !== undefined && (typeof nested === 'object' || row[key] === undefined)) return nested
+  return row[key]
+}
+
+function retrievalFromRow(row: Record<string, unknown>): Detail {
+  const embedded = asRecord(detailValue(row, 'retrieval'))
+  if (Object.keys(embedded).length > 0) return embedded
+  const keys = [
+    'recall_at_k',
+    'reciprocal_rank',
+    'context_precision',
+    'first_evidence_rank',
+    'expected_fact_ids',
+    'hit_fact_ids',
+    'hit_evidence',
+    'top_contexts'
+  ]
+  const direct: Detail = {}
+  for (const key of keys) {
+    const value = detailValue(row, key)
+    if (value !== undefined) direct[key] = value
+  }
+  return Object.keys(direct).length > 0 ? { status: 'observed', ...direct } : {}
 }
 
 function compactNumber(value: unknown): string {
@@ -89,24 +116,33 @@ function normalize(row: Record<string, unknown>): NormalizedCase {
     type: String(row.question_type ?? ''),
     expectedBehavior: String(row.expected_behavior ?? 'answer'),
     responseTruncated: row.response_truncated === true,
-    retrieval: asRecord(detailValue(row, 'retrieval')),
+    retrieval: retrievalFromRow(row),
     finalContextEvidence: asRecord(detailValue(row, 'final_context_evidence')),
     evidenceFacts: asList(detailValue(row, 'evidence_facts')),
     raw: row
   }
 }
 
-function Verdict({ c }: { c: NormalizedCase }) {
+function retrievalPassed(c: NormalizedCase): boolean | null {
+  if (c.retrieval.status !== 'observed') return null
+  return typeof c.retrieval.recall_at_k === 'number' ? c.retrieval.recall_at_k === 1 : null
+}
+
+function CaseOutcome({ c, capabilities }: { c: NormalizedCase; capabilities: RunCapabilities }) {
+  const retrievalResult = retrievalPassed(c)
+  const passed = capabilities.hasAnswer ? c.passed : retrievalResult
   const uncertain = c.verdict === 'uncertain'
-  const className = c.passed === true
+  const className = passed === true
     ? 'text-emerald-600 dark:text-emerald-400'
-    : c.passed === false
+    : passed === false
       ? 'text-red-600 dark:text-red-400'
       : 'text-muted-foreground'
   return (
     <span className={`ml-auto inline-flex items-center gap-1 text-sm font-medium ${className}`}>
-      {c.passed === true ? <CheckIcon className="size-4" /> : c.passed === false ? <XIcon className="size-4" /> : <MinusIcon className="size-4" />}
-      {uncertain ? '需复核' : c.passed === true ? '通过' : c.passed === false ? '未通过' : '未判定'}
+      {passed === true ? <CheckIcon className="size-4" /> : passed === false ? <XIcon className="size-4" /> : <MinusIcon className="size-4" />}
+      {capabilities.hasAnswer
+        ? uncertain ? '需复核' : passed === true ? '通过' : passed === false ? '未通过' : '未判定'
+        : passed === true ? '完整召回' : passed === false ? '未完整召回' : '未判定'}
     </span>
   )
 }
@@ -396,7 +432,15 @@ function TopKDialog({ retrieval }: { retrieval: Detail }) {
   )
 }
 
-function RetrievalEvidence({ runId, c }: { runId: string; c: NormalizedCase }) {
+function RetrievalEvidence({
+  runId,
+  c,
+  capabilities
+}: {
+  runId: string
+  c: NormalizedCase
+  capabilities: RunCapabilities
+}) {
   const retrieval = c.retrieval
   const status = retrieval.status
   if (status === 'not_applicable') {
@@ -426,10 +470,12 @@ function RetrievalEvidence({ runId, c }: { runId: string; c: NormalizedCase }) {
           <p className="text-muted-foreground text-xs">证据召回@K</p>
           <p className="mt-1 text-sm font-semibold tabular-nums">{compactNumber(retrieval.recall_at_k)}</p>
         </div>
-        <div className="rounded-md border bg-background px-3 py-2">
-          <p className="text-muted-foreground text-xs">首条命中位置</p>
-          <p className="mt-1 text-sm font-semibold tabular-nums">{retrieval.first_evidence_rank ? `第 ${retrieval.first_evidence_rank} 条` : '未命中'}</p>
-        </div>
+        {capabilities.hasGoldRank ? (
+          <div className="rounded-md border bg-background px-3 py-2">
+            <p className="text-muted-foreground text-xs">Gold Rank</p>
+            <p className="mt-1 text-sm font-semibold tabular-nums">{retrieval.first_evidence_rank ? `第 ${retrieval.first_evidence_rank} 条` : '未命中'}</p>
+          </div>
+        ) : null}
       </div>
 
       {expectedIds.length > 0 ? (
@@ -509,9 +555,9 @@ function RetrievalEvidence({ runId, c }: { runId: string; c: NormalizedCase }) {
       )}
 
       <div className="flex flex-wrap items-center gap-2 border-t pt-2">
-        <TopKDialog retrieval={retrieval} />
-        <FinalContextDialog runId={runId} c={c} />
-        {missingInContext.length > 0 ? (
+        {capabilities.hasCandidateRanking ? <TopKDialog retrieval={retrieval} /> : null}
+        {capabilities.hasAnswerDetails ? <FinalContextDialog runId={runId} c={c} /> : null}
+        {capabilities.hasAnswerDetails && missingInContext.length > 0 ? (
           <p className="text-amber-700 dark:text-amber-300 text-xs">
             有 {missingInContext.length} 条目标事实未进入最终上下文：{missingInContext.join('、')}
           </p>
@@ -544,12 +590,29 @@ function diagnosticHint(c: NormalizedCase): string {
   return '所需证据已全部进入最终上下文，但回答仍未通过；请检查生成模型、提示词或评分规则。'
 }
 
+function retrievalDiagnosticHint(c: NormalizedCase): string {
+  const retrieval = c.retrieval
+  if (retrieval.status === 'not_applicable') return '本题不需要检索召回评分。'
+  if (retrieval.status !== 'observed') return '没有可用的检索 trace，无法判断召回表现。'
+  if (typeof retrieval.recall_at_k === 'number' && retrieval.recall_at_k < 1) {
+    const rank = typeof retrieval.first_evidence_rank === 'number'
+      ? `首条命中在第 ${retrieval.first_evidence_rank} 位。`
+      : 'Top-K 中没有完整命中目标证据。'
+    return `召回未覆盖本题所需证据；${rank}`
+  }
+  if (typeof retrieval.first_evidence_rank === 'number' && retrieval.first_evidence_rank > 1) {
+    return `目标证据已召回，但 Gold Rank 为第 ${retrieval.first_evidence_rank} 位，可继续优化排序。`
+  }
+  return '目标证据已完整召回，且排序表现正常。'
+}
+
 interface CasesViewProps {
   rows: Record<string, unknown>[]
   runId: string
+  capabilities: RunCapabilities
 }
 
-export default function CasesView({ rows, runId }: CasesViewProps) {
+export default function CasesView({ rows, runId, capabilities }: CasesViewProps) {
   const { t } = useTranslation()
   const [filter, setFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState('all')
@@ -558,12 +621,13 @@ export default function CasesView({ rows, runId }: CasesViewProps) {
   const types = useMemo(() => Array.from(new Set(cases.map((c) => c.type).filter(Boolean))).sort(), [cases])
   const filtered = useMemo(
     () => cases.filter((c) => {
-      if (filter === 'pass' && c.passed !== true) return false
-      if (filter === 'fail' && c.passed !== false) return false
+      const passed = capabilities.hasAnswer ? c.passed : retrievalPassed(c)
+      if (filter === 'pass' && passed !== true) return false
+      if (filter === 'fail' && passed !== false) return false
       if (typeFilter !== 'all' && c.type !== typeFilter) return false
       return true
     }),
-    [cases, filter, typeFilter]
+    [capabilities.hasAnswer, cases, filter, typeFilter]
   )
 
   const exportCsv = () => {
@@ -614,28 +678,30 @@ export default function CasesView({ rows, runId }: CasesViewProps) {
         <div className="space-y-4">
           {filtered.map((c, index) => (
             <article key={`${c.id}-${index}`} className="relative overflow-hidden rounded-lg border bg-card shadow-sm">
-              <div className={`absolute inset-y-0 left-0 w-1 ${c.passed === true ? 'bg-emerald-500' : c.passed === false ? 'bg-red-500' : 'bg-muted-foreground/40'}`} />
+              <div className={`absolute inset-y-0 left-0 w-1 ${(capabilities.hasAnswer ? c.passed : retrievalPassed(c)) === true ? 'bg-emerald-500' : (capabilities.hasAnswer ? c.passed : retrievalPassed(c)) === false ? 'bg-red-500' : 'bg-muted-foreground/40'}`} />
               <header className="flex flex-wrap items-center gap-2 border-b bg-muted/25 px-5 py-3 pl-6">
                 <span className="font-serif text-lg font-semibold">第 {index + 1} 题</span>
                 {c.type ? <span className="rounded-full border bg-background px-2 py-0.5 text-xs text-muted-foreground">{questionTypeLabel(c.type)}</span> : null}
-                <Verdict c={c} />
+                <CaseOutcome c={c} capabilities={capabilities} />
               </header>
               <div className="space-y-5 px-5 py-5 pl-6">
                 <section>
                   <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">{t('eval.caseQuestion')}</p>
                   <p className="font-serif whitespace-pre-wrap break-words text-base leading-7">{c.question || c.id || '—'}</p>
                 </section>
-                <div className="grid gap-3 lg:grid-cols-2">
-                  <section className="rounded-md border bg-muted/25 p-4">
-                    <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">{t('eval.caseAnswer')}</p>
-                    <p className="whitespace-pre-wrap break-words text-sm leading-6">{c.answer || '—'}</p>
-                  </section>
-                  <section className="rounded-md border border-primary/20 bg-primary/[0.03] p-4">
-                    <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">{t('eval.caseExpected')}</p>
-                    <p className="whitespace-pre-wrap break-words text-sm leading-6">{c.expected || '—'}</p>
-                  </section>
-                </div>
-                {c.responseTruncated ? (
+                {capabilities.hasAnswerDetails ? (
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    <section className="rounded-md border bg-muted/25 p-4">
+                      <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">{t('eval.caseAnswer')}</p>
+                      <p className="whitespace-pre-wrap break-words text-sm leading-6">{c.answer || '—'}</p>
+                    </section>
+                    <section className="rounded-md border border-primary/20 bg-primary/[0.03] p-4">
+                      <p className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-[0.14em]">{t('eval.caseExpected')}</p>
+                      <p className="whitespace-pre-wrap break-words text-sm leading-6">{c.expected || '—'}</p>
+                    </section>
+                  </div>
+                ) : null}
+                {capabilities.hasAnswerDetails && c.responseTruncated ? (
                   <p className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
                     <TriangleAlertIcon className="size-3.5" /> 模型达到最大输出限制；此回答可能不完整。
                   </p>
@@ -643,13 +709,13 @@ export default function CasesView({ rows, runId }: CasesViewProps) {
                 <section className="rounded-md border bg-muted/[0.08] p-4">
                   <div className="mb-3 flex items-center gap-2">
                     <ScanSearchIcon className="text-primary size-4" />
-                    <h3 className="text-sm font-semibold">检索证据</h3>
+                    <h3 className="text-sm font-semibold">检索结果</h3>
                   </div>
-                  <RetrievalEvidence runId={runId} c={c} />
+                  <RetrievalEvidence runId={runId} c={c} capabilities={capabilities} />
                 </section>
                 <section className="border-border/70 flex gap-2 rounded-md border border-dashed px-3 py-2.5 text-sm leading-6">
                   <FileSearchIcon className="text-muted-foreground mt-0.5 size-4 shrink-0" />
-                  <div><span className="font-medium">{t('eval.caseResult')}：</span>{diagnosticHint(c)}</div>
+                  <div><span className="font-medium">{capabilities.hasAnswer ? t('eval.caseResult') : '检索结论'}：</span>{capabilities.hasAnswer ? diagnosticHint(c) : retrievalDiagnosticHint(c)}</div>
                 </section>
               </div>
             </article>

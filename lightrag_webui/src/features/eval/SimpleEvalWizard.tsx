@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeftIcon, PlayIcon } from 'lucide-react'
 import { toast } from 'sonner'
@@ -12,6 +12,7 @@ import {
   type DatasetSummary
 } from '@/api/eval'
 import { hasRunningJobs, questionTypeLabel } from '@/features/eval/utils'
+import { getDraftRunCapabilities } from '@/features/eval/runCapabilities'
 import Button from '@/components/ui/Button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import Checkbox from '@/components/ui/Checkbox'
@@ -94,6 +95,10 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
   const [optionsError, setOptionsError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const effectiveMode = kg ? mode : 'naive'
+  const draftCapabilities = useMemo(
+    () => getDraftRunCapabilities(evaluationScope, retrievalDiagnostics),
+    [evaluationScope, retrievalDiagnostics]
+  )
   const displayDatasetName = (item: DatasetSummary) => {
     if (item.display_name.trim()) return item.display_name
     return item.dataset_id
@@ -319,7 +324,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
                 </Select>
                 <span className="text-muted-foreground block text-xs">KG 抽取并行数，本地内存小请用 1</span>
               </label>
-              {evaluationScope === 'end_to_end' ? (
+              {draftCapabilities.hasAnswer ? (
                 <label className="space-y-1.5">
                   <span className="text-sm font-medium">回答并发</span>
                   <Select value={queryMaxAsync} onValueChange={setQueryMaxAsync}>
@@ -362,7 +367,7 @@ export default function SimpleEvalWizard({ initial, onBack, onStarted }: SimpleE
             </Card>
           ) : null}
 
-          {evaluationScope === 'end_to_end' ? (
+          {draftCapabilities.hasAnswer ? (
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-sm">{t('eval.wizardParams')}</CardTitle></CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
