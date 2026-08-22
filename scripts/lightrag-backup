@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Create timestamped, restorable LightRAG backups without exposing credentials.
+
+set -Eeuo pipefail
+umask 077
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="$REPO_ROOT/.env"
+BACKUP_ROOT="$REPO_ROOT/var/backups"
+MODE="all"
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/lightrag-backup [--files|--database|--all] [--output DIR]
+
+Creates a timestamped backup under var/backups by default.
+  --files       Archive WORKING_DIR and INPUT_DIR.
+  --database    Write a compressed PostgreSQL dump using POSTGRES_* in .env.
+  --all         Both (default). Database is skipped when POSTGRES_* is absent.
+  --output DIR  Override the backup root directory.
+EOF
+}
+
+dotenv_value() {
+  local key="$1"
+  [[ -f "$ENV_FILE" ]] || return 0
+  sed -n -E "s/^${key}=(.*)$/\\1/p" "$ENV_FILE" | sed -n '1p' | sed -E "s/^['\"](.*)['\"]$/\\1/"
+}
+
+require_repo_relative_directory() {
+  local value="$1"
+  [[ -n "$value" ]] || return 1
+  [[ "$value" != /* && "$value" != *".."* ]] || {
+    echo "Refusing non-repository backup path: $value" >&2
+    return 1
+  }
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --files) MODE="files" ;;
+    --database) MODE="database" ;;
+    --all) MODE="all" ;;
+    --output)
+      shift
+      [[ $# -gt 0 ]] || { usage >&2; exit 2; }
+      BACKUP_ROOT="$1"
+      ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+[[ -f "$ENV_FILE" ]] || { echo "Missing $ENV_FILE" >&2; exit 1; }
+mkdir -p "$BACKUP_ROOT"
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+backup_dir="$BACKUP_ROOT/$timestamp"
+mkdir -p "$backup_dir"
+
+working_dir="$(dotenv_value WORKING_DIR)"
+input_dir="$(dotenv_value INPUT_DIR)"
+working_dir="${working_dir:-rag_storage}"
+input_dir="${input_dir:-inputs}"
+
+if [[ "$MODE" == "files" || "$MODE" == "all" ]]; then
+  require_repo_relative_directory "$working_dir"
+  require_repo_relative_directory "$input_dir"
+  archive_items=()
+  [[ -e "$REPO_ROOT/$working_dir" ]] && archive_items+=("$working_dir")
+  [[ -e "$REPO_ROOT/$input_dir" ]] && archive_items+=("$input_dir")
+  if [[ ${#archive_items[@]} -eq 0 ]]; then
+    echo "No file storage directories exist; no file archive was created." >&2
+  else
+    tar -czf "$backup_dir/lightrag-files.tar.gz" -C "$REPO_ROOT" "${archive_items[@]}"
+    echo "File backup: $backup_dir/lightrag-files.tar.gz"
+  fi
+fi
+
+pg_database=""
+if [[ "$MODE" == "database" || "$MODE" == "all" ]]; then
+  pg_host="$(dotenv_value POSTGRES_HOST)"
+  pg_port="$(dotenv_value POSTGRES_PORT)"
+  pg_user="$(dotenv_value POSTGRES_USER)"
+  pg_password="$(dotenv_value POSTGRES_PASSWORD)"
+  pg_database="$(dotenv_value POSTGRES_DATABASE)"
+  if [[ -z "$pg_host$pg_port$pg_user$pg_password$pg_database" ]]; then
+    echo "PostgreSQL is not configured; database backup skipped." >&2
+  else
+    pg_dump_bin="$(command -v pg_dump || true)"
+    [[ -n "$pg_dump_bin" ]] || pg_dump_bin="/opt/homebrew/opt/postgresql@18/bin/pg_dump"
+    [[ -x "$pg_dump_bin" ]] || { echo "pg_dump was not found." >&2; exit 1; }
+    PGPASSWORD="$pg_password" "$pg_dump_bin" \
+      --host="$pg_host" --port="${pg_port:-5432}" --username="$pg_user" \
+      --format=custom --compress=zstd --file="$backup_dir/lightrag-postgres.dump" "$pg_database"
+    echo "Database backup: $backup_dir/lightrag-postgres.dump"
+  fi
+fi
+
+{
+  echo "created_at_utc=$timestamp"
+  echo "mode=$MODE"
+  echo "working_dir=$working_dir"
+  echo "input_dir=$input_dir"
+  echo "postgres_database=${pg_database:-not_configured}"
+} >"$backup_dir/manifest.txt"
