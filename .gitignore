@@ -33,6 +33,10 @@ site/
 *.logfire
 *.coverage/
 log/
+var/
+
+# Local process-manager overrides (may contain machine-specific command paths)
+scripts/lightrag-service.local.env
 
 # Caches
 .cache/

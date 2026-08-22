@@ -1,0 +1,466 @@
+#!/usr/bin/env bash
+# Manage the local LightRAG server without tying it to a terminal session.
+#
+# Commands:
+#   start | stop | restart | status | logs [-f] | install | uninstall
+
+set -Eeuo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="$REPO_ROOT/.env"
+RUNNER="$REPO_ROOT/scripts/lightrag-server-runner.sh"
+RERANKER_RUNNER="$REPO_ROOT/scripts/lightrag-reranker-runner.sh"
+LOCAL_SETTINGS="$REPO_ROOT/scripts/lightrag-service.local.env"
+RUNTIME_DIR="$REPO_ROOT/var/run"
+LOG_DIR="$REPO_ROOT/var/log"
+SERVER_PID_FILE="$RUNTIME_DIR/lightrag-server.pid"
+RERANKER_PID_FILE="$RUNTIME_DIR/lightrag-reranker.pid"
+SERVER_LOG="$LOG_DIR/lightrag-server.log"
+RERANKER_LOG="$LOG_DIR/lightrag-reranker.log"
+LAUNCH_LABEL="ai.lightrag.local"
+LAUNCH_DOMAIN="gui/$(id -u)"
+LAUNCH_PLIST="$HOME/Library/LaunchAgents/$LAUNCH_LABEL.plist"
+RERANKER_LAUNCH_LABEL="${LAUNCH_LABEL}-reranker"
+RERANKER_LAUNCH_PLIST="$HOME/Library/LaunchAgents/$RERANKER_LAUNCH_LABEL.plist"
+
+if [[ -f "$LOCAL_SETTINGS" ]]; then
+  # This file is deliberately separate from .env. It stores only local process
+  # manager options, never model-provider credentials.
+  # shellcheck disable=SC1090
+  source "$LOCAL_SETTINGS"
+fi
+
+die() {
+  echo "Error: $*" >&2
+  exit 1
+}
+
+note() {
+  echo "==> $*"
+}
+
+dotenv_value() {
+  local key="$1"
+  [[ -f "$ENV_FILE" ]] || return 0
+  sed -n -E "s/^${key}=(.*)$/\\1/p" "$ENV_FILE" | sed -n '1p'
+}
+
+is_valid_port() {
+  [[ "$1" =~ ^[0-9]+$ ]] && (( "$1" >= 1 && "$1" <= 65535 ))
+}
+
+SERVER_PORT="${LIGHTRAG_PORT:-$(dotenv_value PORT)}"
+SERVER_PORT="${SERVER_PORT:-9621}"
+is_valid_port "$SERVER_PORT" || die "Invalid LightRAG port: $SERVER_PORT"
+
+RERANK_BINDING="$(dotenv_value RERANK_BINDING)"
+RERANK_HOST="$(dotenv_value RERANK_BINDING_HOST)"
+RERANK_PORT=""
+if [[ "$RERANK_HOST" =~ ^https?://(127\.0\.0\.1|localhost):([0-9]+)(/|$) ]]; then
+  RERANK_PORT="${BASH_REMATCH[2]}"
+fi
+
+listener_pids() {
+  local port="$1"
+  lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+}
+
+listener_command() {
+  local pid="$1"
+  ps -p "$pid" -o command= 2>/dev/null || true
+}
+
+is_server_process() {
+  local command="$1"
+  [[ "$command" == *"$REPO_ROOT"* || "$command" == *"lightrag-server"* ]]
+}
+
+is_reranker_process() {
+  local command="$1"
+  local expected="${LIGHTRAG_RERANK_PROCESS_MATCH:-}"
+  [[ -n "$expected" && "$command" == *"$expected"* ]]
+}
+
+is_healthy() {
+  curl --fail --silent --show-error --max-time 3 \
+    "http://127.0.0.1:${SERVER_PORT}/health" >/dev/null 2>&1
+}
+
+wait_for_server() {
+  local attempt
+  for attempt in {1..45}; do
+    if is_healthy; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_port_to_close() {
+  local port="$1"
+  local attempt
+  for attempt in {1..15}; do
+    [[ -z "$(listener_pids "$port")" ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+agent_loaded() {
+  [[ "$(uname)" == "Darwin" ]] && launchctl print "$LAUNCH_DOMAIN/$LAUNCH_LABEL" >/dev/null 2>&1
+}
+
+reranker_agent_loaded() {
+  [[ "$(uname)" == "Darwin" ]] && launchctl print "$LAUNCH_DOMAIN/$RERANKER_LAUNCH_LABEL" >/dev/null 2>&1
+}
+
+wait_for_agent_to_unload() {
+  local label="$1"
+  local attempt
+  for attempt in {1..15}; do
+    ! launchctl print "$LAUNCH_DOMAIN/$label" >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+
+ensure_directories() {
+  mkdir -p "$RUNTIME_DIR" "$LOG_DIR"
+}
+
+start_optional_reranker() {
+  [[ -n "$RERANK_PORT" && "$RERANK_BINDING" != "" && "$RERANK_BINDING" != "null" ]] || return 0
+
+  if [[ -n "$(listener_pids "$RERANK_PORT")" ]]; then
+    note "Local reranker is already listening on port $RERANK_PORT."
+    return 0
+  fi
+
+  if [[ -z "${LIGHTRAG_RERANK_COMMAND:-}" ]]; then
+    echo "Warning: reranking is configured for $RERANK_HOST, but no local reranker start command is configured." >&2
+    echo "         LightRAG will start, but reranked queries will remain unavailable until that service is restored." >&2
+    echo "         See scripts/lightrag-service.local.env.example." >&2
+    return 0
+  fi
+
+  if [[ -f "$RERANKER_LAUNCH_PLIST" ]]; then
+    if ! reranker_agent_loaded; then
+      note "Starting the installed reranker LaunchAgent."
+      launchctl bootstrap "$LAUNCH_DOMAIN" "$RERANKER_LAUNCH_PLIST"
+    else
+      note "Restarting the installed reranker LaunchAgent."
+      launchctl kickstart -k "$LAUNCH_DOMAIN/$RERANKER_LAUNCH_LABEL"
+    fi
+    return 0
+  fi
+
+  note "Starting configured local reranker on port $RERANK_PORT."
+  nohup /bin/bash -lc "$LIGHTRAG_RERANK_COMMAND" \
+    >"$RERANKER_LOG" 2>&1 < /dev/null &
+  echo "$!" >"$RERANKER_PID_FILE"
+}
+
+start_server() {
+  [[ -x "$RUNNER" ]] || die "Runner is not executable: $RUNNER"
+  [[ -f "$ENV_FILE" ]] || die "Missing configuration file: $ENV_FILE"
+  ensure_directories
+
+  local existing
+  existing="$(listener_pids "$SERVER_PORT")"
+  if [[ -n "$existing" ]]; then
+    if is_healthy; then
+      note "LightRAG is already running at http://127.0.0.1:$SERVER_PORT/webui/"
+      return 0
+    fi
+    die "Port $SERVER_PORT is already in use (PID(s): $existing); refusing to replace an unverified process."
+  fi
+
+  start_optional_reranker
+
+  if [[ -f "$LAUNCH_PLIST" ]]; then
+    if ! agent_loaded; then
+      note "Starting the installed macOS LaunchAgent."
+      launchctl bootstrap "$LAUNCH_DOMAIN" "$LAUNCH_PLIST"
+    else
+      note "Restarting the installed macOS LaunchAgent."
+      launchctl kickstart -k "$LAUNCH_DOMAIN/$LAUNCH_LABEL"
+    fi
+  else
+    note "Starting LightRAG in the background."
+    nohup "$RUNNER" >"$SERVER_LOG" 2>&1 < /dev/null &
+    echo "$!" >"$SERVER_PID_FILE"
+  fi
+
+  if wait_for_server; then
+    note "LightRAG is ready: http://127.0.0.1:$SERVER_PORT/webui/"
+    return 0
+  fi
+
+  echo "LightRAG did not become healthy within 45 seconds." >&2
+  echo "Last server log lines:" >&2
+  tail -n 40 "$SERVER_LOG" 2>/dev/null || true
+  return 1
+}
+
+stop_owned_listener() {
+  local port="$1"
+  local process_type="$2"
+  local pid command
+
+  for pid in $(listener_pids "$port"); do
+    command="$(listener_command "$pid")"
+    if [[ "$process_type" == "server" ]]; then
+      is_server_process "$command" || die "Port $port belongs to PID $pid, which is not recognised as LightRAG. Refusing to stop it."
+    else
+      is_reranker_process "$command" || die "Port $port belongs to PID $pid, which is not the configured reranker process. Refusing to stop it."
+    fi
+    note "Stopping $process_type listener (PID $pid)."
+    kill -TERM "$pid"
+  done
+
+  if [[ -n "$(listener_pids "$port")" ]] && ! wait_for_port_to_close "$port"; then
+    for pid in $(listener_pids "$port"); do
+      command="$(listener_command "$pid")"
+      if [[ "$process_type" == "server" ]]; then
+        is_server_process "$command" || die "Port $port changed owners while stopping; refusing to kill PID $pid."
+      else
+        is_reranker_process "$command" || die "Port $port changed owners while stopping; refusing to kill PID $pid."
+      fi
+      echo "Warning: $process_type PID $pid did not stop gracefully; sending SIGKILL." >&2
+      kill -KILL "$pid"
+    done
+  fi
+}
+
+stop_pid_file() {
+  local pid_file="$1"
+  local process_type="$2"
+  [[ -f "$pid_file" ]] || return 0
+
+  local pid command
+  pid="$(<"$pid_file")"
+  rm -f "$pid_file"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  command="$(listener_command "$pid")"
+  [[ -n "$command" ]] || return 0
+
+  if [[ "$process_type" == "server" ]]; then
+    is_server_process "$command" || return 0
+  else
+    is_reranker_process "$command" || return 0
+  fi
+  kill -TERM "$pid" 2>/dev/null || true
+}
+
+stop_server() {
+  if agent_loaded; then
+    note "Stopping the macOS LaunchAgent."
+    launchctl bootout "$LAUNCH_DOMAIN/$LAUNCH_LABEL" || true
+    wait_for_agent_to_unload "$LAUNCH_LABEL" || \
+      echo "Warning: LightRAG LaunchAgent is still unloading; run start again if needed." >&2
+  fi
+
+  if [[ -n "$(listener_pids "$SERVER_PORT")" ]]; then
+    stop_owned_listener "$SERVER_PORT" server
+  fi
+  stop_pid_file "$SERVER_PID_FILE" server
+
+  if reranker_agent_loaded; then
+    note "Stopping the reranker LaunchAgent."
+    launchctl bootout "$LAUNCH_DOMAIN/$RERANKER_LAUNCH_LABEL" || true
+    wait_for_agent_to_unload "$RERANKER_LAUNCH_LABEL" || \
+      echo "Warning: reranker LaunchAgent is still unloading; run start again if needed." >&2
+  fi
+
+  if [[ -n "$RERANK_PORT" && -n "${LIGHTRAG_RERANK_PROCESS_MATCH:-}" && -n "$(listener_pids "$RERANK_PORT")" ]]; then
+    stop_owned_listener "$RERANK_PORT" reranker
+  fi
+  stop_pid_file "$RERANKER_PID_FILE" reranker
+  note "LightRAG stop completed."
+}
+
+status_server() {
+  local pids pid command
+  pids="$(listener_pids "$SERVER_PORT")"
+  if [[ -z "$pids" ]]; then
+    echo "LightRAG: stopped (port $SERVER_PORT is not listening)"
+  else
+    echo "LightRAG: listening on port $SERVER_PORT (PID(s): $pids)"
+    for pid in $pids; do
+      command="$(listener_command "$pid")"
+      echo "  $command"
+    done
+    if is_healthy; then
+      echo "Health: healthy"
+    else
+      echo "Health: listener found, but /health did not respond successfully"
+    fi
+  fi
+
+  if agent_loaded; then
+    echo "Persistence: macOS LaunchAgent enabled"
+  elif [[ -f "$LAUNCH_PLIST" ]]; then
+    echo "Persistence: LaunchAgent file exists but is not loaded"
+  else
+    echo "Persistence: background process only (run 'install' to auto-restart after crashes or login)"
+  fi
+
+  if [[ -z "$RERANK_PORT" || "$RERANK_BINDING" == "" || "$RERANK_BINDING" == "null" ]]; then
+    echo "Reranker: not configured"
+  elif reranker_agent_loaded; then
+    echo "Reranker: macOS LaunchAgent enabled on port $RERANK_PORT"
+  elif [[ -n "$(listener_pids "$RERANK_PORT")" ]]; then
+    echo "Reranker: listener found on port $RERANK_PORT"
+  elif [[ -n "${LIGHTRAG_RERANK_COMMAND:-}" ]]; then
+    echo "Reranker: stopped; a start command is configured"
+  else
+    echo "Reranker: configured at $RERANK_HOST but not managed (no start command configured)"
+  fi
+}
+
+install_launch_agent() {
+  [[ "$(uname)" == "Darwin" ]] || die "The install command is only available on macOS."
+  ensure_directories
+  mkdir -p "$(dirname "$LAUNCH_PLIST")"
+
+  cat >"$LAUNCH_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$LAUNCH_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>$RUNNER</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>$REPO_ROOT</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$SERVER_LOG</string>
+  <key>StandardErrorPath</key>
+  <string>$SERVER_LOG</string>
+</dict>
+</plist>
+EOF
+
+  launchctl bootout "$LAUNCH_DOMAIN/$LAUNCH_LABEL" >/dev/null 2>&1 || true
+  launchctl bootstrap "$LAUNCH_DOMAIN" "$LAUNCH_PLIST"
+
+  if [[ -n "$RERANK_PORT" && -n "${LIGHTRAG_RERANK_COMMAND:-}" ]]; then
+    [[ -x "$RERANKER_RUNNER" ]] || die "Reranker runner is not executable: $RERANKER_RUNNER"
+    cat >"$RERANKER_LAUNCH_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$RERANKER_LAUNCH_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>$RERANKER_RUNNER</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>$REPO_ROOT</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$RERANKER_LOG</string>
+  <key>StandardErrorPath</key>
+  <string>$RERANKER_LOG</string>
+</dict>
+</plist>
+EOF
+    launchctl bootout "$LAUNCH_DOMAIN/$RERANKER_LAUNCH_LABEL" >/dev/null 2>&1 || true
+    launchctl bootstrap "$LAUNCH_DOMAIN" "$RERANKER_LAUNCH_PLIST"
+    note "Persistent reranker service installed."
+  else
+    echo "Warning: reranker is not configured with LIGHTRAG_RERANK_COMMAND; only LightRAG will be persistent." >&2
+  fi
+
+  note "Persistent macOS service installed. It will start now and restart after crashes or login."
+  if ! wait_for_server; then
+    echo "The LaunchAgent was installed, but LightRAG is not healthy yet. Inspect with: $0 logs" >&2
+    return 1
+  fi
+  note "LightRAG is ready: http://127.0.0.1:$SERVER_PORT/webui/"
+}
+
+uninstall_launch_agent() {
+  [[ "$(uname)" == "Darwin" ]] || die "The uninstall command is only available on macOS."
+  launchctl bootout "$LAUNCH_DOMAIN/$LAUNCH_LABEL" >/dev/null 2>&1 || true
+  launchctl bootout "$LAUNCH_DOMAIN/$RERANKER_LAUNCH_LABEL" >/dev/null 2>&1 || true
+  rm -f "$LAUNCH_PLIST"
+  rm -f "$RERANKER_LAUNCH_PLIST"
+  rm -f "$SERVER_PID_FILE"
+  note "Persistent macOS service removed and stopped."
+}
+
+show_logs() {
+  ensure_directories
+  if [[ "${1:-}" == "-f" || "${1:-}" == "--follow" ]]; then
+    tail -n 120 -f "$SERVER_LOG"
+  else
+    tail -n 120 "$SERVER_LOG" 2>/dev/null || echo "No server log has been created yet."
+  fi
+}
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/lightrag-service <command>
+
+Commands:
+  start       Start LightRAG in the background.
+  stop        Stop only the LightRAG process owned by this repository.
+  restart     Stop, then start LightRAG.
+  status      Show listener, health, persistence, and reranker state.
+  logs [-f]   Print the latest server log lines; -f follows the log.
+  install     Install a macOS LaunchAgent (auto-start and crash recovery).
+  uninstall   Remove and stop the macOS LaunchAgent.
+
+The main server reads model, storage, and WebUI settings from .env.
+Optional process-manager settings belong in scripts/lightrag-service.local.env.
+EOF
+}
+
+command="${1:-}"
+case "$command" in
+  start)
+    start_server
+    ;;
+  stop)
+    stop_server
+    ;;
+  restart)
+    stop_server
+    start_server
+    ;;
+  status)
+    status_server
+    ;;
+  logs)
+    show_logs "${2:-}"
+    ;;
+  install)
+    install_launch_agent
+    ;;
+  uninstall)
+    uninstall_launch_agent
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
